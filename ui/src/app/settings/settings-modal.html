@@ -1,0 +1,187 @@
+<div class="overlay" (mousedown)="$event.target === $event.currentTarget && closed.emit()">
+  <div class="modal">
+    <div class="nav">
+      <div class="nav-brand">
+        <span class="nav-title">Settings</span>
+      </div>
+      @for (s of sections; track s.id) {
+        <button class="nav-item" [class.active]="section() === s.id" (click)="section.set(s.id)">
+          <pear-icon [name]="s.icon" [size]="14" />
+          {{ s.label }}
+        </button>
+      }
+    </div>
+    <div class="body">
+      <div class="head">
+        <span class="head-title">{{ sectionLabel() }}</span>
+        <button class="head-close" (click)="closed.emit()" title="Close">
+          <pear-icon name="close" [size]="15" />
+        </button>
+      </div>
+      <div class="scroll">
+        @switch (section()) {
+          @case ('general') {
+            <div class="group">
+              <div class="g-title">Appearance</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Accent color</div>
+                  <div class="l-sub">Applies across the workspace</div>
+                </div>
+                <div class="swatches">
+                  @for (a of accents; track a.key) {
+                    <button
+                      class="swatch"
+                      [class.active]="settings.accent() === a.key"
+                      [style.background]="a.color"
+                      [title]="a.key"
+                      (click)="settings.accent.set(a.key)"
+                    ></button>
+                  }
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Density</div>
+                  <div class="l-sub">Row height across lists and trees</div>
+                </div>
+                <div class="seg-row">
+                  @for (d of ['comfortable', 'compact']; track d) {
+                    <button class="seg" [class.active]="settings.density() === d" (click)="settings.density.set($any(d))">{{ d }}</button>
+                  }
+                </div>
+              </div>
+            </div>
+            <div class="group">
+              <div class="g-title">Suggestions</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Inline suggestions</div>
+                  <div class="l-sub">Ghost-text completions in the terminal, from command history</div>
+                </div>
+                <button class="toggle" [class.on]="settings.suggestions()" (click)="settings.suggestions.set(!settings.suggestions())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Scan remote shell history</div>
+                  <div class="l-sub">Read each host's own history files to seed suggestions</div>
+                </div>
+                <button class="toggle" [class.on]="settings.scanRemoteHistory()" (click)="settings.scanRemoteHistory.set(!settings.scanRemoteHistory())"><span></span></button>
+              </div>
+            </div>
+          }
+          @case ('files') {
+            <div class="group">
+              <div class="g-title">Behaviour</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Open items with</div>
+                  <div class="l-sub">How a file or folder is opened</div>
+                </div>
+                <div class="seg-row">
+                  <button class="seg" [class.active]="settings.openWith() === 'single'" (click)="settings.openWith.set('single')">Single click</button>
+                  <button class="seg" [class.active]="settings.openWith() === 'double'" (click)="settings.openWith.set('double')">Double click</button>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-label"><div class="l-title">Confirm before delete</div></div>
+                <button class="toggle" [class.on]="settings.confirmDelete()" (click)="settings.confirmDelete.set(!settings.confirmDelete())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Directories first</div>
+                  <div class="l-sub">Sort folders above files</div>
+                </div>
+                <button class="toggle" [class.on]="settings.sortDirsFirst()" (click)="settings.sortDirsFirst.set(!settings.sortDirsFirst())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Show hidden files</div>
+                  <div class="l-sub">Reveal dotfiles</div>
+                </div>
+                <button class="toggle" [class.on]="settings.showHidden()" (click)="settings.showHidden.set(!settings.showHidden())"><span></span></button>
+              </div>
+            </div>
+            <div class="group">
+              <div class="g-title">Display</div>
+              <div class="row">
+                <div class="row-label"><div class="l-title">Size units</div></div>
+                <div class="seg-row">
+                  <button class="seg" [class.active]="settings.sizeUnits() === 'binary'" (click)="settings.sizeUnits.set('binary')">KiB / MiB</button>
+                  <button class="seg" [class.active]="settings.sizeUnits() === 'decimal'" (click)="settings.sizeUnits.set('decimal')">KB / MB</button>
+                </div>
+              </div>
+            </div>
+          }
+          @case ('transfers') {
+            <div class="group">
+              <div class="g-title">Drag &amp; drop</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Dragging onto a folder (same host)</div>
+                  <div class="l-sub">Cross-host drags always copy via a local relay</div>
+                </div>
+                <div class="seg-row">
+                  @for (m of ['move', 'copy', 'ask']; track m) {
+                    <button class="seg" [class.active]="settings.sameHostDrag() === m" (click)="settings.sameHostDrag.set($any(m))">{{ m }}</button>
+                  }
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-label"><div class="l-title">On name conflict</div></div>
+                <div class="seg-row">
+                  <button class="seg" [class.active]="settings.conflict() === 'rename'" (click)="settings.conflict.set('rename')">Keep both</button>
+                  <button class="seg" [class.active]="settings.conflict() === 'overwrite'" (click)="settings.conflict.set('overwrite')">Overwrite</button>
+                  <button class="seg" [class.active]="settings.conflict() === 'skip'" (click)="settings.conflict.set('skip')">Skip</button>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Verify checksums after transfer</div>
+                  <div class="l-sub">Not wired up yet — preference only</div>
+                </div>
+                <button class="toggle" [class.on]="settings.verifyChecksums()" (click)="settings.verifyChecksums.set(!settings.verifyChecksums())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label"><div class="l-title">Max parallel transfers</div></div>
+                <div class="seg-row">
+                  @for (n of [1, 2, 3, 6]; track n) {
+                    <button class="seg" [class.active]="settings.maxParallel() === n" (click)="settings.maxParallel.set(n)">{{ n }}</button>
+                  }
+                </div>
+              </div>
+            </div>
+          }
+          @case ('terminal') {
+            <div class="group">
+              <div class="g-title">Placement</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Where the terminal lives</div>
+                  <div class="l-sub">No single right answer — pick what fits your flow</div>
+                </div>
+                <div class="seg-row">
+                  <button class="seg" [class.active]="settings.termPlacement() === 'shared'" (click)="settings.termPlacement.set('shared')">Shared</button>
+                  <button class="seg" [class.active]="settings.termPlacement() === 'per-host'" (click)="settings.termPlacement.set('per-host')">Per host</button>
+                  <button class="seg" [class.active]="settings.termPlacement() === 'in-pane'" (click)="settings.termPlacement.set('in-pane')">In pane</button>
+                </div>
+              </div>
+              <div class="hint">{{ termPlacementHint() }}</div>
+            </div>
+          }
+          @case ('keyboard') {
+            <div class="group">
+              <div class="g-title">Shortcuts</div>
+              @for (s of shortcuts; track s[0]) {
+                <div class="row shortcut">
+                  <span class="l-title">{{ s[0] }}</span>
+                  <span class="kbd">{{ s[1] }}</span>
+                </div>
+              }
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+</div>

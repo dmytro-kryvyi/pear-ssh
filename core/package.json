@@ -1,0 +1,23 @@
+{
+  "name": "@pear/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pear core: SSH sessions, SFTP, host inventory — UI-agnostic typed API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.pure.json && tsc -p tsconfig.json",
+    "check:pure": "tsc -p tsconfig.pure.json",
+    "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "test": "node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.12",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/ssh2": "^1.15.1",
+    "typescript": "^5.8.0"
+  }
+}

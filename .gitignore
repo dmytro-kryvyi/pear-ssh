@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+.angular/
+*.log
+.DS_Store
+
+design
+.claude
+.vscode

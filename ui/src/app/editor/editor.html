@@ -1,0 +1,35 @@
+<div class="tabbar">
+  <div class="tab">
+    <pear-icon name="fileCode" [size]="13" class="tab-icon" />
+    <span class="tab-name">{{ fileName() }}</span>
+    @if (dirty()) {
+      <span class="dirty-dot" title="Unsaved changes"></span>
+    }
+    <button class="tab-close" (click)="close()" title="Close">
+      <pear-icon name="close" [size]="11" />
+    </button>
+  </div>
+  <div class="tab-path">{{ path() }}</div>
+</div>
+
+@if (error()) {
+  <div class="ed-error">{{ error() }}</div>
+}
+
+<div #editorHost class="editor-host" [class.faded]="loading()"></div>
+
+<div class="statusbar">
+  <span>Ln {{ line() }}, Col {{ col() }}</span>
+  <span>UTF-8</span>
+  <span>LF</span>
+  <span class="save-state" [class.dirty]="dirty()">
+    @if (saving()) {
+      saving…
+    } @else if (dirty()) {
+      modified — Ctrl+S to save
+    } @else {
+      saved
+    }
+  </span>
+  <span class="lang">{{ language() }}</span>
+</div>

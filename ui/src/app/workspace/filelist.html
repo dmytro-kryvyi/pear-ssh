@@ -1,0 +1,157 @@
+<div class="filelist" tabindex="0" (keydown)="onKeydown($event)">
+  <div class="toolbar">
+    <div class="nav-btns">
+      <button class="nav-btn" [disabled]="tab().path === '/'" (click)="up()" title="Up">
+        <pear-icon name="back" [size]="14" />
+      </button>
+      <button class="nav-btn" (click)="home()" title="Home">
+        <pear-icon name="home" [size]="13" />
+      </button>
+    </div>
+
+    <button class="host-pill" (click)="onHostPill($event)" title="Switch host">
+      <span class="pill-dot" [style.background]="catalog.color(tab().hostId)"></span>
+      <span class="pill-name">{{ host()?.name ?? 'unknown' }}</span>
+      <pear-icon name="chevronDown" [size]="12" class="pill-chevron" />
+    </button>
+
+    @if (showFilter()) {
+      <div class="breadcrumb filter-box">
+        <pear-icon name="search" [size]="12" />
+        <input
+          class="filter-input"
+          [ngModel]="filter()"
+          (ngModelChange)="filter.set($event)"
+          (keydown.escape)="filter.set(''); showFilter.set(false)"
+          placeholder="Filter…"
+          spellcheck="false"
+          autofocus
+        />
+        <button class="filter-clear" (click)="filter.set(''); showFilter.set(false)">
+          <pear-icon name="close" [size]="12" />
+        </button>
+      </div>
+    } @else {
+      <div class="breadcrumb">
+        <span class="crumb clickable" (click)="navigate('/')">/</span>
+        @for (c of crumbs(); track c.full) {
+          <span class="crumb-sep">/</span>
+          <span
+            class="crumb"
+            [class.clickable]="!c.last"
+            (click)="!c.last && navigate(c.full)"
+          >{{ c.name }}</span>
+        }
+      </div>
+    }
+
+    <button class="tb-icon-btn" (click)="showFilter.set(!showFilter())" title="Filter">
+      <pear-icon name="search" [size]="13" />
+    </button>
+    <button class="tb-icon-btn" (click)="ops.newFolder(tab().hostId, tab().path)" title="New folder">
+      <pear-icon name="folderPlus" [size]="13" />
+    </button>
+    <button class="tb-icon-btn" (click)="refresh()" title="Refresh">
+      <pear-icon name="refresh" [size]="13" />
+    </button>
+    <button class="tb-icon-btn" (click)="ops.uploadPicker(tab().hostId, tab().path)" title="Upload files">
+      <pear-icon name="upload" [size]="13" />
+    </button>
+  </div>
+
+  <div class="list-header">
+    <span>Name{{ selected().length > 1 ? ' · ' + selected().length + ' selected' : '' }}</span>
+    <span>Size</span>
+    <span>Modified</span>
+    <span>Permissions</span>
+  </div>
+
+  @if (state()?.error; as err) {
+    <div class="connect-inline">
+      <div class="connect-err">{{ err }}</div>
+      @if (host() && !host()!.local) {
+        <form class="connect-form" (submit)="$event.preventDefault(); connect()">
+          <input
+            name="password"
+            type="password"
+            [(ngModel)]="password"
+            placeholder="password (optional — agent/keys tried first)"
+            autocomplete="off"
+          />
+          <button type="submit" class="btn-connect" [disabled]="connecting()">
+            {{ connecting() ? 'Connecting…' : 'Retry' }}
+          </button>
+        </form>
+      } @else {
+        <button class="btn-connect" (click)="refresh()">Retry</button>
+      }
+    </div>
+  } @else {
+    <div
+      class="list"
+      [class.loading]="state()?.loading"
+      [class.drop-ring]="dropOnList()"
+      (click)="$event.target === $event.currentTarget ? clearSelection() : null"
+      (contextmenu)="onListMenu($event)"
+      (dragover)="onListDragOver($event)"
+      (dragleave)="onListDragLeave($event)"
+      (drop)="onListDrop($event)"
+    >
+      @for (e of entries(); track e.name; let idx = $index) {
+        <div
+          class="row"
+          data-row
+          [attr.data-dir]="e.kind === 'dir' ? '1' : null"
+          [class.selected]="selected().includes(e.name)"
+          [class.cut]="ws.clipboard()?.op === 'cut' && ws.clipboard()?.hostId === tab().hostId && ws.clipboard()?.dir === tab().path && ws.clipboard()?.names?.includes(e.name)"
+          [class.drop-on]="dropTarget() === e.name"
+          [draggable]="renamingName() !== e.name"
+          (click)="onRowClick($event, idx, e)"
+          (dblclick)="onRowDblClick(e)"
+          (contextmenu)="onRowMenu($event, e)"
+          (dragstart)="onRowDragStart($event, e)"
+          (dragend)="onDragEnd()"
+          (dragover)="onRowDragOver($event, e)"
+          (dragleave)="onRowDragLeave(e)"
+          (drop)="onRowDrop($event, e)"
+        >
+          <div class="row-name">
+            @if (e.kind === 'dir') {
+              <pear-icon name="folder" [size]="14" class="icon-dir" />
+            } @else if (e.kind === 'link') {
+              <pear-icon name="link" [size]="14" class="icon-file" />
+            } @else {
+              <pear-icon name="file" [size]="14" class="icon-file" />
+            }
+            @if (renamingName() === e.name) {
+              <input
+                #renameField
+                class="rename-input"
+                [value]="e.name"
+                (keydown)="onRenameKey($event)"
+                (blur)="onRenameBlur($event)"
+                (click)="$event.stopPropagation()"
+                spellcheck="false"
+              />
+            } @else {
+              <span class="entry-name">{{ e.name }}</span>
+              @if (e.kind === 'dir') {
+                <span class="dir-slash">/</span>
+              }
+            }
+          </div>
+          <span class="row-muted">{{ formatSize(e) }}</span>
+          <span class="row-muted">{{ formatDate(e) }}</span>
+          <span class="row-muted">{{ e.mode }}</span>
+        </div>
+      } @empty {
+        @if (!state()?.loading) {
+          <div class="fs-empty">
+            <pear-icon name="folderOpen" [size]="28" />
+            <div>{{ filter() ? 'No matches' : 'Empty directory' }}</div>
+          </div>
+        }
+      }
+    </div>
+  }
+</div>

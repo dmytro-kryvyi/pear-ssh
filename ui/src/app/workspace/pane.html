@@ -1,0 +1,89 @@
+<div
+  class="tab-strip"
+  (dragover)="onStripDragOver($event)"
+  (drop)="onTabDrop($event, pane().tabs.length)"
+  (dragleave)="dragOverIndex.set(null)"
+>
+  @for (t of pane().tabs; track t.id; let i = $index) {
+    <div
+      class="ws-tab"
+      [class.active]="t.id === pane().activeTabId"
+      [class.drop-before]="dragOverIndex() === i"
+      [title]="tabTitle(t)"
+      draggable="true"
+      (mousedown)="ws.activateTab(pane().id, t.id)"
+      (dragstart)="onTabDragStart($event, t)"
+      (dragend)="onTabDragEnd()"
+      (dragover)="onTabDragOver($event, i)"
+      (drop)="onTabDrop($event, i)"
+    >
+      <span class="tab-host-dot" [style.background]="catalog.color(t.hostId)"></span>
+      <pear-icon
+        [name]="tabIcon(t)"
+        [size]="13"
+        class="tab-icon"
+        [class.accent]="t.id === pane().activeTabId"
+      />
+      <span class="tab-label">{{ tabLabel(t) }}</span>
+      <button
+        class="tab-close"
+        title="Close tab"
+        (click)="$event.stopPropagation(); ws.closeTab(t.id)"
+        (mousedown)="$event.stopPropagation()"
+      >
+        <pear-icon name="close" [size]="10" />
+      </button>
+    </div>
+  }
+  <button class="strip-btn" title="New tab" (click)="newTab()">
+    <pear-icon name="plus" [size]="13" />
+  </button>
+  <div class="strip-right">
+    <button class="strip-btn" title="Split pane" (click)="ws.splitPane(pane().id)">
+      <pear-icon name="split" [size]="13" />
+    </button>
+    <button class="strip-btn" title="Close pane" (click)="ws.closePane(pane().id)">
+      <pear-icon name="close" [size]="13" />
+    </button>
+  </div>
+</div>
+
+<div class="pane-body">
+  @if (activeTab(); as tab) {
+    @if (tab.kind === 'dir') {
+      <pear-filelist [pane]="pane()" [tab]="tab" />
+    } @else if (tab.kind === 'file') {
+      @if (catalog.byId(tab.hostId); as host) {
+        <pear-editor [host]="host" [path]="tab.path" (closed)="ws.closeTab(tab.id)" />
+      }
+    } @else if (tab.kind === 'orch') {
+      @if (catalog.byId(tab.hostId); as host) {
+        @if (orchState(); as state) {
+          <pear-orchpage
+            [host]="host"
+            [facet]="tab.facet!"
+            [state]="state"
+            (termCommand)="actions.orchCommand(tab.hostId, $event)"
+            (jumpedIn)="actions.jumpedIn($event)"
+            (promoted)="actions.promoted($event)"
+          />
+        } @else {
+          <div class="orch-pending">Probing {{ host.name }} for orchestration…</div>
+        }
+      }
+    }
+  }
+  @if (ws.dragging() === 'tab') {
+    <div
+      class="split-zone"
+      [class.hover]="splitHover()"
+      (dragover)="onSplitDragOver($event)"
+      (dragleave)="splitHover.set(false)"
+      (drop)="onSplitDrop($event)"
+    >
+      @if (splitHover()) {
+        <span class="split-hint">Split here</span>
+      }
+    </div>
+  }
+</div>

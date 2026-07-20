@@ -1,0 +1,12 @@
+{
+  // Type fence: everything outside src/node must compile with no ambient Node
+  // types and no ssh2 — i.e. it must be importable from a WebView. This is the
+  // machine-checkable statement of the core/ layering; `npm run build` runs it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["src"],
+  "exclude": ["src/node", "src/**/*.test.ts"]
+}

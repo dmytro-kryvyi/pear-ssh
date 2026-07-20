@@ -1,0 +1,219 @@
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div class="brand-text">
+        <div class="brand-name">Pear</div>
+        <div class="brand-sub">workspace</div>
+      </div>
+      <button class="brand-settings" (click)="settingsOpen.set(true)" title="Settings">
+        <pear-icon name="settings" [size]="14" />
+      </button>
+    </div>
+
+    <div class="section-title">
+      <span>Hosts</span>
+      <span class="section-count">{{ connectedIds().size }}/{{ allHosts().length }}</span>
+    </div>
+
+    <div class="host-list">
+      @for (h of rootHosts(); track h.id) {
+        <div
+          class="host-row"
+          [class.active]="h.id === activeHostId()"
+          (click)="openHost(h)"
+        >
+          <span
+            class="host-dot"
+            [class.online]="connectedIds().has(h.id)"
+          ></span>
+          <div class="host-text">
+            <div class="host-name">{{ h.name }}</div>
+            <div class="host-meta">
+              @if (h.local) {
+                this computer
+              } @else {
+                {{ h.user }}&#64;{{ h.host }}{{ h.port !== 22 ? ':' + h.port : '' }}
+              }
+            </div>
+          </div>
+          @if (termCount(h.id); as n) {
+            <span class="host-term-count" title="Live terminals">{{ n }}</span>
+          }
+          @if (h.kind === 'docker' || h.kind === 'swarm' || h.kind === 'proxmox') {
+            <pear-icon
+              [name]="h.kind === 'swarm' ? 'layers' : h.kind === 'proxmox' ? 'server' : 'docker'"
+              [size]="12"
+              class="host-kind"
+              [class.active]="h.id === activeHostId()"
+            />
+          }
+          @if (h.tag) {
+            <span class="host-tag">{{ h.tag }}</span>
+          }
+          @if (viaOf(h); as v) {
+            <span class="host-tag via" [title]="'Tunneled through ' + v.name">via {{ v.name }}</span>
+          }
+          <button class="host-remove" title="Remove host" (click)="removeHost($event, h)">×</button>
+        </div>
+        @for (c of childrenOf(h.id); track c.id) {
+          <div
+            class="host-row sub"
+            [class.active]="c.id === activeHostId()"
+            (click)="openHost(c)"
+          >
+            <span class="host-dot" [class.online]="connectedIds().has(c.id)"></span>
+            <pear-icon
+              [name]="c.target?.type === 'lxc' ? 'cpu' : 'docker'"
+              [size]="11"
+              class="sub-icon"
+            />
+            <div class="host-text">
+              <div class="host-name">{{ c.name }}</div>
+              <div class="host-meta">
+                @if (c.target; as t) {
+                  {{ t.type === 'lxc' ? 'CT ' + t.ref : t.ref }}
+                }
+              </div>
+            </div>
+            @if (termCount(c.id); as n) {
+              <span class="host-term-count" title="Live terminals">{{ n }}</span>
+            }
+            <button
+              class="host-pin"
+              [class.pinned]="isPinned(c)"
+              [title]="isPinned(c) ? 'Unpin (forget after restart)' : 'Pin (keep after restart)'"
+              (click)="togglePin($event, c)"
+            >
+              <pear-icon [name]="isPinned(c) ? 'pinFilled' : 'pin'" [size]="11" />
+            </button>
+            <button class="host-remove" title="Remove sub-host" (click)="removeHost($event, c)">×</button>
+          </div>
+        }
+      } @empty {
+        <div class="host-empty">No hosts yet — add one below.</div>
+      }
+    </div>
+
+    @if (selected(); as host) {
+      @if (orchState(); as state) {
+        <pear-orchpanel [host]="host" [state]="state" (termCommand)="actions.orchCommand(host.id, $event)" (expand)="openFacet($event)" (jumpedIn)="actions.jumpedIn($event)" (promoted)="actions.promoted($event)" />
+      }
+    }
+
+    <form class="quick-add" (ngSubmit)="addHost()">
+      <div class="section-title"><span>Quick connect</span></div>
+      @if (error()) {
+        <div class="quick-add-error">{{ error() }}</div>
+      }
+      <input name="target" [(ngModel)]="target" placeholder="user@host[:port]" spellcheck="false" required />
+      <div class="quick-add-row">
+        <input name="hostName" [(ngModel)]="hostName" placeholder="name (optional)" spellcheck="false" />
+        <input name="hostTag" [(ngModel)]="hostTag" placeholder="tag" spellcheck="false" class="tag-input" />
+      </div>
+      <button type="submit" class="btn primary">Add host</button>
+      @if (!hasLocalHost()) {
+        <button type="button" class="btn local-add" (click)="addLocalHost()">
+          <pear-icon name="terminal" [size]="13" /> Add this computer
+        </button>
+      }
+    </form>
+  </aside>
+
+  <main class="main">
+    @if (!bridged) {
+      <div class="empty-state">
+        <div class="empty-title">Pear bridge unavailable</div>
+        <div class="empty-sub">Run through Electron: <code>npm run dev</code></div>
+      </div>
+    } @else {
+      <div class="view-tabs">
+        <button class="view-tab" [class.active]="!activeFacet()" (click)="openFiles()">
+          <pear-icon name="folder" [size]="14" [class.accent]="!activeFacet()" /> Files
+        </button>
+        @for (facet of availableFacets(); track facet) {
+          <button class="view-tab" [class.active]="activeFacet() === facet" (click)="openFacet(facet)">
+            <pear-icon [name]="facetMeta[facet].icon" [size]="14" [class.accent]="activeFacet() === facet" />
+            {{ facetMeta[facet].tab }}
+          </button>
+        }
+      </div>
+
+      <pear-pane-grid />
+
+      @if (tabs.tabs().length && selected(); as host) {
+        <div class="resizer" (mousedown)="startResize($event)"></div>
+        <div class="term-panel" [style.height.px]="termHeight()">
+          <div class="term-tabs">
+            <pear-icon name="terminal" [size]="13" class="row-icon" />
+            @for (t of shellTabs(); track t.id) {
+              <div
+                class="term-tab"
+                [class.active]="t.id === tabs.activeId()"
+                (click)="tabs.activeId.set(t.id)"
+              >
+                <span class="tab-dot"></span>
+                <span class="tab-title">{{ t.title }}</span>
+                <button class="tab-close" (click)="$event.stopPropagation(); closeTab(t.id)" title="Close">
+                  <pear-icon name="close" [size]="10" />
+                </button>
+              </div>
+            }
+            <button class="term-tab new" (click)="tabs.newShell(host.id)">+ new</button>
+            <div class="term-tabs-right">
+              <span class="host-label">{{ hostLabel(host) }}</span>
+              <button class="btn subtle" (click)="disconnectTerms()">Close shells</button>
+            </div>
+          </div>
+          @if (orchTabs().length) {
+            <div class="term-tabs orch-row">
+              <pear-icon [name]="orchRowIcon()" [size]="12" class="row-icon accent" />
+              @for (t of orchTabs(); track t.id) {
+                <div
+                  class="term-tab"
+                  [class.active]="t.id === tabs.activeId()"
+                  (click)="tabs.activeId.set(t.id)"
+                >
+                  <span class="tab-dot orch"></span>
+                  <span class="tab-title">{{ t.title }}</span>
+                  <button class="tab-close" (click)="$event.stopPropagation(); closeTab(t.id)" title="Close">
+                    <pear-icon name="close" [size]="10" />
+                  </button>
+                </div>
+              }
+            </div>
+          }
+          <div class="term-body">
+            @for (t of tabs.tabs(); track t.id) {
+              <pear-terminal
+                [tab]="t"
+                [password]="''"
+                [active]="t.id === tabs.activeId() && t.hostId === activeHostId()"
+                [class.hidden]="t.id !== tabs.activeId() || t.hostId !== activeHostId()"
+                (opened)="onTabOpened(t, $event)"
+                (dirtied)="tabs.markDirty(t.id)"
+                (exited)="onTabExited(t.id)"
+                (failed)="onTermFailed(t.hostId, $event)"
+              />
+            }
+          </div>
+        </div>
+      }
+    }
+  </main>
+
+  <pear-context-menu />
+  <pear-transfer-queue />
+  @if (ops.lastError(); as opError) {
+    <div class="op-toast">
+      <span>{{ opError }}</span>
+      <button (click)="ops.lastError.set(null)" title="Dismiss">
+        <pear-icon name="close" [size]="12" />
+      </button>
+    </div>
+  }
+
+  @if (settingsOpen()) {
+    <pear-settings-modal (closed)="settingsOpen.set(false)" />
+  }
+</div>

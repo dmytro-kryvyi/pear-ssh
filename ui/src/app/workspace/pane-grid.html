@@ -1,0 +1,15 @@
+<div class="grid" #container>
+  @for (p of ws.panes(); track p.id; let i = $index; let last = $last) {
+    <pear-pane [pane]="p" [focused]="p.id === ws.focusedPaneId()" />
+    @if (!last) {
+      <div class="divider" (mousedown)="startDivider(i, $event)">
+        <div class="divider-line"></div>
+      </div>
+    }
+  } @empty {
+    <div class="ws-empty">
+      <div class="ws-empty-title">No open tabs</div>
+      <div class="ws-empty-sub">Pick a host from the sidebar to open its files here.</div>
+    </div>
+  }
+</div>

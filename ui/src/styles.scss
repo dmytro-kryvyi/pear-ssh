@@ -1,0 +1,59 @@
+/* Pear design tokens — from design/Pear.html */
+:root {
+  /* Accent (teal default; tweakable later) */
+  --accent: oklch(0.72 0.09 190);
+  --accent-soft: oklch(0.72 0.09 190 / 0.14);
+  --accent-line: oklch(0.72 0.09 190 / 0.4);
+
+  /* Warm-cool dark palette */
+  --bg-0: oklch(0.18 0.006 240);   /* sidebar */
+  --bg-1: oklch(0.22 0.006 240);   /* main */
+  --bg-2: oklch(0.26 0.006 240);   /* elevated / editor */
+  --bg-3: oklch(0.30 0.006 240);   /* hover */
+  --bg-4: oklch(0.34 0.006 240);   /* active row */
+  --term-bg: oklch(0.15 0.006 240);
+
+  --fg-0: oklch(0.96 0.003 240);
+  --fg-1: oklch(0.80 0.006 240);
+  --fg-2: oklch(0.60 0.008 240);
+  --fg-3: oklch(0.46 0.008 240);
+
+  --border: oklch(0.32 0.006 240 / 0.6);
+  --border-soft: oklch(0.32 0.006 240 / 0.35);
+
+  --ok: oklch(0.78 0.14 150);
+  --off: oklch(0.55 0.008 240);
+  --warn: oklch(0.78 0.14 75);
+  --err: oklch(0.68 0.18 25);
+
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --ui: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --row-h: 28px;
+  --sidebar-w: 264px;
+  --pad: 10px;
+}
+
+[data-density='compact'] {
+  --row-h: 24px;
+  --pad: 8px;
+}
+
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+*, *::before, *::after { box-sizing: border-box; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input { font: inherit; color: inherit; background: none; border: 0; outline: 0; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: oklch(0.32 0.006 240 / 0.5); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(0.40 0.006 240 / 0.7); }
+::-webkit-scrollbar-track { background: transparent; }

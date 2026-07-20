@@ -1,0 +1,174 @@
+@if (error()) {
+  <div class="orch-error">
+    {{ error() }}
+    <button class="retry" (click)="refresh()">Retry</button>
+  </div>
+}
+
+@for (s of summaries(); track s.kind) {
+  <div class="panel">
+    <div class="panel-header" (click)="toggle(s.kind)">
+      <pear-icon [name]="isOpen(s.kind) ? 'chevronDown' : 'chevronRight'" [size]="12" />
+      <pear-icon [name]="s.icon" [size]="14" class="kind-icon" />
+      <span class="panel-title">{{ s.label }}</span>
+      <span class="panel-count">{{ s.count }}</span>
+      <button class="panel-refresh" (click)="$event.stopPropagation(); expand.emit(s.kind)" title="Open full view">
+        <pear-icon name="expand" [size]="12" />
+      </button>
+    </div>
+
+    @if (isOpen(s.kind)) {
+      <div class="panel-scroll">
+        @switch (s.kind) {
+          @case ('docker') {
+            @if (docker(); as d) {
+              @if (d.containers.length === 0) {
+                <div class="empty">No containers on this host.</div>
+              }
+              @for (grp of d.groups; track grp.project) {
+                <div class="group-head" (click)="toggleGroup('docker', grp.project)">
+                  <pear-icon [name]="isGroupOpen('docker', grp.project) ? 'chevronDown' : 'chevronRight'" [size]="11" />
+                  <pear-icon [name]="grp.project ? 'layers' : 'docker'" [size]="11" class="group-icon" />
+                  <span class="group-name">{{ grp.project || 'standalone' }}</span>
+                  @if (grp.project; as p) {
+                    <span class="actions" [class.busy]="busy() === 'p:' + p" (click)="$event.stopPropagation()">
+                      @if (runningOf(grp.containers) < grp.containers.length) {
+                        <button title="Start project" (click)="act('p:' + p, { type: 'compose', project: p, op: 'start' })"><pear-icon name="play" [size]="11" /></button>
+                      }
+                      @if (runningOf(grp.containers) > 0) {
+                        <button title="Restart project" (click)="act('p:' + p, { type: 'compose', project: p, op: 'restart' })"><pear-icon name="refresh" [size]="11" /></button>
+                        <button title="Stop project" (click)="act('p:' + p, { type: 'compose', project: p, op: 'stop' })"><pear-icon name="stop" [size]="11" /></button>
+                      }
+                      <button title="Project logs" (click)="act('p:' + p, { type: 'compose', project: p, op: 'logs' }, p)"><pear-icon name="logs" [size]="11" /></button>
+                    </span>
+                  }
+                  <span class="group-count">{{ runningOf(grp.containers) }}/{{ grp.containers.length }}</span>
+                </div>
+                @if (isGroupOpen('docker', grp.project)) {
+                  @for (c of grp.containers; track c.id) {
+                    <div class="card in-group" [class.busy]="busy() === c.id">
+                      <div class="card-top">
+                        <span class="dot" [class.ok]="c.running"></span>
+                        <span class="name">{{ c.name }}</span>
+                      </div>
+                      <div class="svc-row">
+                        <span class="svc-mode">{{ c.status }}</span>
+                        <div class="actions">
+                          @if (c.running) {
+                            <button (click)="act(c.id, { type: 'container', id: c.id, name: c.name, op: 'stop' })" title="Stop"><pear-icon name="stop" [size]="11" /></button>
+                          } @else {
+                            <button (click)="act(c.id, { type: 'container', id: c.id, name: c.name, op: 'start' })" title="Start"><pear-icon name="play" [size]="11" /></button>
+                          }
+                          <button [disabled]="!c.running" (click)="act(c.id, { type: 'container', id: c.id, name: c.name, op: 'restart' })" title="Restart"><pear-icon name="refresh" [size]="12" /></button>
+                          <button (click)="act(c.id, { type: 'container', id: c.id, name: c.name, op: 'logs' }, c.name)" title="Logs"><pear-icon name="logs" [size]="12" /></button>
+                          @if (c.running) {
+                            <button (click)="jumpInto(c.id, { type: 'docker', ref: c.name }, c.name)" title="Jump in"><pear-icon name="terminal" [size]="12" /></button>
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  }
+                }
+              }
+            }
+          }
+          @case ('swarm') {
+            @if (swarm(); as d) {
+              @if (swarmRoster(); as roster) {
+                <div class="strip">
+                  <div class="roster-pill"><pear-icon name="server" [size]="12" class="kind-icon" />{{ roster.managers }} mgr</div>
+                  <div class="roster-pill"><pear-icon name="cpu" [size]="12" />{{ roster.workers }} worker</div>
+                  <div class="roster-pill">
+                    <span class="dot" [class.ok]="!roster.down" [class.warn]="roster.down"></span>
+                    {{ roster.down ? roster.down + ' down' : 'all ready' }}
+                  </div>
+                </div>
+              }
+              @for (grp of d.stacks; track grp.stack) {
+                <div class="group-head" (click)="toggleGroup('swarm', grp.stack)">
+                  <pear-icon [name]="isGroupOpen('swarm', grp.stack) ? 'chevronDown' : 'chevronRight'" [size]="11" />
+                  <pear-icon [name]="grp.stack ? 'layers' : 'server'" [size]="11" class="group-icon" />
+                  <span class="group-name">{{ grp.stack || 'standalone' }}</span>
+                  <span class="group-count">{{ convergedOf(grp.services) }}/{{ grp.services.length }}</span>
+                </div>
+                @if (isGroupOpen('swarm', grp.stack)) {
+                  @for (svc of grp.services; track svc.id) {
+                    <div class="card in-group" [class.busy]="busy() === svc.id">
+                      <div class="card-top">
+                        <span class="dot" [class.ok]="svc.running > 0 && svc.running === svc.desired" [class.warn]="svc.running > 0 && svc.running !== svc.desired"></span>
+                        <span class="name">{{ svc.name }}</span>
+                      </div>
+                      <div class="svc-row">
+                        <span class="replica" [class.ok]="svc.running > 0 && svc.running === svc.desired" [class.warn]="svc.running > 0 && svc.running !== svc.desired">
+                          {{ svc.mode === 'global' ? 'global ' + svc.running : svc.running + '/' + svc.desired }}
+                        </span>
+                        <div class="actions">
+                          @if (svc.mode !== 'global') {
+                            <button [disabled]="svc.desired <= 0" (click)="act(svc.id, { type: 'service', name: svc.name, op: 'scale', replicas: svc.desired - 1 })" title="Scale down"><pear-icon name="minus" [size]="11" /></button>
+                            <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'scale', replicas: svc.desired + 1 })" title="Scale up"><pear-icon name="plus" [size]="11" /></button>
+                          }
+                          <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'restart' })" title="Force restart"><pear-icon name="refresh" [size]="12" /></button>
+                          <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'logs' }, svc.name)" title="Service logs"><pear-icon name="logs" [size]="12" /></button>
+                        </div>
+                      </div>
+                    </div>
+                  }
+                }
+              }
+            }
+          }
+          @case ('proxmox') {
+            @if (proxmox(); as d) {
+              @if (d.resources; as r) {
+                <div class="strip stats">
+                  <div class="stat"><span class="stat-label">CPU</span><span class="stat-val">{{ pctText(r.cpu) }}</span></div>
+                  <div class="stat"><span class="stat-label">Memory</span><span class="stat-val">{{ memPair(r.mem, r.maxmem) }}</span></div>
+                  <div class="stat"><span class="stat-label">Storage</span><span class="stat-val">{{ memPair(r.disk, r.maxdisk) }}</span></div>
+                  <div class="stat"><span class="stat-label">Uptime</span><span class="stat-val">{{ uptime(r.uptime) }}</span></div>
+                </div>
+              }
+              @for (grp of d.groups; track grp.type) {
+                <div class="group-head" (click)="toggleGroup('proxmox', grp.type)">
+                  <pear-icon [name]="isGroupOpen('proxmox', grp.type) ? 'chevronDown' : 'chevronRight'" [size]="11" />
+                  <pear-icon [name]="grp.type === 'vm' ? 'cube' : 'cpu'" [size]="11" class="group-icon" />
+                  <span class="group-name">{{ grp.type === 'vm' ? 'Virtual machines' : 'LXC containers' }}</span>
+                  <span class="group-count">{{ runningOf(grp.guests) }}/{{ grp.guests.length }}</span>
+                </div>
+                @if (isGroupOpen('proxmox', grp.type)) {
+                  @for (g of grp.guests; track g.vmid) {
+                    <div class="card in-group" [class.busy]="busy() === 'g' + g.vmid">
+                      <div class="card-top">
+                        <span class="dot" [class.ok]="g.running"></span>
+                        <pear-icon [name]="g.type === 'vm' ? 'cube' : 'cpu'" [size]="12" class="guest-icon" />
+                        <span class="name">{{ g.name }}</span>
+                        <span class="type-badge" [class.vm]="g.type === 'vm'">{{ g.type === 'vm' ? 'VM' : 'CT' }}</span>
+                      </div>
+                      <div class="svc-row">
+                        <span class="svc-mode">#{{ g.vmid }} · {{ g.status }}</span>
+                        <div class="actions">
+                          @if (g.running) {
+                            <button (click)="act('g' + g.vmid, { type: 'guest', vmid: g.vmid, guestType: g.type, op: 'shutdown' })" title="Shutdown"><pear-icon name="stop" [size]="11" /></button>
+                          } @else {
+                            <button (click)="act('g' + g.vmid, { type: 'guest', vmid: g.vmid, guestType: g.type, op: 'start' })" title="Start"><pear-icon name="play" [size]="11" /></button>
+                          }
+                          <button [disabled]="!g.running" (click)="act('g' + g.vmid, { type: 'guest', vmid: g.vmid, guestType: g.type, op: 'reboot' })" title="Reboot"><pear-icon name="refresh" [size]="12" /></button>
+                          <button (click)="act('g' + g.vmid, { type: 'guest', vmid: g.vmid, guestType: g.type, op: 'console' }, g.name)" title="Console"><pear-icon name="terminal" [size]="12" /></button>
+                          @if (g.type === 'lxc' && g.running) {
+                            <button (click)="jumpInto('g' + g.vmid, { type: 'lxc', ref: '' + g.vmid }, g.name)" title="Jump in"><pear-icon name="enter" [size]="12" /></button>
+                          }
+                          @if (g.type === 'vm' && g.running) {
+                            <button (click)="promoteVm('g' + g.vmid, g.vmid, g.name)" title="Add as SSH host"><pear-icon name="link" [size]="12" /></button>
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  }
+                }
+              }
+            }
+          }
+        }
+      </div>
+    }
+  </div>
+}

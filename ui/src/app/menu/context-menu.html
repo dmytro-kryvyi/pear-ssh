@@ -1,0 +1,33 @@
+@if (service.menu(); as menu) {
+  <div
+    #panel
+    class="menu"
+    [class.measuring]="!pos()"
+    [style.left.px]="pos()?.x ?? menu.x"
+    [style.top.px]="pos()?.y ?? menu.y"
+    (contextmenu)="$event.preventDefault()"
+  >
+    @for (item of menu.items; track $index) {
+      @if (item.divider) {
+        <div class="divider"></div>
+      } @else {
+        <button
+          class="item"
+          [class.danger]="item.danger"
+          [disabled]="item.disabled"
+          (click)="run(item)"
+        >
+          <span class="item-icon">
+            @if (item.icon) {
+              <pear-icon [name]="item.icon" [size]="14" />
+            }
+          </span>
+          <span class="item-label">{{ item.label }}</span>
+          @if (item.shortcut) {
+            <span class="item-shortcut">{{ item.shortcut }}</span>
+          }
+        </button>
+      }
+    }
+  </div>
+}

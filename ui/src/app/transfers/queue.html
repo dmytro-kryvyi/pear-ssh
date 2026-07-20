@@ -1,0 +1,72 @@
+@if (store.list().length) {
+  <div class="queue">
+    <div class="queue-head">
+      <pear-icon name="swap" [size]="14" class="head-icon" />
+      <span class="head-title">Transfers</span>
+      <span class="head-count">
+        {{ store.activeCount() ? store.activeCount() + ' active' : 'idle' }}
+      </span>
+      <button class="head-clear" title="Clear finished" (click)="store.clearFinished()">
+        <pear-icon name="close" [size]="13" />
+      </button>
+    </div>
+    <div class="queue-body">
+      @for (job of store.list().slice().reverse(); track job.id) {
+        <div class="job">
+          <div class="job-top">
+            @if (job.status === 'done') {
+              <pear-icon name="check" [size]="13" class="job-icon ok" />
+            } @else if (job.status === 'error') {
+              <pear-icon name="close" [size]="13" class="job-icon err" />
+            } @else if (job.dest.hostId === null) {
+              <pear-icon name="download" [size]="13" class="job-icon accent" />
+            } @else if (job.src.hostId === null) {
+              <pear-icon name="upload" [size]="13" class="job-icon accent" />
+            } @else {
+              <pear-icon name="swap" [size]="13" class="job-icon accent" />
+            }
+            <span class="job-label" [title]="job.label">{{ job.label }}</span>
+            @if (job.status === 'running' || job.status === 'queued') {
+              <button class="job-cancel" title="Cancel" (click)="store.cancel(job.id)">
+                <pear-icon name="close" [size]="11" />
+              </button>
+            }
+            <span class="job-pct" [class.ok]="job.status === 'done'" [class.err]="job.status === 'error' || job.status === 'canceled'">
+              @if (job.status === 'done') {
+                Done
+              } @else if (job.status === 'error') {
+                Failed
+              } @else if (job.status === 'canceled') {
+                Canceled
+              } @else {
+                {{ (store.progress(job) * 100).toFixed(0) }}%
+              }
+            </span>
+          </div>
+          <div class="job-stage">
+            <span class="stage-text" [title]="job.error ?? ''">{{ store.stageLabel(job) }}</span>
+            @if (job.stages === 2 && job.status === 'running') {
+              <span class="stage-dots">
+                <span class="dot on"></span>
+                <span class="dot" [class.on]="job.stage >= 1"></span>
+              </span>
+            }
+          </div>
+          <div class="job-bar">
+            <div
+              class="job-fill"
+              [class.ok]="job.status === 'done'"
+              [class.err]="job.status === 'error' || job.status === 'canceled'"
+              [style.width.%]="store.progress(job) * 100"
+            ></div>
+          </div>
+          <div class="job-route">
+            <span>{{ store.fromName(job) }}</span>
+            <pear-icon name="forward" [size]="10" />
+            <span>{{ store.toName(job) }}</span>
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+}

@@ -1,0 +1,7 @@
+{
+  "//": "Subpath shim so `@pear/core/node` resolves to the built Node layer. Kept as a directory shim rather than an `exports` map because core and desktop compile with moduleResolution: node10, which ignores `exports`.",
+  "name": "@pear/core-node",
+  "private": true,
+  "main": "../dist/node/index.js",
+  "types": "../dist/node/index.d.ts"
+}
