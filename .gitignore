@@ -1,6 +1,7 @@
 node_modules/
 dist/
 out/
+release/
 .angular/
 *.log
 .DS_Store

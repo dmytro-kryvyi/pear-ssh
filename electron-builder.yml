@@ -1,0 +1,63 @@
+appId: dev.pear.desktop
+productName: Pear
+copyright: Copyright © 2026
+
+directories:
+  output: release
+
+# Icons come from build/icon.png and build/icon.ico — build/ is
+# electron-builder's default buildResources dir, so they're picked up
+# implicitly. build/icon.svg is the source both are rendered from.
+
+# CI passes --publish always on tag builds; GH_TOKEN comes from the
+# workflow's automatic GITHUB_TOKEN.
+publish:
+  provider: github
+  owner: dmytro-kryvyi
+  repo: pear-ssh
+  releaseType: release
+
+files:
+  - desktop/dist/**/*
+  - core/dist/**/*
+  - ui/dist/ui/browser/**/*
+  - package.json
+  - node_modules/**/*
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!core/src/**"
+  - "!desktop/src/**"
+  - "!ui/src/**"
+  - "!**/*.test.js"
+
+asarUnpack:
+  - "**/*.node"
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: Pear
+  # Without this the .desktop filename and the window's WM_CLASS / app_id
+  # diverge, so desktop environments don't associate running windows with the
+  # launcher entry. Reads `desktopName` from package.json.
+  synopsis: SSH workspace — hosts, files, terminal, and container orchestration
+  syncDesktopName: true
+
+deb:
+  depends:
+    - libnss3
+    - libatk1.0-0
+    - libatk-bridge2.0-0
+    - libgtk-3-0
+
+win:
+  target:
+    - nsis
+    - portable
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true

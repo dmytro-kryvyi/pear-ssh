@@ -3,15 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "description": "Pear — SSH workspace: hosts, files, terminal, and container orchestration",
+  "author": "Dmytro Kryvyi",
+  "main": "desktop/dist/main.js",
+  "desktopName": "pear.desktop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dmytro-kryvyi/pear-ssh.git"
+  },
   "workspaces": [
     "core",
     "desktop",
     "ui"
   ],
+  "dependencies": {
+    "@pear/core": "*",
+    "@pear/desktop": "*"
+  },
   "scripts": {
     "build": "npm run build -w core && npm run build -w desktop && npm run build -w ui",
     "dev": "node scripts/dev.mjs",
-    "start": "npm run build && electron desktop/dist/main.js"
+    "start": "npm run build && electron desktop/dist/main.js",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "allowScripts": {
     "esbuild@0.28.1": true,
@@ -19,6 +32,10 @@
     "ssh2@1.17.0": true,
     "lmdb@3.5.4": true,
     "msgpackr-extract@3.0.4": true,
-    "@parcel/watcher@2.5.6": true
+    "@parcel/watcher@2.5.6": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "devDependencies": {
+    "electron-builder": "^26.15.3"
   }
 }

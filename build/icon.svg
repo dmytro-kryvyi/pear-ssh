@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B3038"/>
+      <stop offset="1" stop-color="#1A1D23"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0.15" y1="0.05" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#C2E86B"/>
+      <stop offset="0.55" stop-color="#8FC63D"/>
+      <stop offset="1" stop-color="#5E9A2E"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="114" fill="url(#bg)"/>
+
+  <!-- stem -->
+  <path d="M258 152 C 252 128, 254 110, 262 96"
+        stroke="#7A5540" stroke-width="15" stroke-linecap="round" fill="none"/>
+
+  <!-- leaf -->
+  <path d="M268 140 C 300 100, 354 94, 374 104 C 360 150, 308 164, 270 150 Z"
+        fill="#69A83B"/>
+
+  <!-- pear body: single path so the gradient runs unbroken neck-to-base -->
+  <path fill="url(#body)" d="
+    M 256 150
+    C 288 150, 302 178, 297 208
+    C 292 240, 331 260, 353 288
+    C 380 322, 388 358, 381 390
+    C 372 438, 320 472, 256 472
+    C 192 472, 140 438, 131 390
+    C 124 358, 132 322, 159 288
+    C 181 260, 220 240, 215 208
+    C 210 178, 224 150, 256 150
+    Z"/>
+
+  <!-- specular highlight -->
+  <ellipse cx="212" cy="330" rx="30" ry="46" fill="#FFFFFF" opacity="0.17"
+           transform="rotate(-18 212 330)"/>
+</svg>

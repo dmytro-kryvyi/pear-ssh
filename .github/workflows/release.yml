@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Lets you dry-run the whole packaging path on a branch: it builds and
+  # uploads artifacts, but publishes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing shouldn't discard the other's artifacts.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+            target: --linux
+          - os: windows-latest
+            name: Windows
+            target: --win
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Electron is a ~100 MB per-platform download; without this every run
+      # re-fetches it. Paths differ by OS; non-existent ones are ignored.
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-electron-
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # The tag drives the artifact version, so v1.2.3 yields
+      # Pear-1.2.3.AppImage with no committed version bump. `npm pkg set`
+      # touches only the version field — electron-builder's
+      # --config.extraMetadata.version rewrites package.json wholesale and
+      # strips scripts/devDependencies, which is destructive.
+      - name: Set version from tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      # bash on both runners so this is written once.
+      - name: Package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            npx electron-builder ${{ matrix.target }} --publish always
+          else
+            npx electron-builder ${{ matrix.target }} --publish never
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pear-${{ runner.os }}
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.exe
+          if-no-files-found: error
