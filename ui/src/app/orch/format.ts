@@ -36,6 +36,11 @@ export function memPct(used: number | null, max: number | null): number {
   return Math.round((used / max) * 100);
 }
 
+export function rate(bytesPerSec: number | null): string {
+  if (bytesPerSec == null) return '—';
+  return `${bytes(bytesPerSec)}/s`;
+}
+
 export function uptime(seconds: number): string {
   if (!seconds) return 'offline';
   const days = Math.floor(seconds / 86400);

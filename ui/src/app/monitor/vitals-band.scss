@@ -1,0 +1,202 @@
+.band {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-2);
+  margin-bottom: 22px;
+  overflow: hidden;
+}
+.band.stale .cards,
+.band.stale .band-foot { opacity: 0.55; }
+
+.band-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.band-head .accent { color: var(--accent); }
+.band-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.band-dim { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.band-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.live-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border-soft);
+}
+.live-pill.on {
+  color: var(--ok);
+  background: oklch(0.78 0.14 150 / 0.13);
+  border-color: oklch(0.78 0.14 150 / 0.3);
+}
+.pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.pulse.beat { animation: vitals-pulse 1.6s ease-in-out infinite; }
+@keyframes vitals-pulse {
+  50% { opacity: 0.35; }
+}
+
+.seg-mini {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+}
+.seg-mini button {
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.seg-mini button.active { color: var(--fg-0); background: var(--bg-4); }
+.seg-mini button:hover { color: var(--fg-1); }
+
+.mini-btn {
+  padding: 5px;
+  border-radius: 6px;
+  color: var(--fg-2);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-1);
+  display: flex;
+  flex-shrink: 0;
+}
+.mini-btn:hover { background: var(--bg-3); color: var(--fg-0); }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+}
+.vcard {
+  padding: 12px 14px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  border-right: 1px solid var(--border-soft);
+}
+.vcard:last-child { border-right: none; }
+
+.vlabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.vbig {
+  font-family: var(--mono);
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--fg-0);
+}
+.vbig.warn { color: var(--warn); }
+.vbig.err { color: var(--err); }
+.vunit { font-size: 12px; font-weight: 500; color: var(--fg-3); }
+.vsub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: auto;
+}
+
+.cores {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 16px;
+}
+.core {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 1px;
+  opacity: 0.8;
+  transition: height 0.3s ease;
+}
+
+.rows { display: flex; flex-direction: column; gap: 4px; }
+.row {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-2);
+}
+.row-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-val { color: var(--fg-1); flex-shrink: 0; }
+.track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-0);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.fill.dim { background: var(--fg-3); }
+
+.spark { height: 26px; }
+.spark.tall { height: 44px; }
+
+.band-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-1);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.foot-cmd {
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

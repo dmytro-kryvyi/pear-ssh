@@ -36,6 +36,9 @@
                 {{ h.user }}&#64;{{ h.host }}{{ h.port !== 22 ? ':' + h.port : '' }}
               }
             </div>
+            @if (settings.sidebarVitals() && connectedIds().has(h.id)) {
+              <pear-hostmeter [hostId]="h.id" />
+            }
           </div>
           @if (termCount(h.id); as n) {
             <span class="host-term-count" title="Live terminals">{{ n }}</span>
@@ -75,6 +78,9 @@
                   {{ t.type === 'lxc' ? 'CT ' + t.ref : t.ref }}
                 }
               </div>
+              @if (settings.sidebarVitals() && connectedIds().has(c.id)) {
+                <pear-hostmeter [hostId]="c.id" />
+              }
             </div>
             @if (termCount(c.id); as n) {
               <span class="host-term-count" title="Live terminals">{{ n }}</span>
@@ -208,6 +214,14 @@
     <div class="op-toast">
       <span>{{ opError }}</span>
       <button (click)="ops.lastError.set(null)" title="Dismiss">
+        <pear-icon name="close" [size]="12" />
+      </button>
+    </div>
+  }
+  @if (notice(); as n) {
+    <div class="op-toast">
+      <span>{{ n }}</span>
+      <button (click)="notice.set(null)" title="Dismiss">
         <pear-icon name="close" [size]="12" />
       </button>
     </div>

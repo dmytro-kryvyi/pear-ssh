@@ -6,11 +6,14 @@ import { Gauge } from './gauge';
 import { OrchStore, type OrchState } from './store';
 import type { OrchTermCommand, PromotedVm } from './orchpanel';
 import { FACET_META } from './facet-meta';
+import { Settings } from '../settings';
+import { VitalsBand } from '../monitor/vitals-band';
+import { DockerDisk } from '../monitor/docker-disk';
 import { memPair, memPct, pctNum, pctText, tone, uptime } from './format';
 
 @Component({
   selector: 'pear-orchpage',
-  imports: [PearIcon, Gauge],
+  imports: [PearIcon, Gauge, VitalsBand, DockerDisk],
   templateUrl: './orchpage.html',
   styleUrl: './orchpage.scss',
 })
@@ -25,6 +28,7 @@ export class OrchPage {
 
   private readonly store = inject(OrchStore);
   private readonly pear = inject(Pear);
+  readonly settings = inject(Settings);
 
   readonly busy = signal<string | null>(null);
   readonly actionError = signal<string | null>(null);
@@ -104,6 +108,11 @@ export class OrchPage {
       const cmd = await this.store.action(this.host().id, action);
       if (cmd) this.termCommand.emit({ command: cmd, title });
     });
+  }
+
+  /** Prune runs visibly in the terminal, exactly like a logs stream. */
+  prunePressed(): void {
+    void this.act('prune', { type: 'engine', op: 'prune' }, 'prune');
   }
 
   /** Enter a container/CT as a sub-host (probes it through the parent). */

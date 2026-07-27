@@ -14,6 +14,8 @@
     <div class="page-error">{{ error() }}</div>
   }
 
+  <pear-vitals [host]="host()" />
+
   <!-- ===== Docker ===== -->
   @if (docker(); as d) {
     @if (dockerKpis(); as k) {
@@ -119,6 +121,9 @@
         }
       </div>
       }
+    }
+    @if (settings.dockerDiskSection()) {
+      <pear-docker-disk [host]="host()" (prune)="prunePressed()" />
     }
   }
 

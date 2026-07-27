@@ -32,6 +32,20 @@ import {
 
 const UI_DIST = join(__dirname, '../../ui/dist/ui/browser');
 
+// Transport hiccups from dropped links are handled by the disconnect flow;
+// they must never surface as Electron's uncaught-exception modal. Anything
+// non-network stays loud (logged + dialog), just under our control.
+const NETWORK_ERROR =
+  /ECONNRESET|ECONNREFUSED|ECONNABORTED|EPIPE|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENETDOWN|ENOTFOUND|socket hang up|[Kk]eepalive timeout/;
+process.on('uncaughtException', (err) => {
+  if (NETWORK_ERROR.test(err.message)) {
+    console.warn(`[net] ${err.message}`);
+    return;
+  }
+  console.error(err);
+  dialog.showErrorBox('Unexpected error', err.stack ?? String(err));
+});
+
 // Serve the built UI over a standard scheme instead of file:// — module web
 // workers (Monaco) and fetch are blocked on file:// origins.
 protocol.registerSchemesAsPrivileged([
@@ -247,6 +261,28 @@ function registerIpc(): void {
     if (!host) throw new Error(`Unknown host: ${hostId}`);
     return sessions.orchAction(host, action);
   });
+  // Monitor handlers run on every poll tick, and a dropped link makes their
+  // in-flight execs fail routinely — expected, already counted by the
+  // renderer's MonitorStore. Rejecting across IPC would make Electron log
+  // "Error occurred in handler" for each one, so failures travel as an
+  // envelope instead; the preload unwraps it back into a rejection.
+  const enveloped = (fn: (host: HostConfig) => Promise<unknown>) => {
+    return async (_e: unknown, hostId: string) => {
+      try {
+        const host = resolveHost(hostId);
+        if (!host) throw new Error(`Unknown host: ${hostId}`);
+        return { ok: true, value: await fn(host) };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    };
+  };
+  ipcMain.handle('monitor:sample', enveloped((host) => sessions.vitals(host)));
+  ipcMain.handle('monitor:dockerDf', enveloped((host) => sessions.dockerDf(host)));
+  ipcMain.handle(
+    'monitor:stats',
+    enveloped(async (host) => Object.fromEntries(await sessions.containerStats(host))),
+  );
 
   ipcMain.handle('subhosts:list', () => ephemeral.list());
   ipcMain.handle(

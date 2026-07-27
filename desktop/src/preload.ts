@@ -15,6 +15,14 @@ function subscribe(channel: string, cb: (...args: any[]) => void): () => void {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+/** Monitor handlers reply with {ok, value|error} so routine poll failures
+ *  don't hit Electron's rejected-handler logging; rebuild the rejection here. */
+async function unwrap<T>(reply: Promise<{ ok: boolean; value?: T; error?: string }>): Promise<T> {
+  const r = await reply;
+  if (!r.ok) throw new Error(r.error ?? 'unknown error');
+  return r.value as T;
+}
+
 const api: PearApi = {
   hosts: {
     list: () => ipcRenderer.invoke('hosts:list'),
@@ -72,6 +80,11 @@ const api: PearApi = {
     get: (hostId: string) => ipcRenderer.invoke('orch:get', hostId),
     action: (hostId: string, action: OrchAction) =>
       ipcRenderer.invoke('orch:action', hostId, action),
+  },
+  monitor: {
+    sample: (hostId: string) => unwrap(ipcRenderer.invoke('monitor:sample', hostId)),
+    dockerDf: (hostId: string) => unwrap(ipcRenderer.invoke('monitor:dockerDf', hostId)),
+    stats: (hostId: string) => unwrap(ipcRenderer.invoke('monitor:stats', hostId)),
   },
   history: {
     list: () => ipcRenderer.invoke('history:list'),

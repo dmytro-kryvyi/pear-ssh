@@ -19,7 +19,7 @@ import { shq } from '../shq';
 
 export type Exec = (command: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-function jsonLines<T>(stdout: string): T[] {
+export function jsonLines<T>(stdout: string): T[] {
   return stdout
     .split('\n')
     .filter((line) => line.trim().startsWith('{'))
@@ -119,11 +119,12 @@ const MEM_UNITS: Record<string, number> = {
   GiB: 1024 ** 3,
   TiB: 1024 ** 4,
   KB: 1000,
+  kB: 1000, // docker's SI humanizer ("docker system df") spells it lowercase
   MB: 1000 ** 2,
   GB: 1000 ** 3,
   TB: 1000 ** 4,
 };
-function parseBytes(token: string): number | null {
+export function parseBytes(token: string): number | null {
   const m = token.trim().match(/^([\d.]+)\s*([A-Za-z]+)$/);
   if (!m) return null;
   const unit = MEM_UNITS[m[2]];
@@ -131,7 +132,7 @@ function parseBytes(token: string): number | null {
 }
 
 /** Best-effort live cpu/mem for running containers, keyed by container id. */
-async function fetchStats(
+export async function fetchStats(
   exec: Exec,
 ): Promise<Map<string, { cpu: number | null; mem: number | null; maxmem: number | null }>> {
   const stats = new Map<string, { cpu: number | null; mem: number | null; maxmem: number | null }>();
@@ -377,6 +378,10 @@ function buildAction(action: OrchAction): { command?: string; terminalCommand?: 
       }
       return { command: `${tool} ${action.op} ${action.vmid}` };
     }
+    // Deliberately excludes --volumes: unused volumes can hold data, and the
+    // command runs unattended once it lands in the terminal.
+    case 'engine':
+      return { terminalCommand: 'docker system prune -af' };
   }
 }
 

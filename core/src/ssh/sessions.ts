@@ -1,7 +1,14 @@
 import type { HostConfig, HostFacets, OrchAction, TermSize } from '../types';
 import type { ShellChannel, SshTransport, SshTransportFactory, TransferOpts } from './transport';
 import { SubHostTransport } from './subhost';
-import { detectFacets, fetchOrchestration, performAction } from '../orchestration/orchestration';
+import {
+  detectFacets,
+  fetchOrchestration,
+  fetchStats,
+  performAction,
+} from '../orchestration/orchestration';
+import { fetchVitals } from '../monitor/vitals';
+import { fetchDockerDf } from '../monitor/docker-df';
 import { uuid } from '../uuid';
 
 export interface TerminalHandle {
@@ -179,6 +186,18 @@ export class SessionManager {
 
   orchAction(config: HostConfig, action: OrchAction) {
     return performAction(this.execBinder(config), action);
+  }
+
+  vitals(config: HostConfig) {
+    return fetchVitals(this.execBinder(config));
+  }
+
+  dockerDf(config: HostConfig) {
+    return fetchDockerDf(this.execBinder(config));
+  }
+
+  containerStats(config: HostConfig) {
+    return fetchStats(this.execBinder(config));
   }
 
   disconnectHost(hostId: string): void {

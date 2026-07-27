@@ -169,6 +169,54 @@
               <div class="hint">{{ termPlacementHint() }}</div>
             </div>
           }
+          @case ('monitor') {
+            <div class="group">
+              <div class="g-title">Sampling</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Live host stats</div>
+                  <div class="l-sub">One exec round-trip per host, per interval</div>
+                </div>
+                <button class="toggle" [class.on]="settings.liveStats()" (click)="settings.liveStats.set(!settings.liveStats())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Interval</div>
+                  <div class="l-sub">Shorter is snappier and chattier over SSH</div>
+                </div>
+                <div class="seg-row">
+                  @for (n of [2, 5, 10]; track n) {
+                    <button class="seg" [class.active]="settings.monitorInterval() === n" (click)="settings.monitorInterval.set($any(n))">{{ n }}s</button>
+                  }
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Per-container stats</div>
+                  <div class="l-sub">Adds docker stats to the same tick, for visible container tabs</div>
+                </div>
+                <button class="toggle" [class.on]="settings.containerStats()" (click)="settings.containerStats.set(!settings.containerStats())"><span></span></button>
+              </div>
+            </div>
+            <div class="group">
+              <div class="g-title">Where it shows</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Micro-meters in the host list</div>
+                  <div class="l-sub">CPU and memory lines under every connected host</div>
+                </div>
+                <button class="toggle" [class.on]="settings.sidebarVitals()" (click)="settings.sidebarVitals.set(!settings.sidebarVitals())"><span></span></button>
+              </div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Docker disk usage section</div>
+                  <div class="l-sub">Collapsed docker system df with a prune action</div>
+                </div>
+                <button class="toggle" [class.on]="settings.dockerDiskSection()" (click)="settings.dockerDiskSection.set(!settings.dockerDiskSection())"><span></span></button>
+              </div>
+              <div class="hint">Images, volumes and networks stay out of Pear on purpose — the terminal is already open.</div>
+            </div>
+          }
           @case ('keyboard') {
             <div class="group">
               <div class="g-title">Shortcuts</div>

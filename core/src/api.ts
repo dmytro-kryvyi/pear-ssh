@@ -1,7 +1,10 @@
 import type {
+  ContainerStatsMap,
   DirListing,
+  DockerDiskRow,
   FileEntry,
   HostConfig,
+  HostVitalsSample,
   OrchAction,
   OrchActionResult,
   Orchestration,
@@ -115,6 +118,18 @@ export interface PearApi {
      * the returned terminalCommand should be typed into the host terminal.
      */
     action(hostId: string, action: OrchAction): Promise<OrchActionResult>;
+  };
+  monitor: {
+    /**
+     * One raw vitals snapshot (cumulative CPU/net counters — the renderer
+     * derives rates from consecutive samples). Rejects with a message
+     * containing 'vitals unsupported' when the host has no /proc.
+     */
+    sample(hostId: string): Promise<HostVitalsSample>;
+    /** `docker system df` — slow on busy hosts, fetch lazily, never per tick. */
+    dockerDf(hostId: string): Promise<DockerDiskRow[]>;
+    /** Live per-container cpu/mem, keyed by container id. */
+    stats(hostId: string): Promise<ContainerStatsMap>;
   };
   history: {
     /**

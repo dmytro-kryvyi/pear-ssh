@@ -33,7 +33,9 @@ export {
   subExec,
   subShellCommand,
 } from './ssh/subhost';
-export { primaryKind } from './orchestration/orchestration';
+export { fetchStats, primaryKind } from './orchestration/orchestration';
+export { VITALS_COMMAND, VITALS_UNSUPPORTED, fetchVitals, parseVitals } from './monitor/vitals';
+export { fetchDockerDf } from './monitor/docker-df';
 export { parseGuestIp } from './orchestration/guest-ip';
 export { HostStore, type HostStorage } from './hosts/store';
 export { EphemeralHostRegistry } from './hosts/ephemeral';

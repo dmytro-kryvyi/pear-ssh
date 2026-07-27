@@ -2,13 +2,20 @@ import { Component, inject, output, signal } from '@angular/core';
 import { ACCENTS, Settings, type Accent } from '../settings';
 import { PearIcon } from '../icons/icon';
 
-export type SettingsSection = 'general' | 'files' | 'transfers' | 'terminal' | 'keyboard';
+export type SettingsSection =
+  | 'general'
+  | 'files'
+  | 'transfers'
+  | 'terminal'
+  | 'monitor'
+  | 'keyboard';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
   { id: 'general', label: 'General', icon: 'settings' },
   { id: 'files', label: 'File browser', icon: 'folder' },
   { id: 'transfers', label: 'Transfers', icon: 'swap' },
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
+  { id: 'monitor', label: 'Monitoring', icon: 'cpu' },
   { id: 'keyboard', label: 'Keyboard', icon: 'activity' },
 ];
 

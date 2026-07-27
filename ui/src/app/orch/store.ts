@@ -1,11 +1,25 @@
 import { Injectable, inject, signal } from '@angular/core';
-import type { OrchAction, Orchestration } from '@pear/core';
+import type {
+  ContainerInfo,
+  ContainerStatsMap,
+  DockerDiskRow,
+  OrchAction,
+  Orchestration,
+} from '@pear/core';
 import { Pear } from '../pear';
 
 export interface OrchState {
   status: 'detecting' | 'ready' | 'none' | 'error';
   data?: Orchestration;
   error?: string;
+}
+
+export interface DockerDfState {
+  loading: boolean;
+  rows?: DockerDiskRow[];
+  error?: string;
+  /** When the rows were fetched (ms epoch). */
+  at?: number;
 }
 
 /**
@@ -54,6 +68,60 @@ export class OrchStore {
       const { [hostId]: _removed, ...rest } = all;
       return rest;
     });
+    this.dockerDf.update((all) => {
+      const { [hostId]: _removed, ...rest } = all;
+      return rest;
+    });
+  }
+
+  /** Live per-container stats from the monitor tick, patched in place. */
+  applyStats(hostId: string, stats: ContainerStatsMap): void {
+    this.states.update((all) => {
+      const st = all[hostId];
+      const docker = st?.data?.docker;
+      if (!st || !docker) return all;
+      const patch = (c: ContainerInfo): ContainerInfo => {
+        const live = stats[c.id];
+        // A running container missing from stats keeps its last values; a
+        // stopped one clears them.
+        if (!live) return c.running ? c : c.cpu == null ? c : { ...c, cpu: null, mem: null };
+        return { ...c, cpu: live.cpu, mem: live.mem, maxmem: live.maxmem };
+      };
+      return {
+        ...all,
+        [hostId]: {
+          ...st,
+          data: {
+            ...st.data,
+            docker: {
+              containers: docker.containers.map(patch),
+              groups: docker.groups.map((g) => ({ ...g, containers: g.containers.map(patch) })),
+            },
+          },
+        },
+      };
+    });
+  }
+
+  // ---- docker system df (lazy: slow on busy hosts, never on the tick) ------
+
+  readonly dockerDf = signal<Readonly<Record<string, DockerDfState>>>({});
+
+  async fetchDockerDf(hostId: string): Promise<void> {
+    if (this.dockerDf()[hostId]?.loading) return;
+    this.dockerDf.update((all) => ({ ...all, [hostId]: { ...all[hostId], loading: true } }));
+    try {
+      const rows = await this.pear.api.monitor.dockerDf(hostId);
+      this.dockerDf.update((all) => ({
+        ...all,
+        [hostId]: { loading: false, rows, at: Date.now() },
+      }));
+    } catch (err) {
+      this.dockerDf.update((all) => ({
+        ...all,
+        [hostId]: { ...all[hostId], loading: false, error: cleanIpcError(err) },
+      }));
+    }
   }
 
   private async fetch(hostId: string, previous?: Orchestration): Promise<void> {

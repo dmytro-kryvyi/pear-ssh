@@ -13,6 +13,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
+import { ContextMenuService } from '../menu/context-menu';
 import { History } from './history';
 import { InlineSuggest } from './suggest';
 import type { TermTab } from './tabs';
@@ -62,6 +63,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
   private readonly pear = inject(Pear);
   private readonly history = inject(History);
   private readonly settings = inject(Settings);
+  private readonly menu = inject(ContextMenuService);
 
   private xterm?: Terminal;
   private fit?: FitAddon;
@@ -94,6 +96,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       scrollback: 10_000,
       theme: THEME,
     });
+    xterm.attachCustomKeyEventHandler((e) => this.handleClipboardKeys(e));
     const fit = new FitAddon();
     xterm.loadAddon(fit);
     xterm.open(this.hostEl().nativeElement);
@@ -145,6 +148,70 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
     } catch (err) {
       this.failed.emit(cleanIpcError(err));
     }
+  }
+
+  /**
+   * Clipboard keys, handled before xterm turns them into PTY bytes.
+   * Ctrl+C only copies while text is selected; otherwise it stays SIGINT.
+   */
+  private handleClipboardKeys(e: KeyboardEvent): boolean {
+    if (e.type !== 'keydown' || !this.xterm) return true;
+    const key = e.key.toLowerCase();
+    const copyKey =
+      (e.ctrlKey && e.shiftKey && key === 'c') ||
+      (e.ctrlKey && !e.shiftKey && key === 'c' && this.xterm.hasSelection()) ||
+      (e.ctrlKey && key === 'insert');
+    if (copyKey) {
+      this.copySelection();
+      return false;
+    }
+    const pasteKey = (e.ctrlKey && e.shiftKey && key === 'v') || (e.shiftKey && key === 'insert');
+    if (pasteKey) {
+      void this.paste();
+      return false;
+    }
+    return true;
+  }
+
+  private copySelection(): void {
+    const text = this.xterm?.getSelection();
+    if (!text) return;
+    void navigator.clipboard.writeText(text);
+    // Deselecting is the visual receipt that the copy happened.
+    this.xterm?.clearSelection();
+  }
+
+  private async paste(): Promise<void> {
+    const text = await navigator.clipboard.readText();
+    // xterm.paste() normalizes newlines and honors bracketed paste mode, then
+    // feeds onData — the same path keystrokes take.
+    if (text) this.xterm?.paste(text);
+  }
+
+  onContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const xterm = this.xterm;
+    if (!xterm) return;
+    this.menu.open(event.clientX, event.clientY, [
+      {
+        label: 'Copy',
+        icon: 'copy',
+        shortcut: 'Ctrl+Shift+C',
+        disabled: !xterm.hasSelection(),
+        onClick: () => this.copySelection(),
+      },
+      {
+        label: 'Paste',
+        icon: 'clipboard',
+        shortcut: 'Ctrl+Shift+V',
+        onClick: () => {
+          void this.paste();
+          xterm.focus();
+        },
+      },
+      { divider: true },
+      { label: 'Select All', onClick: () => xterm.selectAll() },
+    ]);
   }
 
   /** First printable keystroke marks the tab as user-owned ("has history"). */

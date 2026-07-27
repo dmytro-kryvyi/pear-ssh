@@ -7,6 +7,7 @@ export type SizeUnits = 'binary' | 'decimal';
 export type SameHostDrag = 'move' | 'copy' | 'ask';
 export type ConflictSetting = 'rename' | 'overwrite' | 'skip';
 export type TermPlacement = 'shared' | 'per-host' | 'in-pane';
+export type MonitorInterval = 2 | 5 | 10;
 
 export const ACCENTS: Record<Accent, { main: string; soft: string; line: string }> = {
   teal: {
@@ -64,6 +65,18 @@ export class Settings {
   readonly verifyChecksums = signal(false);
   readonly termPlacement = signal<TermPlacement>('shared');
 
+  // Monitoring
+  /** Sample host vitals on an interval (off = manual sample-now only). */
+  readonly liveStats = signal(true);
+  /** Seconds between samples. */
+  readonly monitorInterval = signal<MonitorInterval>(5);
+  /** Also refresh docker container stats on the tick (visible tabs only). */
+  readonly containerStats = signal(false);
+  /** CPU/mem micro-meters under connected hosts in the sidebar. */
+  readonly sidebarVitals = signal(true);
+  /** Collapsed `docker system df` section on the docker page. */
+  readonly dockerDiskSection = signal(true);
+
   constructor() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
@@ -93,6 +106,15 @@ export class Settings {
       if (['shared', 'per-host', 'in-pane'].includes(saved.termPlacement)) {
         this.termPlacement.set(saved.termPlacement);
       }
+      if (typeof saved.liveStats === 'boolean') this.liveStats.set(saved.liveStats);
+      if ([2, 5, 10].includes(saved.monitorInterval)) {
+        this.monitorInterval.set(saved.monitorInterval);
+      }
+      if (typeof saved.containerStats === 'boolean') this.containerStats.set(saved.containerStats);
+      if (typeof saved.sidebarVitals === 'boolean') this.sidebarVitals.set(saved.sidebarVitals);
+      if (typeof saved.dockerDiskSection === 'boolean') {
+        this.dockerDiskSection.set(saved.dockerDiskSection);
+      }
     } catch {
       // corrupt settings: keep defaults
     }
@@ -121,6 +143,11 @@ export class Settings {
           maxParallel: this.maxParallel(),
           verifyChecksums: this.verifyChecksums(),
           termPlacement: this.termPlacement(),
+          liveStats: this.liveStats(),
+          monitorInterval: this.monitorInterval(),
+          containerStats: this.containerStats(),
+          sidebarVitals: this.sidebarVitals(),
+          dockerDiskSection: this.dockerDiskSection(),
         }),
       );
     });

@@ -1,0 +1,55 @@
+<div class="wrap">
+  <button class="df-head" (click)="toggle()">
+    <pear-icon [name]="open() ? 'chevronDown' : 'chevronRight'" [size]="12" class="chev" />
+    <pear-icon name="disk" [size]="13" class="accent" />
+    <span class="df-title">Disk usage</span>
+    <span class="df-cmd">docker system df</span>
+    <span class="df-right">
+      @if (df()?.loading) {
+        <span class="df-cmd">measuring…</span>
+      } @else if (rows().length) {
+        <span class="df-total">{{ bytes(total()) }}</span>
+        @if (canPrune()) {
+          <span class="df-pill">{{ bytes(reclaimable()) }} reclaimable</span>
+        }
+      }
+    </span>
+  </button>
+
+  @if (open()) {
+    <div class="df-body">
+      @if (df()?.error; as err) {
+        <div class="df-error">{{ err }}</div>
+      } @else if (df()?.loading && !rows().length) {
+        <div class="df-loading">Running docker system df…</div>
+      } @else {
+        @for (r of rows(); track r.type) {
+          <div class="df-row">
+            <span class="df-name">{{ label(r) }}</span>
+            <span class="df-cell">{{ r.active }}/{{ r.count }}</span>
+            <span class="df-cell strong">{{ r.sizeText || '—' }}</span>
+            <span class="df-barwrap">
+              <span class="df-bar">
+                <span class="used" [style.width.%]="usedShare(r)"></span>
+                <span class="reclaim" [style.width.%]="100 - usedShare(r)"></span>
+              </span>
+              <span class="df-cell reclaim-val" [class.warn]="(r.reclaimable ?? 0) > 0">
+                {{ (r.reclaimable ?? 0) > 0 ? r.reclaimableText : '—' }}
+              </span>
+            </span>
+          </div>
+        }
+        <div class="df-foot">
+          <button class="df-prune" [disabled]="!canPrune()" (click)="prune.emit()">
+            <pear-icon name="trash" [size]="12" />
+            Prune reclaimable@if (canPrune()) { · {{ bytes(reclaimable()) }}}
+          </button>
+          <span class="df-note">docker system prune -af · runs in the terminal so you can read it · volumes untouched</span>
+          <button class="mini-btn" title="Re-measure" (click)="refresh()">
+            <pear-icon name="refresh" [size]="11" />
+          </button>
+        </div>
+      }
+    </div>
+  }
+</div>

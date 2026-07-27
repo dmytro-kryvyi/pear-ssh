@@ -1,0 +1,116 @@
+@if (st(); as s) {
+  @if (s.supported) {
+    <div class="band" [class.stale]="s.stale">
+      <div class="band-head">
+        <pear-icon name="activity" [size]="13" class="accent" />
+        <span class="band-title">Host vitals</span>
+        <span class="band-dim">{{ host().user }}&#64;{{ host().name }}</span>
+        <span class="band-right">
+          @if (latest(); as l) {
+            <span class="band-dim">up {{ uptime(l.uptimeSec) }} · {{ l.kernel }}</span>
+          }
+          <span class="live-pill" [class.on]="live() && !s.stale">
+            <span class="pulse" [class.beat]="live() && !s.stale"></span>
+            {{ s.stale ? 'stalled' : live() ? 'live · ' + settings.monitorInterval() + 's' : 'paused' }}
+          </span>
+          <span class="seg-mini">
+            @for (n of [2, 5, 10]; track n) {
+              <button [class.active]="settings.monitorInterval() === n" (click)="settings.monitorInterval.set($any(n))">{{ n }}s</button>
+            }
+          </span>
+          <button class="mini-btn" [title]="live() ? 'Pause sampling' : 'Resume sampling'" (click)="settings.liveStats.set(!live())">
+            <pear-icon [name]="live() ? 'pause' : 'play'" [size]="11" />
+          </button>
+          <button class="mini-btn" title="Sample now" (click)="sampleNow()">
+            <pear-icon name="refresh" [size]="11" />
+          </button>
+        </span>
+      </div>
+
+      <div class="cards">
+        <!-- CPU -->
+        <div class="vcard">
+          <span class="vlabel"><pear-icon name="cpu" [size]="11" /> CPU</span>
+          @if (point(); as p) {
+            <span class="vbig" [class.warn]="p.cpuPct != null && tone(p.cpuPct) === 'warn'" [class.err]="p.cpuPct != null && tone(p.cpuPct) === 'err'">
+              {{ p.cpuPct == null ? '—' : Math.round(p.cpuPct) }}@if (p.cpuPct != null) {<span class="vunit">%</span>}
+            </span>
+            <div class="cores">
+              @for (c of p.corePcts; track $index) {
+                <span class="core" [style.height.%]="Math.max(8, c ?? 0)" [style.background]="'var(--' + tone(c ?? 0) + ')'"></span>
+              }
+            </div>
+          }
+          <pear-sparkline class="spark" [points]="cpuHist()" [tone]="s.stale ? 'muted' : tone(point()?.cpuPct ?? 0)" />
+          @if (latest(); as l) {
+            <span class="vsub">load {{ l.loadavg[0].toFixed(2) }} · {{ l.loadavg[1].toFixed(2) }} · {{ l.loadavg[2].toFixed(2) }} on {{ l.cores.length }} cores</span>
+          }
+        </div>
+
+        <!-- Memory -->
+        <div class="vcard">
+          <span class="vlabel"><pear-icon name="activity" [size]="11" /> Memory</span>
+          @if (point(); as p) {
+            <span class="vbig" [class.warn]="tone(p.memPct) === 'warn'" [class.err]="tone(p.memPct) === 'err'">
+              {{ Math.round(p.memPct) }}<span class="vunit">%</span>
+            </span>
+            <div class="rows">
+              <div class="row">
+                <span class="row-name">resident</span>
+                <span class="row-val">{{ bytes(memUsed()) }}</span>
+              </div>
+              <div class="track"><div class="fill" [style.width.%]="Math.max(2, p.memPct)" [style.background]="'var(--' + tone(p.memPct) + ')'"></div></div>
+              <div class="row">
+                <span class="row-name">swap</span>
+                <span class="row-val">{{ bytes(swapUsed()) }}</span>
+              </div>
+              <div class="track"><div class="fill dim" [style.width.%]="Math.max(2, p.swapPct)"></div></div>
+            </div>
+          }
+          <pear-sparkline class="spark" [points]="memHist()" [tone]="s.stale ? 'muted' : tone(point()?.memPct ?? 0)" />
+          @if (latest(); as l) {
+            <span class="vsub">{{ kb(l.memTotalKB) }} total · {{ kb(l.swapTotalKB) }} swap</span>
+          }
+        </div>
+
+        <!-- Disk -->
+        <div class="vcard">
+          <span class="vlabel"><pear-icon name="disk" [size]="11" /> Disk</span>
+          <span class="vbig" [class.warn]="tone(worstDisk()) === 'warn'" [class.err]="tone(worstDisk()) === 'err'">
+            {{ Math.round(worstDisk()) }}<span class="vunit">%</span>
+          </span>
+          <div class="rows">
+            @for (m of mounts(); track m.mount) {
+              <div class="row">
+                <span class="row-name" [title]="m.fs">{{ m.mount }}</span>
+                <span class="row-val">{{ kb(m.usedKB) }} / {{ kb(m.totalKB) }}</span>
+              </div>
+              <div class="track"><div class="fill" [style.width.%]="Math.max(2, mountPct(m))" [style.background]="'var(--' + tone(mountPct(m)) + ')'"></div></div>
+            }
+          </div>
+          @if (latest(); as l) {
+            <span class="vsub">{{ l.mounts.length }} filesystem{{ l.mounts.length === 1 ? '' : 's' }}@if (hiddenMounts()) { · {{ hiddenMounts() }} more} · df</span>
+          }
+        </div>
+
+        <!-- Network -->
+        <div class="vcard">
+          <span class="vlabel"><pear-icon name="network" [size]="11" /> Network</span>
+          <span class="vbig">
+            @if (netTotal() == null) { — } @else { {{ rate(netTotal()) }} }
+          </span>
+          <pear-sparkline class="spark tall" [points]="netHist()" [max]="10240" tone="accent" />
+          @if (point(); as p) {
+            <span class="vsub">↓ {{ rate(p.rxRate) }}&nbsp;&nbsp;↑ {{ rate(p.txRate) }}@if (p.iface) { &nbsp;{{ p.iface }}}</span>
+          }
+        </div>
+      </div>
+
+      <div class="band-foot">
+        <pear-icon name="terminal" [size]="11" />
+        <span>{{ s.stale ? 'last known values — sampling stalled' : 'one round-trip per sample' }}</span>
+        <span class="foot-cmd">cat /proc/stat /proc/meminfo; df -Pk; cat /proc/net/dev</span>
+      </div>
+    </div>
+  }
+}

@@ -18,6 +18,8 @@ import { PearIcon } from './icons/icon';
 import { ContextMenu } from './menu/context-menu';
 import { TransferQueue } from './transfers/queue';
 import { SettingsModal } from './settings/settings-modal';
+import { MonitorStore } from './monitor/store';
+import { HostMeter } from './monitor/host-meter';
 
 const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
 
@@ -32,6 +34,7 @@ const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
     ContextMenu,
     TransferQueue,
     SettingsModal,
+    HostMeter,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -39,6 +42,7 @@ const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
 export class App {
   private readonly pear = inject(Pear);
   private readonly orchStore = inject(OrchStore);
+  private readonly monitor = inject(MonitorStore);
   readonly settings = inject(Settings);
   readonly tabs = inject(TermTabs);
   readonly catalog = inject(HostCatalog);
@@ -50,6 +54,11 @@ export class App {
   readonly bridged = this.pear.available;
   readonly error = signal<string | null>(null);
   readonly settingsOpen = signal(false);
+
+  /** Transient "lost connection" notice; deliberate removals stay silent. */
+  readonly notice = signal<string | null>(null);
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly expectedDisconnects = new Set<string>();
 
   readonly facetMeta = FACET_META;
 
@@ -115,6 +124,14 @@ export class App {
     void this.catalog.refresh();
 
     this.pear.api.onHostDisconnected((hostId) => {
+      if (this.expectedDisconnects.has(hostId)) {
+        this.expectedDisconnects.delete(hostId);
+      } else if (this.connectedIds().has(hostId)) {
+        const host = this.catalog.byId(hostId);
+        // A dying parent takes its sub-hosts with it — one notice is enough.
+        for (const child of this.childrenOf(hostId)) this.expectedDisconnects.add(child.id);
+        this.showNotice(`Lost connection to ${host?.name ?? hostId}`);
+      }
       this.termConnected.update((ids) => {
         const next = new Set(ids);
         next.delete(hostId);
@@ -122,6 +139,7 @@ export class App {
       });
       this.fsStore.dropHost(hostId);
       this.orchStore.clear(hostId);
+      this.monitor.drop(hostId);
       this.discovered.delete(hostId);
       this.tabs.closeHost(hostId);
       // Ephemeral sub-hosts don't outlive their connection (main sends a
@@ -148,6 +166,17 @@ export class App {
       if (!loc || !loc.path.startsWith('/')) return;
       if (!untracked(() => this.connectedIds().has(loc.hostId))) return;
       untracked(() => this.tabs.navigate(loc.hostId, loc.path));
+    });
+
+    // Resource monitor targets: every connected host when the sidebar shows
+    // micro-meters, otherwise just the hosts with open workspace tabs. Only
+    // connected hosts — sampling rides the existing SSH connection.
+    effect(() => {
+      const connected = this.connectedIds();
+      const targets = this.settings.sidebarVitals()
+        ? connected
+        : new Set(this.ws.openHostIds().filter((id) => connected.has(id)));
+      untracked(() => this.monitor.setTargets(targets));
     });
   }
 
@@ -193,8 +222,16 @@ export class App {
     this.ws.newTab(null, saved.id, '~');
   }
 
+  private showNotice(text: string): void {
+    this.notice.set(text);
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => this.notice.set(null), 6000);
+  }
+
   async removeHost(event: MouseEvent, host: HostConfig): Promise<void> {
     event.stopPropagation();
+    this.expectedDisconnects.add(host.id);
+    for (const child of this.childrenOf(host.id)) this.expectedDisconnects.add(child.id);
     await this.pear.api.hosts.remove(host.id);
     this.tabs.closeHost(host.id);
     this.ws.closeHost(host.id);

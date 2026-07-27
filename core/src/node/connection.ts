@@ -119,6 +119,13 @@ export class SshConnection implements SshTransport {
         .once('error', onError)
         .once('ready', () => {
           this.client.removeListener('error', onError);
+          // A dropped link (ECONNRESET, keepalive timeout) emits 'error' on
+          // the client; with no listener that's an uncaught exception in the
+          // embedding process. 'close' follows and runs disconnect cleanup.
+          this.client.on('error', (err: Error) => {
+            this.connected = false;
+            console.warn(`ssh ${cfg.user}@${cfg.host}: ${err.message}`);
+          });
           this.connected = true;
           resolve();
         })

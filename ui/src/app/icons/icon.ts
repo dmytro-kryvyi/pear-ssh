@@ -65,6 +65,8 @@ const ICONS: Record<string, string> = {
   folderPlus:
     '<path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M8 6.8v4M6 8.8h4"/>',
   filter: '<path d="M2.5 3h11L9.5 8.5V13l-3-1.5V8.5z"/>',
+  pause: '<path d="M5 3.5h2v9H5zM9 3.5h2v9H9z" fill="currentColor" stroke="none"/>',
+  disk: '<path d="M2 9.5h12v3.5H2z"/><path d="M2 9.5L3.8 4h8.4L14 9.5"/><circle cx="11.5" cy="11.2" r="0.6" fill="currentColor"/>',
 };
 
 @Component({

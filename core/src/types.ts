@@ -201,9 +201,74 @@ export type OrchAction =
       vmid: number;
       guestType: 'vm' | 'lxc';
       op: 'start' | 'shutdown' | 'reboot' | 'console';
-    };
+    }
+  | { type: 'engine'; op: 'prune' };
 
 export interface OrchActionResult {
   /** Set for streaming actions (logs, console): run this in the terminal. */
   terminalCommand?: string;
 }
+
+// ---- Resource monitor ------------------------------------------------------
+
+/** Cumulative jiffies from /proc/stat; idle includes iowait. */
+export interface CpuTicks {
+  idle: number;
+  total: number;
+}
+
+export interface MountUsage {
+  fs: string;
+  mount: string;
+  totalKB: number;
+  usedKB: number;
+}
+
+/** Cumulative byte counters from /proc/net/dev. */
+export interface NetIfaceCounters {
+  name: string;
+  rxBytes: number;
+  txBytes: number;
+}
+
+/**
+ * One raw vitals snapshot from a single exec round-trip. CPU and network are
+ * cumulative counters — rates come from the delta between two samples, which
+ * the caller computes (core keeps no per-host state).
+ */
+export interface HostVitalsSample {
+  at: number;
+  cpu: CpuTicks;
+  /** Per-core ticks, cpu0..cpuN in order. */
+  cores: CpuTicks[];
+  loadavg: [number, number, number];
+  uptimeSec: number;
+  kernel: string;
+  memTotalKB: number;
+  memAvailableKB: number;
+  swapTotalKB: number;
+  swapFreeKB: number;
+  /** Real filesystems only (pseudo-fs filtered; '/' kept as fallback). */
+  mounts: MountUsage[];
+  /** Every interface except lo; the UI filters virtual ones. */
+  net: NetIfaceCounters[];
+}
+
+/** One row of `docker system df` (containers / images / volumes / build cache). */
+export interface DockerDiskRow {
+  type: 'containers' | 'images' | 'volumes' | 'buildCache';
+  count: number;
+  active: number;
+  /** Parsed bytes, null if docker's human string was unparseable. */
+  size: number | null;
+  reclaimable: number | null;
+  /** Docker's own human strings, shown verbatim in the UI. */
+  sizeText: string;
+  reclaimableText: string;
+}
+
+/** Live per-container stats keyed by container id (rides the monitor tick). */
+export type ContainerStatsMap = Record<
+  string,
+  { cpu: number | null; mem: number | null; maxmem: number | null }
+>;
