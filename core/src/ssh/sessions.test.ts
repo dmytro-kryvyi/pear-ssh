@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionManager } from './sessions';
+import { SessionManager, terminalBootstrap } from './sessions';
 import type { ExecResult, ShellChannel, SshTransport } from './transport';
 import type { DirListing, HostConfig, TermSize } from '../types';
 
@@ -330,4 +330,127 @@ test('a via cycle trips the chain depth guard', async () => {
   const { sessions } = viaHarness((id) => (id === 'a' ? a : id === 'b' ? b : undefined));
 
   await assert.rejects(() => sessions.openTerminal(a, SIZE), /too deep or cyclic/);
+});
+
+// ---- Endpoint failover -----------------------------------------------------
+
+/** Factory harness where any endpoint addressed 'dead*' refuses to connect. */
+function failoverHarness() {
+  const made: Array<{ config: HostConfig; transport: FakeTransport }> = [];
+  const sessions = new SessionManager(
+    { onTermData: () => {}, onTermExit: () => {}, onHostDisconnected: () => {} },
+    (config) => {
+      const transport = new FakeTransport();
+      if (config.host.startsWith('dead')) {
+        transport.connect = async () => {
+          throw new Error(`connect ECONNREFUSED ${config.host}:${config.port}`);
+        };
+      }
+      made.push({ config, transport });
+      return transport;
+    },
+  );
+  return { sessions, made };
+}
+
+const MULTI: HostConfig = {
+  ...HOST,
+  id: 'multi',
+  endpoints: [
+    { id: 'e1', label: 'lan', addr: 'dead.lan', port: 22 },
+    { id: 'e2', addr: 'live.example', port: 2222 },
+  ],
+};
+
+test('endpoints are dialed in order and the first that answers wins', async () => {
+  const { sessions, made } = failoverHarness();
+
+  await sessions.openTerminal(MULTI, SIZE);
+
+  assert.deepEqual(
+    made.map((m) => `${m.config.host}:${m.config.port}`),
+    ['dead.lan:22', 'live.example:2222'],
+  );
+  // Non-final endpoints get the short dial budget; the last the full one.
+  assert.equal(made[0].config.readyTimeoutMs, 5_000);
+  assert.equal(made[1].config.readyTimeoutMs, 15_000);
+  assert.ok(!made[0].transport.isConnected);
+  assert.ok(made[1].transport.isConnected);
+
+  // The surviving connection is cached — no re-dial on the next terminal.
+  await sessions.openTerminal(MULTI, SIZE);
+  assert.equal(made.length, 2);
+});
+
+test('when every endpoint fails the error names each attempt', async () => {
+  const { sessions } = failoverHarness();
+  const allDead: HostConfig = {
+    ...MULTI,
+    endpoints: [
+      { id: 'e1', label: 'lan', addr: 'dead.lan', port: 22 },
+      { id: 'e2', addr: 'dead.wan', port: 2222 },
+    ],
+  };
+
+  await assert.rejects(
+    () => sessions.openTerminal(allDead, SIZE),
+    (err: Error) => {
+      assert.match(err.message, /All endpoints failed/);
+      assert.match(err.message, /lan \(dead\.lan:22\)/);
+      assert.match(err.message, /dead\.wan:2222/);
+      return true;
+    },
+  );
+});
+
+test('a single-address host keeps its raw connect error', async () => {
+  const { sessions } = failoverHarness();
+  const single: HostConfig = { ...HOST, id: 'single', host: 'dead.one' };
+
+  await assert.rejects(
+    () => sessions.openTerminal(single, SIZE),
+    /^Error: connect ECONNREFUSED dead\.one:22$/,
+  );
+});
+
+test('an explicit per-host dial budget applies to every endpoint', async () => {
+  const { sessions, made } = failoverHarness();
+
+  await sessions.openTerminal({ ...MULTI, id: 'budget', readyTimeoutMs: 2_000 }, SIZE);
+
+  assert.deepEqual(
+    made.map((m) => m.config.readyTimeoutMs),
+    [2_000, 2_000],
+  );
+});
+
+// ---- Terminal bootstrap (cwd / env / startup) ------------------------------
+
+test('terminalBootstrap orders env, cwd, then startup and quotes values', () => {
+  const line = terminalBootstrap({
+    ...HOST,
+    env: [
+      { k: 'TZ', v: 'Europe/Berlin' },
+      { k: 'MSG', v: "it's fine" },
+      { k: 'bad-key; rm -rf /', v: 'x' }, // invalid identifier: dropped
+    ],
+    cwd: '/opt/stacks',
+    startup: ['  tmux attach || tmux new  ', ''],
+  });
+
+  assert.equal(line, "export TZ='Europe/Berlin' MSG='it'\\''s fine'; cd '/opt/stacks'; tmux attach || tmux new");
+});
+
+test('terminalBootstrap is empty for a plain host and honors cwd overrides', () => {
+  assert.equal(terminalBootstrap(HOST), '');
+  assert.equal(terminalBootstrap({ ...HOST, cwd: '/srv' }, '/tmp'), "cd '/tmp'");
+});
+
+test('openTerminal writes the bootstrap line into the new shell', async () => {
+  const { sessions, transport } = harness();
+  const withOpts: HostConfig = { ...HOST, cwd: '/srv', startup: ['uptime'] };
+
+  await sessions.openTerminal(withOpts, SIZE);
+
+  assert.deepEqual(transport.channels[0].written, ["cd '/srv'; uptime\n"]);
 });

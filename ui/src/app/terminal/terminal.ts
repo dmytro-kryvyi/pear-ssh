@@ -113,7 +113,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       const id = await term.open(
         tab.hostId,
         { cols: xterm.cols, rows: xterm.rows },
-        this.password(),
+        { password: this.password() || undefined },
       );
       this.termId = id;
       this.opened.emit(id);

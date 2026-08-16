@@ -1,0 +1,44 @@
+<div class="switcher">
+  <button class="trigger" [class.open]="open()" (click)="open.set(!open())">
+    <pear-icon [name]="glyph(active())" [size]="14" [style.color]="colorOf(active())" />
+    <span class="trigger-name">{{ active()?.name ?? 'All hosts' }}</span>
+    <span class="trigger-count">{{ onlineFor(active()) }}/{{ countFor(active()) }}</span>
+    <pear-icon name="chevronDown" [size]="11" class="chev" />
+  </button>
+
+  @if (open()) {
+    <div class="backdrop" (mousedown)="open.set(false)"></div>
+    <div class="menu">
+      <div
+        class="menu-row"
+        [class.current]="settings.activeGroup() === 'all'"
+        (mousedown)="select('all')"
+      >
+        <pear-icon name="server" [size]="13" style="color: var(--accent)" />
+        <span class="row-name">All hosts</span>
+        <span class="row-count">{{ countFor(null) }}</span>
+      </div>
+      @for (g of groups.groups(); track g.id) {
+        <div
+          class="menu-row"
+          [class.current]="settings.activeGroup() === g.id"
+          [class.drop]="dragOver() === g.id"
+          (mousedown)="select(g.id)"
+          (dragover)="onDragOver($event, g.id)"
+          (dragleave)="dragOver.set(null)"
+          (drop)="onDrop($event, g)"
+        >
+          <pear-icon [name]="g.icon" [size]="13" [style.color]="colorOf(g)" />
+          <span class="row-name">{{ g.name }}</span>
+          <span class="row-count">{{ countFor(g) }}</span>
+          <button class="row-edit" title="Edit workspace" (mousedown)="edit($event, g)">
+            <pear-icon name="pencil" [size]="11" />
+          </button>
+        </div>
+      }
+      <button class="menu-new" (mousedown)="create()">
+        <pear-icon name="plus" [size]="11" /> New workspace
+      </button>
+    </div>
+  }
+</div>

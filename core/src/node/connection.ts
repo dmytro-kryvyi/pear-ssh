@@ -39,26 +39,67 @@ export function toAbortSignal(like?: AbortSignalLike): AbortSignal | undefined {
 
 const DEFAULT_KEYS = ['id_ed25519', 'id_rsa', 'id_ecdsa'];
 
-function resolveAuth(cfg: HostConfig): Partial<ConnectConfig> {
+function defaultKey(): Buffer | undefined {
+  for (const name of DEFAULT_KEYS) {
+    try {
+      return readFileSync(join(homedir(), '.ssh', name));
+    } catch {
+      // keep looking
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Map HostAuth onto ssh2 connect options. An explicit `method` restricts auth
+ * to that mechanism; undefined keeps the legacy heuristic chain (agent ->
+ * explicit key -> default keys -> password) for hosts created before methods
+ * existed. Exported for tests.
+ */
+export function resolveAuth(cfg: HostConfig): Partial<ConnectConfig> {
   const auth = cfg.auth ?? {};
   const out: Partial<ConnectConfig> = {};
+  const agentSock = process.env.SSH_AUTH_SOCK;
 
-  if (auth.agent !== false && process.env.SSH_AUTH_SOCK) {
-    out.agent = process.env.SSH_AUTH_SOCK;
+  if (auth.method === 'password') {
+    // Password only — no agent, no keys.
+    if (auth.password) {
+      out.password = auth.password;
+      out.tryKeyboard = true;
+    }
+    return out;
+  }
+
+  if (auth.method === 'agent') {
+    // Agent only — no key-file fallback.
+    if (agentSock) out.agent = agentSock;
+    if (out.agent && auth.agentForward) out.agentForward = true;
+    return out;
+  }
+
+  if (auth.method === 'key') {
+    const key = auth.privateKeyPath ? readFileSync(auth.privateKeyPath) : defaultKey();
+    if (key) out.privateKey = key;
+    if (auth.passphrase) out.passphrase = auth.passphrase;
+    // Forwarding needs the agent on the wire even in key mode.
+    if (agentSock && auth.agentForward) {
+      out.agent = agentSock;
+      out.agentForward = true;
+    }
+    return out;
+  }
+
+  // Legacy heuristic chain — must stay behaviorally identical for existing hosts.
+  if (auth.agent !== false && agentSock) {
+    out.agent = agentSock;
+    if (auth.agentForward) out.agentForward = true;
   }
   if (auth.privateKeyPath) {
     out.privateKey = readFileSync(auth.privateKeyPath);
     if (auth.passphrase) out.passphrase = auth.passphrase;
   } else if (!out.agent) {
-    // No agent and no explicit key: fall back to the first default key on disk
-    for (const name of DEFAULT_KEYS) {
-      try {
-        out.privateKey = readFileSync(join(homedir(), '.ssh', name));
-        break;
-      } catch {
-        // keep looking
-      }
-    }
+    const key = defaultKey();
+    if (key) out.privateKey = key;
   }
   if (auth.password) {
     out.password = auth.password;
@@ -135,7 +176,7 @@ export class SshConnection implements SshTransport {
           port: cfg.port,
           sock,
           username: cfg.user,
-          readyTimeout: 15_000,
+          readyTimeout: cfg.readyTimeoutMs ?? 15_000,
           keepaliveInterval: 15_000,
           ...resolveAuth(cfg),
         });

@@ -71,6 +71,13 @@ const ICONS: Record<string, string> = {
   disk: '<path d="M2 9.5h12v3.5H2z"/><path d="M2 9.5L3.8 4h8.4L14 9.5"/><circle cx="11.5" cy="11.2" r="0.6" fill="currentColor"/>',
   warning:
     '<path d="M8 2.5L14.5 13h-13z"/><path d="M8 6.5v3.2"/><circle cx="8" cy="11.6" r="0.5" fill="currentColor"/>',
+  pear: '<path d="M8 1.2c-.5 0-.9.4-.9.9 0 .2 0 .4.1.5-2 .6-3.4 2.4-3.4 4.6 0 3 2.5 4.8 4.2 4.8s4.2-1.8 4.2-4.8c0-2.2-1.4-4-3.4-4.6.1-.1.1-.3.1-.5 0-.5-.4-.9-.9-.9z" fill="currentColor" stroke="none"/><path d="M8.8 2.2c.6-.5 1.3-.8 2-.8"/>',
+  lightning: '<path d="M9 1L3 9h4l-1 6 6-8H8z" fill="currentColor" stroke="none"/>',
+  eye: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+  eyeOff:
+    '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><path d="M3 13L13 3"/>',
+  key: '<circle cx="5" cy="11" r="2.5"/><path d="M6.8 9.2L13 3M13 3v2.5M10.5 5.5L12 7"/>',
+  grip: '<circle cx="6" cy="4" r="0.8" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="0.8" fill="currentColor" stroke="none"/><circle cx="6" cy="8" r="0.8" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="0.8" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="0.8" fill="currentColor" stroke="none"/><circle cx="10" cy="12" r="0.8" fill="currentColor" stroke="none"/>',
 };
 
 @Component({

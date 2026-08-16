@@ -63,7 +63,9 @@ export {
 } from './monitor/vitals';
 export { fetchDockerDf } from './monitor/docker-df';
 export { parseGuestIp } from './orchestration/guest-ip';
-export { HostStore, type HostStorage } from './hosts/store';
+export { HostStore, sanitizeHost, type HostStorage, type SecretCipher } from './hosts/store';
+export { HostGroupStore } from './hosts/groups';
+export { autoShort, shortLabel } from './hosts/identity';
 export { EphemeralHostRegistry } from './hosts/ephemeral';
 export { shq } from './shq';
 export {

@@ -1,9 +1,13 @@
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { FacetKind, HostConfig, HostKind } from '@pear/core';
+import type { FacetKind, HostConfig, HostGroup, HostKind } from '@pear/core';
 import { Pear } from './pear';
 import { Settings } from './settings';
 import { HostCatalog } from './hosts';
+import { HostGroups } from './hosts/groups';
+import { HostEditor } from './hosts/host-editor';
+import { WorkspaceEditor } from './hosts/workspace-editor';
+import { WorkspaceSwitcher, HOST_DRAG_TYPE } from './hosts/workspace-switcher';
 import { TerminalPane } from './terminal/terminal';
 import { TermTabs, type TermTab } from './terminal/tabs';
 import { Workspace } from './workspace/workspace';
@@ -40,6 +44,9 @@ const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
     HostMeter,
     ClaudeDock,
     TasksDrawer,
+    HostEditor,
+    WorkspaceEditor,
+    WorkspaceSwitcher,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -55,10 +62,19 @@ export class App {
   readonly fsStore = inject(FsStore);
   readonly ops = inject(FileOps);
   readonly actions = inject(HostActions);
+  readonly hostGroups = inject(HostGroups);
 
   readonly bridged = this.pear.available;
   readonly error = signal<string | null>(null);
   readonly settingsOpen = signal(false);
+
+  /** Host being edited in the modal ('new' = blank draft). */
+  readonly editHost = signal<HostConfig | 'new' | null>(null);
+  /** Workspace (host group) being edited ('new' = blank draft). */
+  readonly editGroup = signal<HostGroup | 'new' | null>(null);
+  /** Host id being dragged from the sidebar (shows the workspace drop list). */
+  readonly dragHostId = signal<string | null>(null);
+  readonly dragOverGroup = signal<string | null>(null);
 
   /** Transient "lost connection" notice; deliberate removals stay silent. */
   readonly notice = signal<string | null>(null);
@@ -81,7 +97,7 @@ export class App {
   readonly selected = computed(() => this.catalog.byId(this.activeHostId()));
 
   readonly allHosts = this.catalog.all;
-  readonly rootHosts = this.catalog.roots;
+  readonly rootHosts = this.catalog.visibleRoots;
   readonly hasLocalHost = computed(() => this.allHosts().some((h) => h.local));
 
   /** One view-tab per orchestration facet the focused host actually runs. */
@@ -266,7 +282,7 @@ export class App {
       this.ws.activateTab(pane.id, existing.id);
       return;
     }
-    this.ws.newTab(pane?.id ?? null, host.id, this.fsStore.homes()[host.id] ?? '~');
+    this.ws.newTab(pane?.id ?? null, host.id, host.cwd || (this.fsStore.homes()[host.id] ?? '~'));
   }
 
   async addHost(): Promise<void> {
@@ -276,12 +292,13 @@ export class App {
       return;
     }
     const { user, host, port } = match.groups;
+    const tag = this.hostTag.trim();
     const saved = await this.pear.api.hosts.upsert({
       name: this.hostName.trim() || host,
       host,
       user,
       port: port ? Number(port) : 22,
-      tag: this.hostTag.trim() || undefined,
+      tags: tag ? [tag] : undefined,
       kind: 'plain',
     });
     this.target = '';
@@ -290,6 +307,81 @@ export class App {
     this.error.set(null);
     await this.catalog.refresh();
     this.ws.newTab(null, saved.id, '~');
+  }
+
+  // ---- host / workspace editors --------------------------------------------
+
+  openHostEditor(event: MouseEvent | null, host: HostConfig): void {
+    event?.stopPropagation();
+    this.editHost.set(host);
+  }
+
+  editorHost(): HostConfig | null {
+    const value = this.editHost();
+    return value === 'new' ? null : value;
+  }
+
+  editorGroup(): HostGroup | null {
+    const value = this.editGroup();
+    return value === 'new' ? null : value;
+  }
+
+  async onEditorRemoved(id: string): Promise<void> {
+    const host = this.catalog.byId(id);
+    this.editHost.set(null);
+    if (host) await this.removeHostById(host);
+  }
+
+  onEditorConnect(id: string): void {
+    this.editHost.set(null);
+    const host = this.catalog.byId(id);
+    if (host) this.openHost(host);
+  }
+
+  /** Workspace editor asked to edit one of its member hosts — switch modals. */
+  onGroupEditHost(id: string): void {
+    this.editGroup.set(null);
+    const host = this.catalog.byId(id);
+    if (host) this.editHost.set(host);
+  }
+
+  // ---- drag host onto a workspace ------------------------------------------
+
+  onHostDragStart(event: DragEvent, host: HostConfig): void {
+    event.dataTransfer?.setData(HOST_DRAG_TYPE, host.id);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+    this.dragHostId.set(host.id);
+  }
+
+  onHostDragEnd(): void {
+    this.dragHostId.set(null);
+    this.dragOverGroup.set(null);
+  }
+
+  onGroupDragOver(event: DragEvent, groupId: string): void {
+    event.preventDefault();
+    this.dragOverGroup.set(groupId);
+  }
+
+  async onGroupDrop(event: DragEvent, group: HostGroup): Promise<void> {
+    event.preventDefault();
+    const hostId = event.dataTransfer?.getData(HOST_DRAG_TYPE) || this.dragHostId();
+    this.dragHostId.set(null);
+    this.dragOverGroup.set(null);
+    if (hostId) await this.hostGroups.setMembership(hostId, group.id, true);
+  }
+
+  inGroup(hostId: string | null, group: HostGroup): boolean {
+    return hostId ? group.hostIds.includes(hostId) : false;
+  }
+
+  /** Tooltip for the short-label badge: full identity at a glance. */
+  shortTitle(host: HostConfig): string {
+    const parts = [host.name];
+    if (host.tags?.length) parts.push(host.tags.join(', '));
+    const groups = this.hostGroups.groupsOf(host.id).map((g) => g.name);
+    if (groups.length) parts.push(groups.join(', '));
+    return parts.join(' · ');
   }
 
   /** Register this machine as a host and open its files. */
@@ -307,6 +399,10 @@ export class App {
 
   async removeHost(event: MouseEvent, host: HostConfig): Promise<void> {
     event.stopPropagation();
+    await this.removeHostById(host);
+  }
+
+  private async removeHostById(host: HostConfig): Promise<void> {
     this.expectedDisconnects.add(host.id);
     for (const child of this.childrenOf(host.id)) this.expectedDisconnects.add(child.id);
     await this.pear.api.hosts.remove(host.id);

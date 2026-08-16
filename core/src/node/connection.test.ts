@@ -1,10 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Server } from 'ssh2';
 import { SessionManager } from '../ssh/sessions';
 import type { HostConfig, TermSize } from '../types';
-import { SshConnection } from './connection';
+import { SshConnection, resolveAuth } from './connection';
 
 /**
  * Drives the real ssh2 transport through SessionManager against an in-process
@@ -159,4 +162,94 @@ test('closing a terminal and dropping a host fire their callbacks', async () => 
   await settle();
   assert.deepEqual(disconnects, [host.id]);
   sessions.disposeAll();
+});
+
+// ---- resolveAuth method mapping --------------------------------------------
+
+const withAgentSock = (value: string | undefined, fn: () => void) => {
+  const saved = process.env.SSH_AUTH_SOCK;
+  if (value === undefined) delete process.env.SSH_AUTH_SOCK;
+  else process.env.SSH_AUTH_SOCK = value;
+  try {
+    fn();
+  } finally {
+    if (saved === undefined) delete process.env.SSH_AUTH_SOCK;
+    else process.env.SSH_AUTH_SOCK = saved;
+  }
+};
+
+const authHost = (auth: HostConfig['auth']): HostConfig => ({
+  id: 'x',
+  name: 'x',
+  host: 'x',
+  port: 22,
+  user: 'u',
+  kind: 'plain',
+  auth,
+});
+
+test('method password uses password only — no agent, no keys', () => {
+  const keyDir = mkdtempSync(join(tmpdir(), 'pear-key-'));
+  const keyPath = join(keyDir, 'id_test');
+  writeFileSync(keyPath, 'FAKE-KEY');
+  try {
+    withAgentSock('/tmp/agent.sock', () => {
+      const out = resolveAuth(authHost({ method: 'password', password: 'pw', privateKeyPath: keyPath }));
+      assert.deepEqual(out, { password: 'pw', tryKeyboard: true });
+    });
+  } finally {
+    rmSync(keyDir, { recursive: true, force: true });
+  }
+});
+
+test('method agent uses the agent only, honoring agentForward', () => {
+  withAgentSock('/tmp/agent.sock', () => {
+    assert.deepEqual(resolveAuth(authHost({ method: 'agent' })), { agent: '/tmp/agent.sock' });
+    assert.deepEqual(resolveAuth(authHost({ method: 'agent', agentForward: true })), {
+      agent: '/tmp/agent.sock',
+      agentForward: true,
+    });
+  });
+  withAgentSock(undefined, () => {
+    assert.deepEqual(resolveAuth(authHost({ method: 'agent' })), {});
+  });
+});
+
+test('method key reads the explicit key and skips the agent', () => {
+  const keyDir = mkdtempSync(join(tmpdir(), 'pear-key-'));
+  const keyPath = join(keyDir, 'id_test');
+  writeFileSync(keyPath, 'FAKE-KEY');
+  try {
+    withAgentSock('/tmp/agent.sock', () => {
+      const out = resolveAuth(authHost({ method: 'key', privateKeyPath: keyPath, passphrase: 'pp' }));
+      assert.equal(out.privateKey?.toString(), 'FAKE-KEY');
+      assert.equal(out.passphrase, 'pp');
+      assert.equal(out.agent, undefined);
+      assert.equal(out.password, undefined);
+    });
+  } finally {
+    rmSync(keyDir, { recursive: true, force: true });
+  }
+});
+
+test('undefined method keeps the legacy chain: agent plus explicit key plus password', () => {
+  const keyDir = mkdtempSync(join(tmpdir(), 'pear-key-'));
+  const keyPath = join(keyDir, 'id_test');
+  writeFileSync(keyPath, 'FAKE-KEY');
+  try {
+    withAgentSock('/tmp/agent.sock', () => {
+      const out = resolveAuth(authHost({ privateKeyPath: keyPath, password: 'pw' }));
+      assert.equal(out.agent, '/tmp/agent.sock');
+      assert.equal(out.privateKey?.toString(), 'FAKE-KEY');
+      assert.deepEqual([out.password, out.tryKeyboard], ['pw', true]);
+    });
+    withAgentSock('/tmp/agent.sock', () => {
+      // agent: false opts out of the running agent, exactly as before
+      const out = resolveAuth(authHost({ agent: false, privateKeyPath: keyPath }));
+      assert.equal(out.agent, undefined);
+      assert.equal(out.privateKey?.toString(), 'FAKE-KEY');
+    });
+  } finally {
+    rmSync(keyDir, { recursive: true, force: true });
+  }
 });

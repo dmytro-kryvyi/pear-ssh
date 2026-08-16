@@ -1,0 +1,107 @@
+.switcher {
+  position: relative;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  text-align: left;
+  cursor: pointer;
+}
+.trigger.open { border-color: var(--accent-line); }
+.trigger pear-icon { display: flex; flex-shrink: 0; }
+.trigger-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trigger-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.chev { color: var(--fg-3); }
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.menu {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 100%;
+  z-index: 41;
+  margin-top: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 18px 40px oklch(0.06 0.006 240 / 0.5);
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.menu-row pear-icon { display: flex; flex-shrink: 0; }
+.menu-row:hover { background: var(--bg-3); }
+.menu-row.current { background: var(--bg-3); }
+.menu-row.drop { background: var(--accent-soft); }
+.row-name {
+  font-size: 12.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.row-edit {
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  color: var(--fg-3);
+  visibility: hidden;
+}
+.menu-row:hover .row-edit { visibility: visible; }
+.row-edit:hover { color: var(--fg-0); background: var(--bg-4); }
+
+.menu-new {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.menu-new:hover { color: var(--fg-0); background: var(--bg-3); }
+.menu-new pear-icon { display: flex; }

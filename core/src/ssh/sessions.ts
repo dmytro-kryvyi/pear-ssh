@@ -11,6 +11,7 @@ import { fetchServiceTasks, fetchTaskLogs, type TaskLogsOptions } from '../orche
 import { fetchVitals } from '../monitor/vitals';
 import { fetchDockerDf } from '../monitor/docker-df';
 import { uuid } from '../uuid';
+import { shq } from '../shq';
 
 export interface TerminalHandle {
   id: string;
@@ -62,17 +63,17 @@ export class SessionManager {
           : parentCfg;
       const parent = await this.connection(effective, depth + 1);
       conn = new SubHostTransport(parent, config.target);
+      await conn.connect();
     } else if (config.via) {
       const jumpCfg = this.resolveHost?.(config.via);
       if (!jumpCfg) throw new Error('Jump host not found — was it removed?');
       // Unlike sub-hosts, a via-host authenticates itself end-to-end; any
       // password on its connect card is its own, never the jump host's.
       const jump = await this.connection(jumpCfg, depth + 1);
-      conn = this.createTransport(config, jump);
+      conn = await this.dialEndpoints(config, jump);
     } else {
-      conn = this.createTransport(config);
+      conn = await this.dialEndpoints(config);
     }
-    await conn.connect();
     conn.onClose(() => {
       this.connections.delete(config.id);
       for (const [id, t] of this.terminals) {
@@ -87,11 +88,54 @@ export class SessionManager {
     return conn;
   }
 
-  async openTerminal(config: HostConfig, size: TermSize): Promise<TerminalHandle> {
+  /**
+   * Dial a host's endpoints in order and keep the first that answers.
+   * Sequential on purpose: parallel dialing multiplies auth attempts
+   * (fail2ban counters, hardware-key touch prompts). Non-final endpoints get
+   * a short budget so a dead first address doesn't stall the whole connect.
+   */
+  private async dialEndpoints(config: HostConfig, jump?: SshTransport): Promise<SshTransport> {
+    const endpoints = config.endpoints?.length
+      ? config.endpoints
+      : [{ id: 'primary', addr: config.host, port: config.port }];
+    const failures: string[] = [];
+    let lastError: unknown;
+    for (let i = 0; i < endpoints.length; i++) {
+      const ep = endpoints[i];
+      const isLast = i === endpoints.length - 1;
+      const effective: HostConfig = {
+        ...config,
+        host: ep.addr,
+        port: ep.port,
+        readyTimeoutMs: config.readyTimeoutMs ?? (isLast ? 15_000 : 5_000),
+      };
+      const conn = this.createTransport(effective, jump);
+      try {
+        await conn.connect();
+        return conn;
+      } catch (err) {
+        conn.dispose();
+        lastError = err;
+        const label = ep.label ? `${ep.label} (${ep.addr}:${ep.port})` : `${ep.addr}:${ep.port}`;
+        failures.push(`${label} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    // A single address keeps its raw error; multiple get the aggregate.
+    if (endpoints.length === 1) throw lastError;
+    throw new Error('All endpoints failed:\n' + failures.join('\n'));
+  }
+
+  async openTerminal(
+    config: HostConfig,
+    size: TermSize,
+    opts?: { cwd?: string },
+  ): Promise<TerminalHandle> {
     const conn = await this.connection(config);
     const channel = await conn.shell(size);
     const id = uuid();
     this.terminals.set(id, { id, hostId: config.id, channel });
+    const bootstrap = terminalBootstrap(config, opts?.cwd);
+    if (bootstrap) channel.write(bootstrap + '\n');
 
     channel.onData((chunk) => this.events.onTermData(id, chunk));
     channel.onClose(() => {
@@ -222,4 +266,22 @@ export class SessionManager {
     this.connections.clear();
     this.terminals.clear();
   }
+}
+
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The single line written into every new terminal for a host: exported env,
+ * cd to the working directory, then the startup commands in order. Written
+ * into the PTY (visible and transparent) rather than sent as ssh2 env, which
+ * sshds silently drop unless AcceptEnv allows each name.
+ */
+export function terminalBootstrap(config: HostConfig, cwdOverride?: string): string {
+  const parts: string[] = [];
+  const env = (config.env ?? []).filter((e) => ENV_KEY.test(e.k));
+  if (env.length) parts.push('export ' + env.map((e) => `${e.k}=${shq(e.v)}`).join(' '));
+  const cwd = cwdOverride ?? config.cwd;
+  if (cwd) parts.push(`cd ${shq(cwd)}`);
+  parts.push(...(config.startup ?? []).map((c) => c.trim()).filter(Boolean));
+  return parts.join('; ');
 }

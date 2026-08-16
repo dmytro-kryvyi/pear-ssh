@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import {
   EphemeralHostRegistry,
   HistoryStore,
+  HostGroupStore,
   HostStore,
   SessionManager,
   TransferEngine,
@@ -13,11 +14,13 @@ import {
   primaryKind,
   probeCommand,
   probeError,
+  sanitizeHost,
   type ClaudeFocus,
   type ClaudeUiRequestPayload,
   type ClaudeUiResponse,
   type ConflictPolicy,
   type HostConfig,
+  type HostGroup,
   type OrchAction,
   type ShellChannel,
   type SubHostTarget,
@@ -37,10 +40,12 @@ import {
   claudeInstalled,
   launchClaudePty,
   makeStagingDir,
+  probeSsh,
   provisionClaudeWorkspace,
   removeStaging,
   sweepStaging,
 } from '@pear/core/node';
+import { SafeStorageCipher } from './secrets';
 
 const UI_DIST = join(__dirname, '../../ui/dist/ui/browser');
 
@@ -68,12 +73,26 @@ let win: BrowserWindow | null = null;
 
 const userFile = (name: string) => new JsonFileStorage(join(app.getPath('userData'), name));
 let hosts: HostStore;
+let groups: HostGroupStore;
 let history: HistoryStore;
 
 // Session-scoped sub-hosts (jump-in targets). Anything hostId-keyed resolves
 // through both stores; pinning just moves the entry into the persistent one.
 const ephemeral = new EphemeralHostRegistry();
-const resolveHost = (id: string): HostConfig | undefined => hosts.get(id) ?? ephemeral.get(id);
+/**
+ * Connect-time lookup: the single chokepoint where stored ciphertext becomes
+ * plaintext auth. Every connection-opening path resolves through here; the
+ * result is never returned to the renderer.
+ */
+const resolveHost = (id: string): HostConfig | undefined => {
+  const h = hosts.get(id) ?? ephemeral.get(id);
+  return h && hosts.decryptAuth(h);
+};
+/**
+ * Configs that arrive as objects (Claude tool callbacks) are sanitized views
+ * with the ciphertext stripped — re-resolve by id to get connectable auth.
+ */
+const withSecrets = (h: HostConfig): HostConfig => resolveHost(h.id) ?? h;
 
 const sessions = new SessionManager(
   {
@@ -179,12 +198,14 @@ function rejectPendingUi(reason: string): void {
 async function startClaudeIntegration(): Promise<void> {
   try {
     const executor = new ClaudeExecutor({
-      hosts: () => [...hosts.list(), ...ephemeral.list()],
+      hosts: () => [...hosts.listSanitized(), ...ephemeral.list().map(sanitizeHost)],
       isConnected: (id) => sessions.isConnected(id),
-      exec: (host, command) => sessions.exec(host, command),
-      readFile: (host, path, maxBytes) => sessions.readFile(host, path, maxBytes),
-      writeFile: (host, path, content) => sessions.writeFile(host, path, content),
-      listDir: (host, path) => sessions.listDir(host, path),
+      // Configs flowing back in from the executor are sanitized views — put
+      // the decrypted auth back before they reach a connection.
+      exec: (host, command) => sessions.exec(withSecrets(host), command),
+      readFile: (host, path, maxBytes) => sessions.readFile(withSecrets(host), path, maxBytes),
+      writeFile: (host, path, content) => sessions.writeFile(withSecrets(host), path, content),
+      listDir: (host, path) => sessions.listDir(withSecrets(host), path),
       uiRequest: (payload) => claudeUiRequest(payload),
       startTransfer: (req) =>
         transfers.start({
@@ -194,7 +215,7 @@ async function startClaudeIntegration(): Promise<void> {
         }),
       transferList: () => transfers.list(),
       openForward: (host, remotePort, remoteHost, localPort) =>
-        forwards.open(host, remotePort, remoteHost, localPort),
+        forwards.open(withSecrets(host), remotePort, remoteHost, localPort),
       listForwards: () => forwards.list(),
       closeForward: (id) => forwards.close(id),
     });
@@ -266,14 +287,17 @@ function removeHostTree(id: string): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('hosts:list', () => hosts.list());
+  ipcMain.handle('hosts:list', () => hosts.listSanitized());
   ipcMain.handle('hosts:upsert', (_e, host: Omit<HostConfig, 'id'> & { id?: string }) =>
     hosts.upsert(host),
   );
-  ipcMain.handle('hosts:remove', (_e, id: string) => removeHostTree(id));
+  ipcMain.handle('hosts:remove', (_e, id: string) => {
+    removeHostTree(id);
+    groups.removeHostRefs(id);
+  });
   ipcMain.handle('hosts:addLocal', () => {
     const existing = hosts.list().find((h) => h.local);
-    if (existing) return existing;
+    if (existing) return sanitizeHost(existing);
     return hosts.upsert({
       name: hostname(),
       host: 'localhost',
@@ -283,14 +307,35 @@ function registerIpc(): void {
       local: true,
     });
   });
+  // Never rejects — routine dead-endpoint probes must not trip Electron's
+  // rejected-handler logging (same rationale as the monitor envelope).
+  ipcMain.handle(
+    'hosts:probe',
+    (_e, endpoint: { addr: string; port: number }, timeoutMs?: number) =>
+      probeSsh(endpoint.addr, endpoint.port, timeoutMs),
+  );
 
-  ipcMain.handle('term:open', async (_e, hostId: string, size: TermSize, password?: string) => {
-    const host = resolveHost(hostId);
-    if (!host) throw new Error(`Unknown host: ${hostId}`);
-    const config = password ? { ...host, auth: { ...host.auth, password } } : host;
-    const handle = await sessions.openTerminal(config, size);
-    return handle.id;
-  });
+  ipcMain.handle('hostgroups:list', () => groups.list());
+  ipcMain.handle('hostgroups:upsert', (_e, group: Omit<HostGroup, 'id'> & { id?: string }) =>
+    groups.upsert(group),
+  );
+  ipcMain.handle('hostgroups:remove', (_e, id: string) => groups.remove(id));
+  ipcMain.handle('hostgroups:setMembership', (_e, hostId: string, groupId: string, member: boolean) =>
+    groups.setMembership(hostId, groupId, member),
+  );
+
+  ipcMain.handle(
+    'term:open',
+    async (_e, hostId: string, size: TermSize, opts?: { password?: string; cwd?: string }) => {
+      const host = resolveHost(hostId);
+      if (!host) throw new Error(`Unknown host: ${hostId}`);
+      const config = opts?.password
+        ? { ...host, auth: { ...host.auth, password: opts.password } }
+        : host;
+      const handle = await sessions.openTerminal(config, size, { cwd: opts?.cwd });
+      return handle.id;
+    },
+  );
   ipcMain.on('term:write', (_e, termId: string, data: string) => {
     const claude = claudeTerms.get(termId);
     if (claude) return claude.write(data);
@@ -403,10 +448,12 @@ function registerIpc(): void {
     // sidebar glyph is right even before the panel is opened.
     const facets = await sessions.detectOrchFacets(host);
     const kind = primaryKind(facets);
-    if (kind !== host.kind) {
-      // Never upsert an ephemeral sub-host into the persistent store.
-      if (hosts.get(host.id)) hosts.upsert({ ...host, kind });
-      else ephemeral.update({ ...host, kind });
+    if (kind !== host.kind && !host.kindManual) {
+      // Never upsert an ephemeral sub-host into the persistent store — and
+      // upsert the *stored* record, not the decrypted connect-time view.
+      const stored = hosts.get(host.id);
+      if (stored) hosts.upsert({ ...stored, kind });
+      else ephemeral.update({ ...(ephemeral.get(host.id) ?? host), kind });
     }
     return sessions.orchestration(host, facets);
   });
@@ -451,7 +498,7 @@ function registerIpc(): void {
     enveloped(async (host) => Object.fromEntries(await sessions.containerStats(host))),
   );
 
-  ipcMain.handle('subhosts:list', () => ephemeral.list());
+  ipcMain.handle('subhosts:list', () => ephemeral.list().map(sanitizeHost));
   ipcMain.handle(
     'subhosts:jumpIn',
     async (_e, parentId: string, target: SubHostTarget, name: string) => {
@@ -482,7 +529,8 @@ function registerIpc(): void {
     const cfg = hosts.get(id);
     if (!cfg?.parentId && !cfg?.via) throw new Error(`Not a pinned sub-host: ${id}`);
     hosts.remove(id);
-    return ephemeral.add(cfg);
+    groups.removeHostRefs(id);
+    return sanitizeHost(ephemeral.add(cfg));
   });
   ipcMain.handle(
     'subhosts:jumpInVm',
@@ -581,7 +629,9 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
-  hosts = new HostStore(userFile('hosts.json'));
+  // safeStorage needs the app to be ready before it can report a backend.
+  hosts = new HostStore(userFile('hosts.json'), new SafeStorageCipher());
+  groups = new HostGroupStore(userFile('workspaces.json'));
   history = new HistoryStore(userFile('history.json'));
   void sweepStaging();
   registerUiProtocol();

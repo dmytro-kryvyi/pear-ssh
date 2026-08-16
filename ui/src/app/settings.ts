@@ -79,6 +79,9 @@ export class Settings {
   /** Collapsed `docker system df` section on the docker page. */
   readonly dockerDiskSection = signal(true);
 
+  /** Active host-group ("workspace") scoping the sidebar; 'all' = every host. */
+  readonly activeGroup = signal('all');
+
   // Claude Code dock
   readonly claudeVisible = signal(false);
   readonly claudeWidth = signal(392);
@@ -131,6 +134,7 @@ export class Settings {
       }
       if (['chat', 'terminal'].includes(saved.claudeMode)) this.claudeMode.set(saved.claudeMode);
       if (typeof saved.claudeModel === 'string') this.claudeModel.set(saved.claudeModel);
+      if (typeof saved.activeGroup === 'string') this.activeGroup.set(saved.activeGroup);
     } catch {
       // corrupt settings: keep defaults
     }
@@ -168,6 +172,7 @@ export class Settings {
           claudeWidth: this.claudeWidth(),
           claudeMode: this.claudeMode(),
           claudeModel: this.claudeModel(),
+          activeGroup: this.activeGroup(),
         }),
       );
     });

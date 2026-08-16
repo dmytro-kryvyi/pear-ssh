@@ -4,15 +4,74 @@
 export type HostKind = FacetKind | 'plain';
 export type HostStatus = 'online' | 'idle' | 'offline' | 'unknown';
 
+/**
+ * Explicit auth method chosen in the host editor. Absent on legacy hosts,
+ * which keep the heuristic chain: agent -> explicit key -> default keys ->
+ * password.
+ */
+export type AuthMethod = 'key' | 'agent' | 'password';
+
 export interface HostAuth {
+  /** Explicit method; undefined = legacy heuristic chain. */
+  method?: AuthMethod;
   /** Try the running ssh-agent (SSH_AUTH_SOCK). Default true. */
   agent?: boolean;
+  /** Forward the local agent to the remote session. */
+  agentForward?: boolean;
   /** Absolute path to a private key file. */
   privateKeyPath?: string;
-  /** Passphrase for the key file, if encrypted. */
+  /**
+   * Passphrase for the key file, if encrypted. Write-only transient: consumed
+   * by upsert (encrypted to passphraseEnc) and by connect-time configs; never
+   * persisted or returned to the renderer.
+   */
   passphrase?: string;
-  /** Password auth (also answers keyboard-interactive). */
+  /** Password auth (also answers keyboard-interactive). Write-only transient. */
   password?: string;
+  /** safeStorage ciphertext (base64). Persisted; never leaves the main process. */
+  passwordEnc?: string;
+  /** safeStorage ciphertext (base64). Persisted; never leaves the main process. */
+  passphraseEnc?: string;
+  /** Set on sanitized views so the UI can show "unchanged" placeholders. */
+  hasPassword?: boolean;
+  /** Set on sanitized views so the UI can show "unchanged" placeholders. */
+  hasPassphrase?: boolean;
+}
+
+/** One address a host answers on. Dialed top-to-bottom; first success wins. */
+export interface HostEndpoint {
+  id: string;
+  /** 'lan', 'vpn', 'public (fallback)' ... */
+  label?: string;
+  addr: string;
+  port: number;
+  note?: string;
+}
+
+/** Named palette for host/workspace accents (resolved to oklch in the UI). */
+export type HostColor = 'red' | 'amber' | 'green' | 'teal' | 'blue' | 'violet';
+
+export interface EnvVar {
+  k: string;
+  v: string;
+}
+
+/** Result of probing one endpoint for an SSH listener. */
+export type ProbeResult =
+  | { ok: true; latencyMs: number; banner?: string }
+  | { ok: false; error: 'refused' | 'timeout' | 'unreachable' | 'other'; detail?: string };
+
+/**
+ * A named set of hosts ("Workspace" in the UI; HostGroup internally to avoid
+ * clashing with the pane workspace). A host can belong to any number of them.
+ */
+export interface HostGroup {
+  id: string;
+  name: string;
+  color: HostColor;
+  icon: 'layers' | 'server' | 'cpu' | 'lightning' | 'docker';
+  desc?: string;
+  hostIds: string[];
 }
 
 /**
@@ -31,12 +90,40 @@ export interface SubHostTarget {
 export interface HostConfig {
   id: string;
   name: string;
+  /** Mirror of endpoints[0].addr (kept for display and legacy readers). */
   host: string;
+  /** Mirror of endpoints[0].port. */
   port: number;
   user: string;
+  /** @deprecated Migrated to tags[0] on load; read forever, never written. */
   tag?: string;
+  /** Freeform labels; tags[0] doubles as the sidebar badge. */
+  tags?: string[];
+  /** Extra names matched by search / quick connect. */
+  aliases?: string[];
+  /** 3-5 char label for tight rows; falls back to autoShort(name). */
+  short?: string;
+  /** Named accent used for the sidebar stripe and editor header. */
+  color?: HostColor;
+  /** Private free-text notes. */
+  notes?: string;
   kind: HostKind;
+  /** User pinned `kind` in the editor; facet detection won't overwrite it. */
+  kindManual?: boolean;
   auth?: HostAuth;
+  /**
+   * Ordered failover addresses. Absent on local hosts and sub-hosts. Regular
+   * hosts get one minted from host/port on load.
+   */
+  endpoints?: HostEndpoint[];
+  /** Default working directory for new tabs and terminals. */
+  cwd?: string;
+  /** Environment exported at the top of every new terminal. */
+  env?: EnvVar[];
+  /** Commands run, in order, in every new terminal for this host. */
+  startup?: string[];
+  /** Per-endpoint dial budget during failover (ms). */
+  readyTimeoutMs?: number;
   /** Sub-host: id of the parent whose SSH connection is reused. */
   parentId?: string;
   /** Sub-host: what to enter on the parent. Present iff parentId is. */

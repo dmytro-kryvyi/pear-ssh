@@ -1,0 +1,97 @@
+<div class="overlay" (mousedown)="$event.target === $event.currentTarget && closed.emit()">
+  <div class="modal">
+    <div class="head">
+      <pear-icon [name]="icon" [size]="15" [style.color]="colorOf(color)" />
+      <div class="head-text">
+        <div class="head-title">{{ isNew() ? 'New workspace' : name || group()?.name }}</div>
+        <div class="head-sub">{{ hostIds().length }} host{{ hostIds().length === 1 ? '' : 's' }}</div>
+      </div>
+      <button class="head-close" (click)="closed.emit()" title="Close">
+        <pear-icon name="close" [size]="14" />
+      </button>
+    </div>
+
+    <div class="scroll">
+      <div class="group">
+        <div class="g-title">Identity</div>
+        <div class="field">
+          <div class="f-label">Name</div>
+          <div class="f-control">
+            <input class="text" [(ngModel)]="name" placeholder="Production" spellcheck="false" />
+          </div>
+        </div>
+        <div class="field">
+          <div class="f-label">Color</div>
+          <div class="f-control">
+            <pear-swatches [value]="color" (changed)="color = $event" />
+          </div>
+        </div>
+        <div class="field">
+          <div class="f-label">Icon</div>
+          <div class="f-control icon-row">
+            @for (o of iconOptions; track o.v) {
+              <button class="icon-opt" [class.active]="icon === o.v" [title]="o.l" (click)="icon = o.v">
+                <pear-icon [name]="o.v" [size]="14" />
+                {{ o.l }}
+              </button>
+            }
+          </div>
+        </div>
+        <div class="field">
+          <div class="f-label">Description<div class="f-hint">Shown next to the name in lists.</div></div>
+          <div class="f-control">
+            <textarea class="text area" rows="2" [(ngModel)]="desc" placeholder="What this group is for"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="group last">
+        <div class="g-title">
+          Member hosts
+          <span class="g-note">hosts can be in many workspaces</span>
+        </div>
+        <div class="filter">
+          <pear-icon name="search" [size]="12" />
+          <input
+            [value]="filter()"
+            (input)="filter.set($any($event.target).value)"
+            placeholder="Filter hosts"
+            spellcheck="false"
+          />
+        </div>
+        <div class="member-list">
+          @for (h of candidates(); track h.id) {
+            <div class="member-row" [class.on]="hostIds().includes(h.id)" (click)="toggle(h.id)">
+              <span class="member-check">
+                @if (hostIds().includes(h.id)) {
+                  <pear-icon name="check" [size]="10" />
+                }
+              </span>
+              <span class="member-name">{{ h.name }}</span>
+              <span class="member-meta">{{ h.local ? 'this computer' : h.user + '@' + h.host }}</span>
+              <button class="member-edit" title="Edit host" (click)="$event.stopPropagation(); editHost.emit(h.id)">
+                <pear-icon name="pencil" [size]="11" />
+              </button>
+            </div>
+          } @empty {
+            <div class="empty-note">No matching hosts.</div>
+          }
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      @if (!isNew()) {
+        <button class="btn danger" (click)="remove()">
+          <pear-icon name="trash" [size]="12" /> Delete
+        </button>
+      }
+      <div class="foot-actions">
+        <button class="btn" (click)="closed.emit()">Cancel</button>
+        <button class="btn primary" [disabled]="saving()" (click)="save()">
+          <pear-icon name="check" [size]="12" /> Save workspace
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

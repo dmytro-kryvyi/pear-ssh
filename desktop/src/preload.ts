@@ -5,6 +5,7 @@ import type {
   ClaudeUiResponse,
   ConflictPolicy,
   HostConfig,
+  HostGroup,
   OrchAction,
   PearApi,
   SubHostTarget,
@@ -33,10 +34,20 @@ const api: PearApi = {
       ipcRenderer.invoke('hosts:upsert', host),
     remove: (id: string) => ipcRenderer.invoke('hosts:remove', id),
     addLocal: () => ipcRenderer.invoke('hosts:addLocal'),
+    probe: (endpoint: { addr: string; port: number }, timeoutMs?: number) =>
+      ipcRenderer.invoke('hosts:probe', endpoint, timeoutMs),
+  },
+  hostGroups: {
+    list: () => ipcRenderer.invoke('hostgroups:list'),
+    upsert: (group: Omit<HostGroup, 'id'> & { id?: string }) =>
+      ipcRenderer.invoke('hostgroups:upsert', group),
+    remove: (id: string) => ipcRenderer.invoke('hostgroups:remove', id),
+    setMembership: (hostId: string, groupId: string, member: boolean) =>
+      ipcRenderer.invoke('hostgroups:setMembership', hostId, groupId, member),
   },
   term: {
-    open: (hostId: string, size: TermSize, password?: string) =>
-      ipcRenderer.invoke('term:open', hostId, size, password),
+    open: (hostId: string, size: TermSize, opts?: { password?: string; cwd?: string }) =>
+      ipcRenderer.invoke('term:open', hostId, size, opts),
     write: (termId: string, data: string) => ipcRenderer.send('term:write', termId, data),
     resize: (termId: string, size: TermSize) => ipcRenderer.send('term:resize', termId, size),
     close: (termId: string) => ipcRenderer.send('term:close', termId),

@@ -1,19 +1,42 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-mark">P</div>
+      <pear-icon name="pear" [size]="22" class="brand-pear" />
       <div class="brand-text">
         <div class="brand-name">Pear</div>
-        <div class="brand-sub">workspace</div>
       </div>
       <button class="brand-settings" (click)="settingsOpen.set(true)" title="Settings">
         <pear-icon name="settings" [size]="14" />
       </button>
     </div>
 
+    <pear-workspace-switcher
+      [connectedIds]="connectedIds()"
+      (editGroup)="editGroup.set($event)"
+      (newGroup)="editGroup.set('new')"
+    />
+
     <div class="section-title">
-      <span>Hosts</span>
-      <span class="section-count">{{ connectedIds().size }}/{{ allHosts().length }}</span>
+      <span>{{ catalog.query() ? 'Search' : (hostGroups.byId(settings.activeGroup())?.name ?? 'Hosts') }}</span>
+      <span class="section-count">{{ connectedIds().size }}/{{ rootHosts().length }}</span>
+      <button class="section-add" title="Add host" (click)="editHost.set('new')">
+        <pear-icon name="plus" [size]="13" />
+      </button>
+    </div>
+
+    <div class="host-search">
+      <pear-icon name="search" [size]="13" />
+      <input
+        [value]="catalog.query()"
+        (input)="catalog.query.set($any($event.target).value)"
+        placeholder="Search hosts, aliases, IPs"
+        spellcheck="false"
+      />
+      @if (catalog.query()) {
+        <button (click)="catalog.query.set('')" title="Clear">
+          <pear-icon name="close" [size]="11" />
+        </button>
+      }
     </div>
 
     <div class="host-list">
@@ -21,19 +44,29 @@
         <div
           class="host-row"
           [class.active]="h.id === activeHostId()"
+          [class.dragging]="dragHostId() === h.id"
+          [draggable]="!h.local"
+          (dragstart)="onHostDragStart($event, h)"
+          (dragend)="onHostDragEnd()"
           (click)="openHost(h)"
         >
+          <span class="host-stripe" [style.background]="h.color ? catalog.color(h.id) : null"></span>
           <span
             class="host-dot"
             [class.online]="connectedIds().has(h.id)"
           ></span>
           <div class="host-text">
-            <div class="host-name">{{ h.name }}</div>
+            <div class="host-name">
+              {{ h.name }}
+              @if ((h.endpoints?.length ?? 0) > 1) {
+                <span class="host-ep-count" [title]="h.endpoints!.length + ' endpoints, tried in order'">{{ h.endpoints!.length }}×</span>
+              }
+            </div>
             <div class="host-meta">
               @if (h.local) {
                 this computer
               } @else {
-                {{ h.user }}&#64;{{ h.host }}{{ h.port !== 22 ? ':' + h.port : '' }}
+                {{ h.user }}&#64;{{ h.host }}{{ h.port !== 22 ? ':' + h.port : '' }}{{ h.aliases?.length ? ' · ' + h.aliases![0] : '' }}
               }
             </div>
             @if (settings.sidebarVitals() && connectedIds().has(h.id)) {
@@ -43,6 +76,9 @@
           @if (termCount(h.id); as n) {
             <span class="host-term-count" title="Live terminals">{{ n }}</span>
           }
+          <button class="host-edit" title="Edit host" (click)="openHostEditor($event, h)">
+            <pear-icon name="pencil" [size]="11" />
+          </button>
           @if (h.kind !== 'plain') {
             <pear-icon
               [name]="kindIcon(h.kind)"
@@ -51,12 +87,13 @@
               [class.active]="h.id === activeHostId()"
             />
           }
-          @if (h.tag) {
-            <span class="host-tag">{{ h.tag }}</span>
+          @if (h.tags?.length) {
+            <span class="host-tag" [title]="shortTitle(h)">{{ h.tags![0] }}</span>
           }
           @if (viaOf(h); as v) {
             <span class="host-tag via" [title]="'Tunneled through ' + v.name">via {{ v.name }}</span>
           }
+          <span class="host-short" [title]="shortTitle(h)">{{ catalog.shortOf(h) }}</span>
           <button class="host-remove" title="Remove host" (click)="removeHost($event, h)">×</button>
         </div>
         @for (c of childrenOf(h.id); track c.id) {
@@ -87,6 +124,11 @@
             @if (termCount(c.id); as n) {
               <span class="host-term-count" title="Live terminals">{{ n }}</span>
             }
+            @if (isPinned(c)) {
+              <button class="host-edit" title="Edit host" (click)="openHostEditor($event, c)">
+                <pear-icon name="pencil" [size]="11" />
+              </button>
+            }
             <button
               class="host-pin"
               [class.pinned]="isPinned(c)"
@@ -99,9 +141,41 @@
           </div>
         }
       } @empty {
-        <div class="host-empty">No hosts yet — add one below.</div>
+        <div class="host-empty">
+          @if (catalog.query()) {
+            No matching hosts.
+          } @else if (settings.activeGroup() !== 'all') {
+            No hosts in this workspace yet — drag some in or edit it.
+          } @else {
+            No hosts yet — add one below.
+          }
+        </div>
       }
     </div>
+
+    @if (dragHostId(); as draggedId) {
+      <div class="drop-zone">
+        <div class="drop-zone-title">Drop on a workspace</div>
+        @for (g of hostGroups.groups(); track g.id) {
+          <div
+            class="drop-row"
+            [class.over]="dragOverGroup() === g.id"
+            [class.has]="inGroup(draggedId, g)"
+            (dragover)="onGroupDragOver($event, g.id)"
+            (dragleave)="dragOverGroup.set(null)"
+            (drop)="onGroupDrop($event, g)"
+          >
+            <pear-icon [name]="g.icon" [size]="12" />
+            <span>{{ g.name }}</span>
+            @if (inGroup(draggedId, g)) {
+              <span class="drop-note">already in</span>
+            }
+          </div>
+        } @empty {
+          <div class="drop-row empty">No workspaces yet.</div>
+        }
+      </div>
+    }
 
     @if (selected(); as host) {
       @if (orchState(); as state) {
@@ -248,5 +322,24 @@
 
   @if (settingsOpen()) {
     <pear-settings-modal (closed)="settingsOpen.set(false)" />
+  }
+
+  @if (editHost() !== null) {
+    <pear-host-editor
+      [host]="editorHost()"
+      (closed)="editHost.set(null)"
+      (saved)="editHost.set(null)"
+      (removed)="onEditorRemoved($event)"
+      (connect)="onEditorConnect($event)"
+    />
+  }
+
+  @if (editGroup() !== null) {
+    <pear-workspace-editor
+      [group]="editorGroup()"
+      (closed)="editGroup.set(null)"
+      (saved)="editGroup.set(null)"
+      (editHost)="onGroupEditHost($event)"
+    />
   }
 </div>

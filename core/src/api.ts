@@ -5,10 +5,12 @@ import type {
   DockerDiskRow,
   FileEntry,
   HostConfig,
+  HostGroup,
   HostVitalsSample,
   OrchAction,
   OrchActionResult,
   Orchestration,
+  ProbeResult,
   SubHostTarget,
   SwarmTaskInfo,
   TaskLogChunk,
@@ -31,6 +33,11 @@ import type {
  */
 export interface PearApi {
   hosts: {
+    /**
+     * Sanitized views: secrets never cross the bridge — auth carries only
+     * hasPassword / hasPassphrase flags. Password/passphrase fields on upsert
+     * are write-only: undefined keeps the stored secret, '' clears it.
+     */
     list(): Promise<HostConfig[]>;
     upsert(host: Omit<HostConfig, 'id'> & { id?: string }): Promise<HostConfig>;
     remove(id: string): Promise<void>;
@@ -39,10 +46,29 @@ export interface PearApi {
      * by the shell). Idempotent: returns the existing local host if present.
      */
     addLocal(): Promise<HostConfig>;
+    /**
+     * Test one endpoint for a live sshd. Never rejects — failures come back
+     * in the result (untested addresses are routine, not exceptional).
+     */
+    probe(endpoint: { addr: string; port: number }, timeoutMs?: number): Promise<ProbeResult>;
+  };
+  hostGroups: {
+    /** Host groups — "Workspaces" in the UI. */
+    list(): Promise<HostGroup[]>;
+    upsert(group: Omit<HostGroup, 'id'> & { id?: string }): Promise<HostGroup>;
+    remove(id: string): Promise<void>;
+    setMembership(hostId: string, groupId: string, member: boolean): Promise<void>;
   };
   term: {
-    /** Opens a shell on the host; returns the terminal id. */
-    open(hostId: string, size: TermSize, password?: string): Promise<string>;
+    /**
+     * Opens a shell on the host; returns the terminal id. cwd overrides the
+     * host's default working directory for this terminal only.
+     */
+    open(
+      hostId: string,
+      size: TermSize,
+      opts?: { password?: string; cwd?: string },
+    ): Promise<string>;
     write(termId: string, data: string): void;
     resize(termId: string, size: TermSize): void;
     close(termId: string): void;

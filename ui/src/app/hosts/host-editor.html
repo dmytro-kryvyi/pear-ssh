@@ -1,0 +1,327 @@
+<div class="overlay" (mousedown)="$event.target === $event.currentTarget && closed.emit()">
+  <div class="modal">
+    <div class="head">
+      <span class="head-dot" [style.background]="headerColor()"></span>
+      <div class="head-text">
+        <div class="head-title">{{ isNew() ? 'New host' : name || existing?.name }}</div>
+        <div class="head-sub">{{ subtitle() }}</div>
+      </div>
+      <div class="head-actions">
+        @if (!isNew() && !noEndpoints()) {
+          <button class="btn" (click)="save(true)">
+            <pear-icon name="terminal" [size]="12" /> Connect
+          </button>
+        }
+        <button class="head-close" (click)="closed.emit()" title="Close">
+          <pear-icon name="close" [size]="14" />
+        </button>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="nav">
+        @for (s of sections; track s.id) {
+          <button class="nav-item" [class.active]="section() === s.id" (click)="section.set(s.id)">
+            <pear-icon [name]="s.icon" [size]="13" />
+            {{ s.label }}
+          </button>
+        }
+        <div class="nav-foot">
+          {{ memberIds().length ? 'In ' + memberIds().length + ' workspace' + (memberIds().length === 1 ? '' : 's') : 'No workspace yet' }}
+        </div>
+      </div>
+
+      <div class="scroll">
+        @switch (section()) {
+          @case ('connection') {
+            @if (noEndpoints()) {
+              <div class="banner">
+                <pear-icon name="network" [size]="13" />
+                <span>
+                  @if (existing?.local) {
+                    This is the computer Pear runs on — no SSH connection to configure.
+                  } @else {
+                    This sub-host rides its parent's connection; there is nothing to dial directly.
+                  }
+                </span>
+              </div>
+            } @else {
+              <div class="group">
+                <div class="g-title">
+                  Endpoints
+                  <span class="g-note">tried top to bottom</span>
+                </div>
+                <div class="banner">
+                  <pear-icon name="network" [size]="13" />
+                  <span>
+                    Pear dials each address in order and keeps the first one that answers.
+                    @if (reachableNote(); as addr) {
+                      Right now that would be {{ addr }}.
+                    }
+                  </span>
+                </div>
+                @for (ep of endpoints; track ep.id; let i = $index) {
+                  <div class="ep-row" [class.primary]="i === 0">
+                    <span class="ep-order">{{ i + 1 }}</span>
+                    <input class="ep-input label" [(ngModel)]="ep.label" placeholder="label" spellcheck="false" />
+                    <input class="ep-input addr" [(ngModel)]="ep.addr" placeholder="host or IP" spellcheck="false" />
+                    <span class="ep-colon">:</span>
+                    <input class="ep-input port" [(ngModel)]="ep.port" (input)="sanitizePort(ep)" spellcheck="false" />
+                    <span class="ep-pill" [attr.data-state]="probeState(ep)">{{ probeLabel(ep) }}</span>
+                    <button class="ep-btn" title="Test" (click)="probe(ep)">
+                      <pear-icon name="lightning" [size]="11" />
+                    </button>
+                    <button class="ep-btn" title="Move up" [disabled]="i === 0" (click)="moveEndpoint(i, -1)">
+                      <pear-icon name="chevronDown" [size]="11" class="flip" />
+                    </button>
+                    <button class="ep-btn" title="Move down" [disabled]="i === endpoints.length - 1" (click)="moveEndpoint(i, 1)">
+                      <pear-icon name="chevronDown" [size]="11" />
+                    </button>
+                    <button class="ep-btn danger" title="Remove" (click)="removeEndpoint(ep.id)">
+                      <pear-icon name="trash" [size]="11" />
+                    </button>
+                  </div>
+                }
+                <div class="row-actions">
+                  <button class="ghost" (click)="addEndpoint()">
+                    <pear-icon name="plus" [size]="11" /> Add endpoint
+                  </button>
+                  <button class="btn" (click)="testAll()">
+                    <pear-icon name="lightning" [size]="12" /> Test all
+                  </button>
+                </div>
+              </div>
+
+              <div class="group last">
+                <div class="g-title">Authentication</div>
+                <div class="field">
+                  <div class="f-label">User</div>
+                  <div class="f-control">
+                    <input class="text mono narrow" [(ngModel)]="user" placeholder="deploy" spellcheck="false" />
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="f-label">Method</div>
+                  <div class="f-control">
+                    <pear-seg
+                      [options]="[
+                        { v: 'auto', l: 'Auto' },
+                        { v: 'key', l: 'Key file' },
+                        { v: 'agent', l: 'SSH agent' },
+                        { v: 'password', l: 'Password' },
+                      ]"
+                      [value]="method"
+                      (changed)="method = $any($event)"
+                    />
+                    @if (method === 'auto') {
+                      <div class="f-hint">Tries the agent, then key files, then a password prompt.</div>
+                    }
+                  </div>
+                </div>
+                @if (method === 'key' || method === 'auto') {
+                  <div class="field">
+                    <div class="f-label">Private key<div class="f-hint">Path on this machine.</div></div>
+                    <div class="f-control">
+                      <input class="text mono" [(ngModel)]="keyPath" placeholder="~/.ssh/id_ed25519" spellcheck="false" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <div class="f-label">Passphrase<div class="f-hint">Stored encrypted via the system keychain.</div></div>
+                    <div class="f-control secret">
+                      <input
+                        class="text mono"
+                        type="password"
+                        [(ngModel)]="passphraseInput"
+                        [placeholder]="hasPassphrase() ? '••••••••  (unchanged)' : 'none'"
+                        spellcheck="false"
+                      />
+                      @if (hasPassphrase()) {
+                        <button class="ghost" (click)="passphraseCleared = true">Clear</button>
+                      }
+                    </div>
+                  </div>
+                }
+                @if (method === 'password') {
+                  <div class="field">
+                    <div class="f-label">Password<div class="f-hint">Stored encrypted via the system keychain.</div></div>
+                    <div class="f-control secret">
+                      <input
+                        class="text mono"
+                        type="password"
+                        [(ngModel)]="passwordInput"
+                        [placeholder]="hasPassword() ? '••••••••  (unchanged)' : 'enter to save, or leave empty to be asked'"
+                        spellcheck="false"
+                      />
+                      @if (hasPassword()) {
+                        <button class="ghost" (click)="passwordCleared = true">Clear</button>
+                      }
+                    </div>
+                  </div>
+                }
+                @if (method !== 'password') {
+                  <div class="field">
+                    <div class="f-label">Forward agent</div>
+                    <div class="f-control">
+                      <button class="toggle" [class.on]="agentForward" (click)="agentForward = !agentForward"><span></span></button>
+                    </div>
+                  </div>
+                }
+              </div>
+            }
+          }
+
+          @case ('identity') {
+            <div class="group last">
+              <div class="g-title">Naming</div>
+              <div class="field">
+                <div class="f-label">Display name</div>
+                <div class="f-control">
+                  <input class="text" [(ngModel)]="name" placeholder="edge-01" spellcheck="false" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Short label<div class="f-hint">Shown where the full name won't fit. Auto: {{ autoShortOf() || '—' }}</div></div>
+                <div class="f-control inline">
+                  <input class="text mono narrow" [(ngModel)]="short" maxlength="5" [placeholder]="autoShortOf()" spellcheck="false" />
+                  <button class="btn" (click)="short = ''">Use auto</button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Aliases<div class="f-hint">Matched by sidebar search.</div></div>
+                <div class="f-control">
+                  <pear-chips [items]="aliases" placeholder="add alias" (changed)="aliases = $event" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Type</div>
+                <div class="f-control">
+                  <pear-seg
+                    [options]="[
+                      { v: 'auto', l: 'Auto-detected' },
+                      { v: 'docker', l: 'Docker' },
+                      { v: 'swarm', l: 'Swarm' },
+                      { v: 'proxmox', l: 'Proxmox' },
+                    ]"
+                    [value]="kindSel"
+                    (changed)="kindSel = $any($event)"
+                  />
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Tags<div class="f-hint">First tag shows as the sidebar badge.</div></div>
+                <div class="f-control">
+                  <pear-chips [items]="tags" placeholder="add tag" (changed)="tags = $event" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Color</div>
+                <div class="f-control">
+                  <pear-swatches [value]="color" (changed)="color = $event" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="f-label">Notes<div class="f-hint">Only you see these.</div></div>
+                <div class="f-control">
+                  <textarea class="text area" rows="4" [(ngModel)]="notes" placeholder="Anything worth remembering before you touch this box"></textarea>
+                </div>
+              </div>
+            </div>
+          }
+
+          @case ('advanced') {
+            <div class="group">
+              <div class="g-title">Session</div>
+              <div class="field">
+                <div class="f-label">Working directory<div class="f-hint">Where new tabs and terminals open.</div></div>
+                <div class="f-control">
+                  <input class="text mono" [(ngModel)]="cwd" placeholder="/srv" spellcheck="false" />
+                </div>
+              </div>
+            </div>
+            <div class="group">
+              <div class="g-title">Environment</div>
+              @for (e of env; track trackIndex($index); let i = $index) {
+                <div class="kv-row">
+                  <input class="ep-input" style="width: 180px" [(ngModel)]="e.k" placeholder="KEY" spellcheck="false" />
+                  <span class="ep-colon">=</span>
+                  <input class="ep-input grow" [(ngModel)]="e.v" placeholder="value" spellcheck="false" />
+                  <button class="ep-btn danger" title="Remove" (click)="removeEnv(i)">
+                    <pear-icon name="trash" [size]="11" />
+                  </button>
+                </div>
+              }
+              <button class="ghost" (click)="addEnv()"><pear-icon name="plus" [size]="11" /> Add variable</button>
+            </div>
+            <div class="group last">
+              <div class="g-title">Startup commands</div>
+              <div class="banner">
+                <pear-icon name="terminal" [size]="13" />
+                <span>Run in order at the top of every new terminal for this host.</span>
+              </div>
+              @for (c of startup; track trackIndex($index); let i = $index) {
+                <div class="kv-row">
+                  <span class="ep-order">{{ i + 1 }}</span>
+                  <input class="ep-input grow" [(ngModel)]="startup[i]" spellcheck="false" />
+                  <button class="ep-btn danger" title="Remove" (click)="removeStartup(i)">
+                    <pear-icon name="trash" [size]="11" />
+                  </button>
+                </div>
+              }
+              <button class="ghost" (click)="addStartup()"><pear-icon name="plus" [size]="11" /> Add command</button>
+            </div>
+          }
+
+          @case ('workspaces') {
+            <div class="group last">
+              <div class="g-title">Membership</div>
+              <div class="banner">
+                <pear-icon name="layers" [size]="13" />
+                <span>A host can sit in as many workspaces as you like. You can also drag it onto one in the sidebar switcher.</span>
+              </div>
+              @if (!groups.groups().length) {
+                <div class="empty-note">No workspaces yet — create one from the switcher at the top of the sidebar.</div>
+              }
+              <div class="member-list">
+                @for (g of groups.groups(); track g.id) {
+                  <div class="member-row" [class.on]="memberIds().includes(g.id)" (click)="toggleMember(g.id)">
+                    <span class="member-check">
+                      @if (memberIds().includes(g.id)) {
+                        <pear-icon name="check" [size]="10" />
+                      }
+                    </span>
+                    <pear-icon [name]="g.icon" [size]="13" />
+                    <span class="member-name">{{ g.name }}</span>
+                    <span class="member-desc">{{ g.desc }}</span>
+                    <span class="member-count">{{ g.hostIds.length }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </div>
+
+    <div class="foot">
+      @if (!isNew()) {
+        <button class="btn danger" (click)="remove()">
+          <pear-icon name="trash" [size]="12" /> Remove host
+        </button>
+      }
+      @if (error(); as e) {
+        <span class="foot-error">{{ e }}</span>
+      } @else {
+        <span class="foot-note">
+          {{ endpoints.length }} endpoint{{ endpoints.length === 1 ? '' : 's' }} ·
+          {{ aliases.length }} alias{{ aliases.length === 1 ? '' : 'es' }}
+        </span>
+      }
+      <div class="foot-actions">
+        <button class="btn" (click)="closed.emit()">Cancel</button>
+        <button class="btn primary" [disabled]="saving()" (click)="save()">
+          <pear-icon name="check" [size]="12" /> Save host
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
