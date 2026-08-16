@@ -1,0 +1,191 @@
+<pm-header
+  title="Claude Code"
+  [host]="session.host()"
+  [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
+  (hostTap)="hostTap.emit()"
+>
+  <span slot="left" class="cc-glyph"><pm-icon name="sparkle" [size]="17" /></span>
+  <div slot="right" class="head-actions">
+    <pm-icon-btn icon="history" [iconSize]="17" label="History" (click)="menuOpen.set(!menuOpen())" />
+    <pm-icon-btn icon="plus" [iconSize]="18" label="New session" (click)="newSession()" />
+  </div>
+</pm-header>
+
+<!-- context meter -->
+<div class="meter">
+  <span>context</span>
+  <div class="bar"><div class="fill" [style.width.%]="pct()" [style.background]="meterColor()"></div></div>
+  <span>{{ tokensText() }}</span>
+  <button (click)="demo.compact()"><pm-icon name="fold" [size]="11" /> compact</button>
+</div>
+
+<!-- transcript -->
+<div #body class="transcript noscroll">
+  @if (!demo.messages().length) {
+    <div class="hello">
+      <span class="cc-glyph big"><pm-icon name="sparkle" [size]="20" /></span>
+      <div class="hi">Ask Claude about {{ session.host()?.name ?? 'this host' }}</div>
+      <div class="examples">“why is nginx 502ing?”<br />“prune unused docker images”<br />“tail the gateway logs”</div>
+    </div>
+  }
+  @for (m of demo.messages(); track m.id) {
+    <div class="turn">
+      @switch (m.role) {
+        @case ('user') {
+          <div class="user-row"><div class="user-bubble" [innerHTML]="rich(m.text)"></div></div>
+        }
+        @case ('assistant') {
+          <div class="asst-row">
+            <span class="avatar"><pm-icon name="sparkle" [size]="12" /></span>
+            <div class="asst-text" [innerHTML]="rich(m.text)"></div>
+          </div>
+        }
+        @case ('think') {
+          <div class="think">
+            <button class="think-head" (click)="toggle(m.id)">
+              <pm-icon name="sparkle" [size]="12" /><span>Thought for {{ m.secs }}s</span>
+              <pm-icon name="chevronDown" [size]="12" class="chev" [class.closed]="!isOpen(m.id)" />
+            </button>
+            @if (isOpen(m.id)) {
+              <div class="think-body">{{ m.text }}</div>
+            }
+          </div>
+        }
+        @case ('tool') {
+          <div class="tcard">
+            <button class="tcard-head" (click)="m.out && toggle(m.id, m.status === 'running')">
+              <pm-icon name="terminal" [size]="13" />
+              <span class="cmd">{{ m.cmd }}</span>
+              <span class="tpill" [class]="'tpill ' + tonePillClass(m.status)">
+                {{ m.status === 'running' ? 'running' : m.status === 'error' ? 'failed' : m.ms + 'ms' }}
+              </span>
+              @if (m.out) {
+                <pm-icon name="chevronDown" [size]="12" class="chev" [class.closed]="!isOpen(m.id, m.status === 'running')" />
+              }
+            </button>
+            @if (m.out && isOpen(m.id, m.status === 'running')) {
+              <div class="tout">{{ m.out }}</div>
+            }
+          </div>
+        }
+        @case ('permission') {
+          <div class="tcard" [class.perm-pending]="m.status === 'pending'">
+            <div class="tcard-head static" [class.hl]="m.status === 'pending'">
+              <pm-icon name="shield" [size]="13" [class.accent-ic]="m.status === 'pending'" />
+              <span class="perm-title">Command approval</span>
+              @if (m.status !== 'pending') {
+                <span class="tpill" [class]="'tpill ' + (m.status === 'denied' ? 'err' : 'ok')">
+                  {{ m.status === 'denied' ? 'denied' : m.status === 'always' ? 'session' : 'allowed' }}
+                </span>
+              }
+            </div>
+            <div class="perm-body">
+              <div class="perm-cmd"><span class="dollar">$</span><span>{{ m.cmd }}</span></div>
+              <div class="perm-why">{{ m.why }}</div>
+            </div>
+            @if (m.status === 'pending') {
+              <div class="perm-actions">
+                <button class="cbtn primary" (click)="demo.resolvePermission(m.id, 'once')">
+                  <pm-icon name="check" [size]="13" /> Allow
+                </button>
+                <button class="cbtn" (click)="demo.resolvePermission(m.id, 'always')">Session</button>
+                <button class="cbtn ghost" (click)="demo.resolvePermission(m.id, 'denied')">Deny</button>
+              </div>
+            }
+          </div>
+        }
+        @case ('question') {
+          <div class="tcard">
+            <div class="tcard-head static q-head">
+              <pm-icon name="chat" [size]="13" class="claude-ic" />
+              <span>{{ m.prompt }}</span>
+            </div>
+            @for (opt of m.options; track $index; let i = $index) {
+              <button
+                class="q-opt"
+                [class.picked]="m.answer === i"
+                [class.dimmed]="m.answer != null && m.answer !== i"
+                [disabled]="m.answer != null"
+                (click)="demo.answerQuestion(m.id, i)"
+              >
+                <span class="radio" [class.on]="m.answer === i"><span></span></span>
+                <span [innerHTML]="rich(opt)"></span>
+              </button>
+            }
+          </div>
+        }
+        @case ('report') {
+          <div class="tcard">
+            <div class="tcard-head static rep-head">
+              <span class="rep-accent" [class]="'rep-accent ' + m.tone"></span>
+              <span class="rep-title">{{ m.title }}</span>
+            </div>
+            <div class="rep-lines">
+              @for (l of m.lines; track $index) {
+                <div class="rep-line">
+                  <span class="rep-ic" [class]="'rep-ic ' + l.k">{{
+                    l.k === 'cause' ? '●' : l.k === 'warn' ? '▲' : l.k === 'ok' ? '✓' : '→'
+                  }}</span>
+                  <span [innerHTML]="rich(l.t)"></span>
+                </div>
+              }
+            </div>
+          </div>
+        }
+        @case ('divider') {
+          <div class="divider">
+            <span class="rule"></span>
+            <pm-icon name="fold" [size]="12" /> {{ m.text }}
+            <span class="rule"></span>
+          </div>
+        }
+      }
+    </div>
+  }
+  @if (demo.busy()) {
+    <div class="asst-row">
+      <span class="avatar"><pm-icon name="sparkle" [size]="12" /></span>
+      <span class="working"><span class="cc-work"></span> working…</span>
+    </div>
+  }
+</div>
+
+<!-- composer -->
+<div class="composer">
+  <div class="box">
+    <textarea
+      #ta
+      rows="1"
+      [value]="input()"
+      (input)="grow($event)"
+      (keydown.enter)="onEnter($any($event))"
+      [placeholder]="'Message Claude · ' + (session.host()?.name ?? 'pear')"
+    ></textarea>
+    <div class="box-foot">
+      <button class="auto" (click)="demo.autoApprove.set(!demo.autoApprove())">
+        <pm-icon name="shield" [size]="12" [class.warn-ic]="demo.autoApprove()" />
+        {{ demo.autoApprove() ? 'auto-approve' : 'ask each time' }}
+      </button>
+      <button class="send" [class.ready]="input().trim() && !demo.busy()" (click)="send()">
+        <pm-icon name="sendUp" [size]="17" />
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- history sheet -->
+<pm-sheet [open]="menuOpen()" maxHeight="64%" (closed)="menuOpen.set(false)">
+  <div class="sess-title">Sessions on {{ session.host()?.name ?? '—' }}</div>
+  <div class="sess-list noscroll">
+    @for (s of demo.sessions; track s.id) {
+      <button class="sess" [class.on]="s.id === demo.sessionId()" (click)="loadSession(s)">
+        <div class="sess-head">
+          <span class="sess-name">{{ s.title }}</span>
+          <span class="sess-when">{{ s.when }}</span>
+        </div>
+        <div class="sess-meta">{{ s.turns }} turns · {{ (s.tokens / 1000).toFixed(1) }}k tokens</div>
+      </button>
+    }
+    <button class="sess-new" (click)="newSession()"><pm-icon name="plus" [size]="15" /> New session</button>
+  </div>
+</pm-sheet>

@@ -1,0 +1,54 @@
+<pm-header
+  title="Files"
+  [host]="session.host()"
+  [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
+  (hostTap)="hostTap.emit()"
+>
+  <pm-icon-btn slot="right" icon="upload" [iconSize]="19" label="Upload" />
+</pm-header>
+
+<div class="crumb-bar">
+  <button class="up" [disabled]="session.path() === '/'" (click)="goUp()">
+    <pm-icon name="back" [size]="16" />
+  </button>
+  <div class="crumbs-box">
+    <div class="crumbs noscroll">
+      <button class="root" [class.last]="!parts().length" (click)="session.navigate('/')">/</button>
+      @for (p of parts(); track $index; let i = $index; let last = $last) {
+        <span class="sep">/</span>
+        <button [class.last]="last" [disabled]="last" (click)="session.navigate(crumb(i))">{{ p }}</button>
+      }
+    </div>
+  </div>
+</div>
+
+<div class="list noscroll">
+  @for (e of sorted(); track e.name) {
+    <button class="entry" (click)="open(e)">
+      @if (e.kind === 'dir') {
+        <pm-icon name="folder" [size]="20" class="dir-ic" />
+      } @else {
+        <pm-icon name="file" [size]="20" class="file-ic" />
+      }
+      <div class="body">
+        <div class="name">{{ e.name }}{{ e.kind === 'dir' ? '/' : '' }}</div>
+        <div class="meta">
+          {{ e.kind === 'dir' ? e.mode : fmtBytes(e.size) + ' · ' + fmtMtime(e.mtimeMs) }}
+        </div>
+      </div>
+      @if (e.kind === 'dir') {
+        <pm-icon name="forward" [size]="15" class="fwd" />
+      } @else {
+        <span class="mode">{{ e.mode }}</span>
+      }
+    </button>
+  } @empty {
+    <div class="empty">
+      <pm-icon name="folderOpen" [size]="34" />
+      <div>{{ error() || 'Empty directory' }}</div>
+    </div>
+  }
+  @if (sorted().length) {
+    <div class="count">{{ dirCount() }} dirs · {{ fileCount() }} files</div>
+  }
+</div>

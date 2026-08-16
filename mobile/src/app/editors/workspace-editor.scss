@@ -1,0 +1,22 @@
+:host { display: contents; }
+
+.desc { line-height: 1.5; resize: none; }
+
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  margin-bottom: 12px;
+  color: var(--fg-3);
+
+  input { flex: 1; font-size: 14px; color: var(--fg-0); }
+}
+
+.edit { display: grid; }
+
+.slim { flex-shrink: 0; padding: 0 16px; }
+.grow { flex: 1; }

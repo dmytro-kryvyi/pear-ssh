@@ -1,0 +1,217 @@
+<pm-editor-shell
+  [wide]="wide()"
+  [title]="isNew() ? 'New host' : d().name"
+  [subtitle]="d().user + '@' + (d().endpoints?.[0]?.addr || '—')"
+  [sections]="sections"
+  [section]="section()"
+  (sectionChange)="section.set($event)"
+  (closed)="close()"
+>
+  <span slot="glyph" class="glyph" [style.background]="stripeColor()"></span>
+
+  @switch (section()) {
+    @case ('connection') {
+      <div class="m-note">
+        <pm-icon name="network" [size]="15" />
+        <span>Pear dials these addresses in order and keeps the first that answers. Order matters — primary first.</span>
+      </div>
+      <div class="sec-label">Endpoints</div>
+      @for (e of d().endpoints ?? []; track e.id; let i = $index; let n = $count) {
+        <div class="m-card ep" [class.primary]="i === 0">
+          <div class="ep-head">
+            <span class="ep-rank" [class.primary]="i === 0">{{ i === 0 ? 'PRIMARY' : 'FALLBACK ' + i }}</span>
+            <span class="ep-probe" [class.ok]="probe()[e.id]?.state === 'ok'" [class.fail]="probe()[e.id]?.state === 'fail'">
+              {{ probeText(e.id) }}
+            </span>
+            <button class="m-tap" title="Test endpoint" (click)="testEp(e)"><pm-icon name="lightning" [size]="14" /></button>
+          </div>
+          <input
+            class="m-input m-input--ui ep-input"
+            [value]="e.label ?? ''"
+            placeholder="label (e.g. Tailscale)"
+            (input)="setEp(e.id, { label: $any($event.target).value })"
+          />
+          <div class="ep-addr">
+            <input
+              class="m-input ep-input"
+              [value]="e.addr"
+              placeholder="host or IP"
+              (input)="setEp(e.id, { addr: $any($event.target).value })"
+            />
+            <input
+              class="m-input ep-input port"
+              [value]="e.port"
+              (input)="setEp(e.id, { port: +($any($event.target).value) || 22 })"
+            />
+          </div>
+          <div class="ep-actions">
+            <button class="m-tap" [disabled]="i === 0" (click)="moveEp(i, -1)">
+              <pm-icon name="chevronDown" [size]="14" style="transform: rotate(180deg)" />
+            </button>
+            <button class="m-tap" [disabled]="i === n - 1" (click)="moveEp(i, 1)">
+              <pm-icon name="chevronDown" [size]="14" />
+            </button>
+            <button class="m-tap danger trash" (click)="removeEp(e.id)"><pm-icon name="trash" [size]="14" /></button>
+          </div>
+        </div>
+      }
+      <div class="ep-footer">
+        <button class="m-add" (click)="addEp()"><pm-icon name="plus" [size]="14" /> Add endpoint</button>
+        <button class="m-big" (click)="testAll()"><pm-icon name="lightning" [size]="15" /> Test all</button>
+      </div>
+
+      <div class="sec-label">Authentication</div>
+      <div class="m-field">
+        <div class="f-label">User</div>
+        <input class="m-input" [value]="d().user" placeholder="deploy" (input)="set('user', $any($event.target).value)" />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Method</div>
+        <pm-seg
+          [options]="[{ v: 'key', l: 'Key' }, { v: 'agent', l: 'Agent' }, { v: 'password', l: 'Password' }]"
+          [value]="d().auth?.method ?? 'key'"
+          (valueChange)="setAuth({ method: $any($event) })"
+        />
+      </div>
+      @if ((d().auth?.method ?? 'key') === 'key') {
+        <div class="m-field">
+          <div class="f-label">Private key</div>
+          <input
+            class="m-input"
+            [value]="d().auth?.privateKeyPath ?? ''"
+            placeholder="~/.ssh/id_ed25519"
+            (input)="setAuth({ privateKeyPath: $any($event.target).value })"
+          />
+        </div>
+      }
+      @if (d().auth?.method === 'password') {
+        <div class="m-field">
+          <div class="f-label">Password</div>
+          <input
+            class="m-input"
+            type="password"
+            [placeholder]="d().auth?.hasPassword ? '•••••••• (unchanged)' : '••••••••'"
+            (input)="setAuth({ password: $any($event.target).value })"
+          />
+          <div class="f-hint">Kept in the device keychain. Leave empty to keep the stored secret.</div>
+        </div>
+      }
+      <div class="m-field">
+        <div class="f-label">Forward agent</div>
+        <pm-seg
+          [options]="[{ v: 'on', l: 'On' }, { v: 'off', l: 'Off' }]"
+          [value]="d().auth?.agentForward ? 'on' : 'off'"
+          (valueChange)="setAuth({ agentForward: $event === 'on' })"
+        />
+      </div>
+    }
+
+    @case ('identity') {
+      <div class="m-field">
+        <div class="f-label">Display name</div>
+        <input class="m-input m-input--ui" [value]="d().name" placeholder="edge-01" (input)="set('name', $any($event.target).value)" />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Short label</div>
+        <div class="short-row">
+          <input
+            class="m-input short-input"
+            [value]="d().short ?? ''"
+            [placeholder]="autoLabel()"
+            (input)="set('short', $any($event.target).value.slice(0, 5).toUpperCase())"
+          />
+          <button class="m-big" (click)="set('short', undefined)">Use auto</button>
+        </div>
+        <div class="f-hint">Used where the full name won't fit. Auto: {{ autoLabel() }}</div>
+      </div>
+      <div class="m-field">
+        <div class="f-label">Aliases</div>
+        <pm-chips [items]="d().aliases ?? []" placeholder="add alias" (itemsChange)="set('aliases', $event)" />
+        <div class="f-hint">Type any of these in search to connect instantly.</div>
+      </div>
+      <div class="m-field">
+        <div class="f-label">Type</div>
+        <pm-seg
+          [options]="[{ v: 'docker', l: 'Docker' }, { v: 'swarm', l: 'Swarm' }, { v: 'proxmox', l: 'Proxmox' }]"
+          [value]="d().kind"
+          (valueChange)="set('kind', $any($event)); set('kindManual', true)"
+        />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Tags</div>
+        <pm-chips [items]="d().tags ?? []" placeholder="add tag" (itemsChange)="set('tags', $event)" />
+        <div class="f-hint">The first tag shows on the host row.</div>
+      </div>
+      <div class="m-field">
+        <div class="f-label">Color</div>
+        <pm-colors [value]="d().color ?? 'teal'" (valueChange)="set('color', $event)" />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Notes</div>
+        <textarea
+          class="m-input m-input--ui notes"
+          rows="4"
+          placeholder="Anything worth remembering before you touch this box"
+          (input)="set('notes', $any($event.target).value)"
+          >{{ d().notes ?? '' }}</textarea>
+      </div>
+    }
+
+    @case ('advanced') {
+      <div class="m-field">
+        <div class="f-label">Working directory</div>
+        <input class="m-input" [value]="d().cwd ?? ''" placeholder="/srv" (input)="set('cwd', $any($event.target).value)" />
+        <div class="f-hint">Where files and new shells open.</div>
+      </div>
+
+      <div class="sec-label">Environment</div>
+      @for (e of d().env ?? []; track $index; let i = $index) {
+        <div class="kv-row">
+          <input class="m-input key" [value]="e.k" placeholder="KEY" (input)="setEnv(i, 'k', $any($event.target).value)" />
+          <input class="m-input val" [value]="e.v" placeholder="value" (input)="setEnv(i, 'v', $any($event.target).value)" />
+          <button class="m-tap danger" (click)="removeEnv(i)"><pm-icon name="trash" [size]="14" /></button>
+        </div>
+      }
+      <button class="m-add gap-b" (click)="addEnv()"><pm-icon name="plus" [size]="14" /> Add variable</button>
+
+      <div class="sec-label">Startup commands</div>
+      <div class="m-note">
+        <pm-icon name="terminal" [size]="15" />
+        <span>Run in order every time a shell opens on this host.</span>
+      </div>
+      @for (c of d().startup ?? []; track $index; let i = $index) {
+        <div class="kv-row">
+          <input class="m-input val" [value]="c" (input)="setStartup(i, $any($event.target).value)" />
+          <button class="m-tap danger" (click)="removeStartup(i)"><pm-icon name="trash" [size]="14" /></button>
+        </div>
+      }
+      <button class="m-add" (click)="addStartup()"><pm-icon name="plus" [size]="14" /> Add command</button>
+    }
+
+    @case ('spaces') {
+      <div class="m-note">
+        <pm-icon name="layers" [size]="15" />
+        <span>A host can live in as many workspaces as you like.</span>
+      </div>
+      @for (w of session.groups(); track w.id) {
+        <pm-check-row
+          [on]="memberIds().includes(w.id)"
+          [title]="w.name"
+          [meta]="w.desc ?? ''"
+          (tap)="toggleMember(w.id)"
+        >
+          <pm-ws-glyph slot="glyph" [ws]="w" />
+          <span slot="right" class="ws-count">{{ w.hostIds.length }}</span>
+        </pm-check-row>
+      }
+    }
+  }
+
+  <ng-container slot="footer">
+    @if (!isNew()) {
+      <button class="m-big danger slim" (click)="remove()"><pm-icon name="trash" [size]="15" /></button>
+      <button class="m-big grow" (click)="connect()"><pm-icon name="terminal" [size]="15" /> Connect</button>
+    }
+    <button class="m-big primary grow-13" (click)="save()"><pm-icon name="check" [size]="15" /> Save</button>
+  </ng-container>
+</pm-editor-shell>

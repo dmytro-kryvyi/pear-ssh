@@ -1,24 +1,42 @@
 import { Component, inject, signal } from '@angular/core';
-import { PEAR_BACKEND } from './backend';
+import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { PmHostKeySheet } from './native/host-key-sheet';
+import { PmPhoneShell } from './shell/phone-shell';
+import { PmTabletShell } from './shell/tablet-shell';
+import { PearSession } from './state/session';
 
-/**
- * M0 boot shell: proves theme + backend DI wiring. Replaced by the phone
- * tab-bar / tablet rail shells in M1.
- */
+const TABLET_MIN_WIDTH = 900;
+
+/** Root — picks the phone or tablet shell from the viewport width. */
 @Component({
   selector: 'pm-root',
-  templateUrl: './app.html',
-  styleUrl: './app.scss',
+  imports: [PmPhoneShell, PmTabletShell, PmHostKeySheet],
+  template: `
+    @if (tablet()) {
+      <pm-tablet-shell />
+    } @else {
+      <pm-phone-shell />
+    }
+    <pm-host-key-sheet />
+  `,
+  styles: ':host { display: block; height: 100dvh; }',
 })
 export class App {
-  private readonly backend = inject(PEAR_BACKEND);
-
-  readonly backendState = signal('connecting…');
+  protected readonly tablet = signal(window.innerWidth >= TABLET_MIN_WIDTH);
+  private readonly session = inject(PearSession);
 
   constructor() {
-    this.backend.hosts
-      .list()
-      .then((hosts) => this.backendState.set(`stub backend · ${hosts.length} hosts`))
-      .catch((err: unknown) => this.backendState.set(`backend error: ${String(err)}`));
+    window.addEventListener('resize', () =>
+      this.tablet.set(window.innerWidth >= TABLET_MIN_WIDTH),
+    );
+    // Reconnect-on-resume (M3 lifecycle): transports lazily redial on the
+    // next operation, so resuming just refreshes the active host's data —
+    // which re-establishes the session in the background if Android killed it.
+    if (Capacitor.isNativePlatform()) {
+      void CapApp.addListener('resume', () => {
+        if (this.session.activeHostId()) void this.session.refreshOrch();
+      });
+    }
   }
 }

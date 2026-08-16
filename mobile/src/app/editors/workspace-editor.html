@@ -1,0 +1,73 @@
+<pm-editor-shell
+  [wide]="wide()"
+  [title]="isNew() ? 'New workspace' : d().name"
+  [subtitle]="d().hostIds.length + (d().hostIds.length === 1 ? ' host' : ' hosts')"
+  [sections]="sections"
+  [section]="section()"
+  (sectionChange)="section.set($event)"
+  (closed)="close()"
+>
+  <pm-ws-glyph slot="glyph" [ws]="d()" [size]="20" />
+
+  @switch (section()) {
+    @case ('about') {
+      <div class="m-field">
+        <div class="f-label">Name</div>
+        <input class="m-input m-input--ui" [value]="d().name" placeholder="Production" (input)="set('name', $any($event.target).value)" />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Color</div>
+        <pm-colors [value]="d().color" (valueChange)="set('color', $event)" />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Icon</div>
+        <pm-seg
+          [options]="[
+            { v: 'layers', l: 'Stack' },
+            { v: 'server', l: 'Rack' },
+            { v: 'cpu', l: 'Chip' },
+            { v: 'lightning', l: 'Bolt' },
+          ]"
+          [value]="d().icon"
+          (valueChange)="set('icon', $any($event))"
+        />
+      </div>
+      <div class="m-field">
+        <div class="f-label">Description</div>
+        <textarea
+          class="m-input m-input--ui desc"
+          rows="3"
+          placeholder="What this group is for"
+          (input)="set('desc', $any($event.target).value)"
+          >{{ d().desc ?? '' }}</textarea>
+      </div>
+    }
+
+    @case ('hosts') {
+      <div class="filter">
+        <pm-icon name="search" [size]="15" />
+        <input [value]="query()" (input)="query.set($any($event.target).value)" placeholder="Filter hosts" />
+      </div>
+      @for (h of list(); track h.id) {
+        <pm-check-row
+          [on]="d().hostIds.includes(h.id)"
+          [title]="h.name"
+          [meta]="h.user + '@' + h.host"
+          (tap)="toggleHost(h)"
+        >
+          <pm-host-dot slot="glyph" [status]="session.statusOf(h.id)" [size]="8" />
+          <span slot="right" class="m-tap edit" (click)="$event.stopPropagation(); editHost(h)">
+            <pm-icon name="pencil" [size]="13" />
+          </span>
+        </pm-check-row>
+      }
+    }
+  }
+
+  <ng-container slot="footer">
+    @if (!isNew()) {
+      <button class="m-big danger slim" (click)="remove()"><pm-icon name="trash" [size]="15" /></button>
+    }
+    <button class="m-big primary grow" (click)="save()"><pm-icon name="check" [size]="15" /> Save workspace</button>
+  </ng-container>
+</pm-editor-shell>

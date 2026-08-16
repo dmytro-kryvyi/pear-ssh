@@ -78,7 +78,11 @@ export function resolveAuth(cfg: HostConfig): Partial<ConnectConfig> {
   }
 
   if (auth.method === 'key') {
-    const key = auth.privateKeyPath ? readFileSync(auth.privateKeyPath) : defaultKey();
+    const key = auth.privateKey
+      ? Buffer.from(auth.privateKey)
+      : auth.privateKeyPath
+        ? readFileSync(auth.privateKeyPath)
+        : defaultKey();
     if (key) out.privateKey = key;
     if (auth.passphrase) out.passphrase = auth.passphrase;
     // Forwarding needs the agent on the wire even in key mode.

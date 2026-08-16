@@ -1,0 +1,205 @@
+:host {
+  display: flex;
+  height: 100%;
+  padding-top: var(--safe-top);
+}
+
+.layout {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+/* ---- rail ---------------------------------------------------------------- */
+
+.rail {
+  width: 296px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px 10px;
+
+  .pear { color: var(--accent); }
+  .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+}
+
+.new-host {
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-1);
+}
+
+.ws-list {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 6px 0 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+
+  &.on { background: var(--bg-2); .ws-name { font-weight: 600; } }
+  &.dropping { background: var(--accent-soft); border-color: var(--accent-line); }
+}
+
+.ws-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-n { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.ws-edit {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center; color: var(--fg-3);
+}
+
+.ws-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  color: var(--fg-2);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.rail-search { padding: 10px 12px; border-top: 1px solid var(--border-soft); }
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 11px;
+  color: var(--fg-3);
+
+  input { flex: 1; min-width: 0; font-size: 13.5px; color: var(--fg-0); }
+  button { color: var(--fg-3); display: flex; }
+}
+
+.rail-hosts {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-empty { padding: 22px 14px; text-align: center; color: var(--fg-3); font-size: 12.5px; }
+.drag-hint { padding: 8px 14px 14px; font-size: 11.5px; color: var(--fg-3); }
+
+/* ---- working pane -------------------------------------------------------- */
+
+.work {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.views {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-2);
+  border-radius: 12px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 16px;
+    border-radius: 9px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--fg-2);
+
+    &.on { font-weight: 600; color: var(--fg-0); background: var(--bg-4); }
+    &.on.claude { color: var(--claude); }
+  }
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 11px;
+  font-size: 13.5px;
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+
+  &.shell { margin-left: auto; }
+  &.on { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
+}
+
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+
+  &.split { flex: 1 1 55%; }
+}
+
+.term-pane {
+  flex: 1 1 45%;
+  min-height: 200px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}

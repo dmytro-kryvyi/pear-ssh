@@ -1,0 +1,97 @@
+<pm-header [title]="title()" [subtitle]="subtitle()">
+  <pm-icon-btn slot="right" icon="plus" [iconSize]="20" label="New host" (click)="newHost()" />
+</pm-header>
+
+<!-- workspace strip -->
+<div class="strip-pad">
+  <div class="strip noscroll">
+    <div
+      class="chip"
+      [class.on]="session.activeWsId() === null"
+      (click)="session.activeWsId.set(null)"
+    >
+      <pm-ws-glyph [ws]="{ icon: 'server', color: 'teal' }" [size]="14" />
+      <span class="chip-name">All hosts</span>
+      <span class="chip-n">{{ session.hosts().length }}</span>
+    </div>
+    @for (w of session.groups(); track w.id) {
+      <div class="chip" [class.on]="session.activeWsId() === w.id" (click)="session.activeWsId.set(w.id)">
+        <pm-ws-glyph [ws]="w" [size]="14" />
+        <span class="chip-name">{{ w.name }}</span>
+        <span class="chip-n">{{ w.hostIds.length }}</span>
+        @if (session.activeWsId() === w.id) {
+          <span class="chip-edit" (click)="$event.stopPropagation(); editWs(w.id)">
+            <pm-icon name="pencil" [size]="12" />
+          </span>
+        }
+      </div>
+    }
+    <button class="chip new" (click)="newWs()"><pm-icon name="plus" [size]="13" /> Workspace</button>
+  </div>
+</div>
+
+<div class="scroll noscroll">
+  <!-- search -->
+  <div class="search-row">
+    <div class="search">
+      <pm-icon name="search" [size]="16" />
+      <input
+        [value]="query()"
+        (input)="query.set($any($event.target).value)"
+        placeholder="Name, alias or IP"
+      />
+      @if (query()) {
+        <button (click)="query.set('')"><pm-icon name="close" [size]="14" /></button>
+      }
+    </div>
+  </div>
+
+  <!-- recents -->
+  @if (!query() && session.recents().length) {
+    <div>
+      <div class="sec-label">Recent</div>
+      <div class="recents noscroll">
+        @for (h of session.recents(); track h.id) {
+          <button
+            class="recent"
+            [class.active]="h.id === session.activeHostId()"
+            (click)="connect.emit(h)"
+          >
+            <div class="r-top">
+              <pm-icon [name]="ORCH_ICON[h.kind] || 'docker'" [size]="16" />
+              <pm-host-dot [status]="session.statusOf(h.id)" [size]="7" />
+            </div>
+            <div class="r-name">{{ h.name }}</div>
+            <div class="r-meta">{{ h.aliases?.[0] || h.tags?.[0] || h.host }} · {{ session.lastSeenOf(h.id) }}</div>
+          </button>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- host list -->
+  <div>
+    <div class="sec-label">
+      {{ query() ? 'Results — all workspaces' : session.activeWs() ? 'In this workspace' : 'All hosts' }}
+    </div>
+    <div class="rows">
+      @for (h of filtered(); track h.id) {
+        <pm-host-row
+          [h]="h"
+          [active]="h.id === session.activeHostId()"
+          (tap)="connect.emit($event)"
+          (edit)="editHost($event)"
+        />
+      } @empty {
+        <div class="empty">
+          {{ session.activeWs() ? 'No hosts in this workspace yet.' : 'No matching hosts.' }}
+          @if (session.activeWs(); as ws) {
+            <div class="empty-add">
+              <button class="m-big" (click)="editWs(ws.id)"><pm-icon name="plus" [size]="14" /> Add hosts</button>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</div>

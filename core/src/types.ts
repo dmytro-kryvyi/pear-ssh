@@ -21,6 +21,14 @@ export interface HostAuth {
   /** Absolute path to a private key file. */
   privateKeyPath?: string;
   /**
+   * Private key as text (OpenSSH/PEM). The mobile app's key source — there
+   * is no ~/.ssh on Android — and an alternative to privateKeyPath anywhere.
+   * Write-only transient, same contract as password/passphrase.
+   */
+  privateKey?: string;
+  /** Cipher text of privateKey. Persisted; never leaves the trusted side. */
+  privateKeyEnc?: string;
+  /**
    * Passphrase for the key file, if encrypted. Write-only transient: consumed
    * by upsert (encrypted to passphraseEnc) and by connect-time configs; never
    * persisted or returned to the renderer.
@@ -36,6 +44,8 @@ export interface HostAuth {
   hasPassword?: boolean;
   /** Set on sanitized views so the UI can show "unchanged" placeholders. */
   hasPassphrase?: boolean;
+  /** Set on sanitized views so the UI can show "unchanged" placeholders. */
+  hasPrivateKey?: boolean;
 }
 
 /** One address a host answers on. Dialed top-to-bottom; first success wins. */

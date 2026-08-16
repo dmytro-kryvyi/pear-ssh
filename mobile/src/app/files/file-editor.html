@@ -1,0 +1,33 @@
+<pm-full-sheet>
+  <div class="head">
+    <button class="back" (click)="closed.emit()"><pm-icon name="back" [size]="18" /></button>
+    <div class="titles">
+      <div class="name-line">
+        <pm-icon name="fileCode" [size]="15" class="fc" />
+        <span class="name">{{ name() }}</span>
+        @if (dirty()) {
+          <span class="dirty-dot" title="unsaved changes"></span>
+        }
+      </div>
+      <div class="path">{{ path() }}</div>
+    </div>
+    <button class="save" [class.ready]="dirty() && !saving()" (click)="save()">
+      {{ saving() ? 'Saving…' : dirty() ? 'Save' : 'Saved' }}
+    </button>
+  </div>
+
+  @if (error(); as e) {
+    <div class="err-bar">{{ e }}</div>
+  }
+
+  <div class="cm-wrap" [class.loading]="loading()">
+    <div #cm class="cm-host"></div>
+  </div>
+
+  <div class="foot">
+    <span>{{ lines() }} lines</span>
+    <span>UTF-8</span>
+    <span>LF</span>
+    <span class="lang">{{ lang() }}</span>
+  </div>
+</pm-full-sheet>

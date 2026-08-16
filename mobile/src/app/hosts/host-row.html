@@ -1,0 +1,37 @@
+<div class="row" [class.active]="active()" [class.compact]="compact()">
+  <button class="main" (click)="tap.emit(h())">
+    <span class="stripe" [style.background]="stripe()"></span>
+    <pm-host-dot [status]="session.statusOf(h().id)" [size]="compact() ? 8 : 9" />
+    <div class="body">
+      <div class="name-line">
+        <span class="name">{{ h().name }}</span>
+        @if (active() && !compact()) {
+          <span class="active-pill">ACTIVE</span>
+        }
+      </div>
+      <div class="addr">
+        {{ h().user }}&#64;{{ h().host }}@if (extraEps()) {&nbsp;+{{ extraEps() }}}@if (!compact() && h().aliases?.length) {&nbsp;· {{ h().aliases!.join(' ') }}}
+      </div>
+      @if (!compact() && members().length) {
+        <div class="members">
+          @for (w of members().slice(0, 4); track w.id) {
+            <span class="ws-dot" [style.background]="wsColor(w.color)" [title]="w.name"></span>
+          }
+          <span class="ws-names">{{ memberNames() }}</span>
+        </div>
+      }
+    </div>
+    <div class="meta">
+      <span class="short" [title]="h().name">{{ short() }}</span>
+      <span class="seen">
+        <pm-icon [name]="kindIcon()" [size]="12" />
+        @if (!compact()) {
+          {{ session.lastSeenOf(h().id) }}
+        }
+      </span>
+    </div>
+  </button>
+  <button class="edit" title="Edit host" (click)="edit.emit(h())">
+    <pm-icon name="pencil" [size]="compact() ? 13 : 16" />
+  </button>
+</div>

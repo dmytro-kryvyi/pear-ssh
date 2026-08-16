@@ -19,3 +19,13 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# --- PearSsh (sshj + BouncyCastle) ---
+# minify is off today; these keep R8 from breaking SSH crypto if it is
+# ever enabled. sshj discovers algorithms reflectively via Factory.Named.
+-keep class org.bouncycastle.** { *; }
+-keep class net.schmizz.** { *; }
+-keep class com.hierynomus.** { *; }
+-keep class app.pear.ssh.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn net.schmizz.**

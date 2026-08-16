@@ -1,6 +1,12 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
-import { provideStubBackend } from './backend';
+import { Capacitor } from '@capacitor/core';
+import { provideMockBackend } from './mock/mock-backend';
+import { provideNativeBackend } from './native/provide';
 
 export const appConfig: ApplicationConfig = {
-  providers: [provideBrowserGlobalErrorListeners(), provideStubBackend()],
+  providers: [
+    provideBrowserGlobalErrorListeners(),
+    // Real SSH on device; the seeded in-memory mock in a desktop browser.
+    Capacitor.isNativePlatform() ? provideNativeBackend() : provideMockBackend(),
+  ],
 };

@@ -1,0 +1,54 @@
+<ng-template #body>
+  <div class="head">
+    <ng-content select="[slot=glyph]" />
+    <div class="titles">
+      <div class="t">{{ title() }}</div>
+      @if (subtitle()) {
+        <div class="s">{{ subtitle() }}</div>
+      }
+    </div>
+    <button class="close" (click)="closed.emit()"><pm-icon name="close" [size]="16" /></button>
+  </div>
+
+  @if (sections().length && !wide()) {
+    <div class="chips noscroll">
+      @for (s of sections(); track s.id) {
+        <button class="chip" [class.on]="section() === s.id" (click)="sectionChange.emit(s.id)">
+          {{ s.label }}
+        </button>
+      }
+    </div>
+  }
+
+  <div class="split">
+    @if (sections().length && wide()) {
+      <div class="rail">
+        @for (s of sections(); track s.id) {
+          <button [class.on]="section() === s.id" (click)="sectionChange.emit(s.id)">
+            <pm-icon [name]="s.icon" [size]="15" /> {{ s.label }}
+          </button>
+        }
+      </div>
+    }
+    <div class="content noscroll" [class.wide]="wide()">
+      <ng-content />
+    </div>
+  </div>
+
+  <div class="footer" [class.wide]="wide()">
+    <ng-content select="[slot=footer]" />
+  </div>
+</ng-template>
+
+@if (wide()) {
+  <div class="modal-wrap">
+    <div class="scrim" (click)="closed.emit()"></div>
+    <div class="modal">
+      <ng-container [ngTemplateOutlet]="body" />
+    </div>
+  </div>
+} @else {
+  <pm-full-sheet>
+    <ng-container [ngTemplateOutlet]="body" />
+  </pm-full-sheet>
+}

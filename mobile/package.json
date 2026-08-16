@@ -6,6 +6,7 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
+    "test": "vitest run",
     "sync": "cap sync android"
   },
   "private": true,
@@ -17,10 +18,23 @@
     "@angular/forms": "^22.0.7",
     "@angular/platform-browser": "^22.0.7",
     "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.0.0",
+    "@capacitor/preferences": "^7.0.4",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-yaml": "^6.1.3",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "^6.5.3",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
     "@fontsource/inter": "^5.1.0",
     "@fontsource/jetbrains-mono": "^5.1.0",
+    "@lezer/highlight": "^1.2.3",
     "@pear/core": "*",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
@@ -29,6 +43,7 @@
     "@angular/cli": "^22.0.7",
     "@angular/compiler-cli": "^22.0.7",
     "@capacitor/cli": "^7.0.0",
-    "typescript": "~6.0.0"
+    "typescript": "~6.0.0",
+    "vitest": "^4.1.10"
   }
 }

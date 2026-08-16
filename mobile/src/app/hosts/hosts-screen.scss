@@ -1,0 +1,114 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.strip-pad { padding-top: 12px; flex-shrink: 0; }
+
+.strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 16px 2px;
+}
+
+.chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  cursor: pointer;
+
+  &.on {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+    padding-right: 6px;
+    .chip-name { font-weight: 600; }
+  }
+
+  &.new {
+    border: 1px dashed var(--border);
+    background: none;
+    color: var(--fg-2);
+    font-size: 13.5px;
+    gap: 6px;
+    padding: 0 14px;
+  }
+}
+
+.chip-name { font-size: 13.5px; font-weight: 500; white-space: nowrap; }
+.chip-n { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.chip-edit {
+  width: 28px; height: 28px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--bg-3); color: var(--fg-1);
+}
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.search-row { display: flex; gap: 8px; }
+.search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 13px;
+  color: var(--fg-3);
+
+  input { flex: 1; min-width: 0; font-size: 14.5px; color: var(--fg-0); }
+  button { color: var(--fg-3); display: flex; padding: 4px; }
+}
+
+.recents {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.recent {
+  flex-shrink: 0;
+  width: 136px;
+  text-align: left;
+  padding: 12px 13px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+
+  &.active { background: var(--accent-soft); border-color: var(--accent-line); }
+}
+
+.r-top { display: flex; align-items: center; justify-content: space-between; color: var(--accent); }
+.r-name { font-size: 14px; font-weight: 600; margin-top: 10px; }
+.r-meta {
+  font-family: var(--mono); font-size: 10.5px; color: var(--fg-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.rows { display: flex; flex-direction: column; gap: 8px; }
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.empty-add { margin-top: 12px; display: flex; justify-content: center; }

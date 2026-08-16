@@ -105,6 +105,13 @@ export class HostStore {
         /* fall back to prompt-at-connect */
       }
     }
+    if (!out.privateKey && out.privateKeyEnc && this.cipher) {
+      try {
+        out.privateKey = this.cipher.decrypt(out.privateKeyEnc);
+      } catch {
+        /* fall back to prompt-at-connect */
+      }
+    }
     return { ...config, auth: out };
   }
 
@@ -118,18 +125,21 @@ export class HostStore {
     const auth: HostAuth = { ...next };
     delete auth.passwordEnc;
     delete auth.passphraseEnc;
+    delete auth.privateKeyEnc;
     delete auth.hasPassword;
     delete auth.hasPassphrase;
+    delete auth.hasPrivateKey;
     this.mergeSecret(auth, prev, 'password', 'passwordEnc');
     this.mergeSecret(auth, prev, 'passphrase', 'passphraseEnc');
+    this.mergeSecret(auth, prev, 'privateKey', 'privateKeyEnc');
     return auth;
   }
 
   private mergeSecret(
     auth: HostAuth,
     prev: HostAuth | undefined,
-    plain: 'password' | 'passphrase',
-    enc: 'passwordEnc' | 'passphraseEnc',
+    plain: 'password' | 'passphrase' | 'privateKey',
+    enc: 'passwordEnc' | 'passphraseEnc' | 'privateKeyEnc',
   ): void {
     const incoming = auth[plain];
     if (incoming === undefined) {
@@ -182,6 +192,7 @@ export class HostStore {
       for (const [plain, enc] of [
         ['passphrase', 'passphraseEnc'],
         ['password', 'passwordEnc'],
+        ['privateKey', 'privateKeyEnc'],
       ] as const) {
         const value = h.auth[plain];
         if (value && !h.auth[enc] && this.cipher?.available()) {
@@ -207,8 +218,10 @@ function stripPlaintext(auth: HostAuth): HostAuth {
   const out = { ...auth };
   delete out.password;
   delete out.passphrase;
+  delete out.privateKey;
   delete out.hasPassword;
   delete out.hasPassphrase;
+  delete out.hasPrivateKey;
   return out;
 }
 
@@ -218,11 +231,15 @@ export function sanitizeHost(h: HostConfig): HostConfig {
   const auth: HostAuth = { ...h.auth };
   const hasPassword = Boolean(auth.password || auth.passwordEnc);
   const hasPassphrase = Boolean(auth.passphrase || auth.passphraseEnc);
+  const hasPrivateKey = Boolean(auth.privateKey || auth.privateKeyEnc);
   delete auth.password;
   delete auth.passphrase;
+  delete auth.privateKey;
   delete auth.passwordEnc;
   delete auth.passphraseEnc;
+  delete auth.privateKeyEnc;
   if (hasPassword) auth.hasPassword = true;
   if (hasPassphrase) auth.hasPassphrase = true;
+  if (hasPrivateKey) auth.hasPrivateKey = true;
   return { ...h, auth };
 }

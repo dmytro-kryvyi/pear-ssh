@@ -1,0 +1,219 @@
+<pm-header
+  [title]="title()"
+  [host]="session.host()"
+  [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
+  (hostTap)="hostTap.emit()"
+>
+  <pm-icon-btn slot="right" icon="refresh" label="Refresh" (click)="session.refreshOrch()" />
+</pm-header>
+
+<div class="scroll noscroll">
+  @switch (facet()) {
+    <!-- ============ DOCKER ============ -->
+    @case ('docker') {
+      <div class="kpis noscroll">
+        <div class="kpi">
+          <div class="k-l">Containers</div>
+          <div class="k-v">{{ containers().length }}</div>
+          <div class="k-s">{{ dockerImages() }} images</div>
+        </div>
+        <div class="kpi">
+          <div class="k-l">Running</div>
+          <div class="k-v ok">{{ dockerRunning() }}</div>
+          <div class="k-s">active now</div>
+        </div>
+        <div class="kpi">
+          <div class="k-l">Stopped</div>
+          <div class="k-v">{{ containers().length - dockerRunning() }}</div>
+          <div class="k-s">{{ containers().length - dockerRunning() ? 'idle / exited' : 'none' }}</div>
+        </div>
+        <div class="kpi">
+          <div class="k-l">Ports</div>
+          <div class="k-v">{{ dockerPorts() }}</div>
+          <div class="k-s">published</div>
+        </div>
+      </div>
+      <div class="cards">
+        @for (c of containers(); track c.id) {
+          <div class="card">
+            <div class="card-head">
+              <pm-state-dot [state]="c.running ? 'ok' : 'off'" />
+              <span class="card-name">{{ c.name }}</span>
+              <span class="pill" [class.ok]="c.running" [class.off]="!c.running">
+                {{ c.running ? 'running' : 'stopped' }}
+              </span>
+            </div>
+            <div class="image">{{ c.image }}</div>
+            <pm-gauge label="cpu" [valText]="c.running ? fmtPct(c.cpu) : '—'" [pct]="cpuPct(c)" />
+            <pm-gauge label="mem" [valText]="c.running ? memPctOf(c) + '%' : '—'" [pct]="memPctOf(c)" />
+            <div class="foot-line">
+              <span>{{ c.status }}</span><span>:{{ c.ports }}</span>
+            </div>
+            <div class="actions">
+              @if (c.running) {
+                <button class="act danger" (click)="container(c, 'stop')"><pm-icon name="stop" [size]="12" /> Stop</button>
+              } @else {
+                <button class="act" (click)="container(c, 'start')"><pm-icon name="play" [size]="12" /> Start</button>
+              }
+              <button class="act icon" [disabled]="!c.running" (click)="container(c, 'restart')"><pm-icon name="refresh" [size]="14" /></button>
+              <button class="act icon" (click)="container(c, 'logs')"><pm-icon name="logs" [size]="14" /></button>
+            </div>
+          </div>
+        } @empty {
+          <div class="empty">No containers on this host.</div>
+        }
+      </div>
+    }
+
+    <!-- ============ SWARM ============ -->
+    @case ('swarm') {
+      @if (swarm(); as sw) {
+        <div class="kpis noscroll">
+          <div class="kpi">
+            <div class="k-l">Nodes</div>
+            <div class="k-v">{{ sw.nodes.length }}</div>
+            <div class="k-s">{{ managers() }} mgr · {{ workers() }} wkr</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Health</div>
+            <div class="k-v" [class.ok]="!nodesDown()" [class.warn]="nodesDown()">
+              {{ sw.nodes.length - nodesDown() }}/{{ sw.nodes.length }}
+            </div>
+            <div class="k-s">{{ nodesDown() ? nodesDown() + ' down' : 'all ready' }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Services</div>
+            <div class="k-v">{{ sw.services.length }}</div>
+            <div class="k-s">{{ converged() }} converged</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Tasks</div>
+            <div class="k-v" [class.ok]="tasksRunning() === tasksDesired()" [class.warn]="tasksRunning() !== tasksDesired()">
+              {{ tasksRunning() }}/{{ tasksDesired() }}
+            </div>
+            <div class="k-s">{{ tasksRunning() === tasksDesired() ? 'all running' : 'reconciling' }}</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sec-label">Nodes</div>
+          <div class="cards tight">
+            @for (n of sw.nodes; track n.name) {
+              <div class="card">
+                <div class="card-head">
+                  <pm-state-dot [state]="n.ready ? 'ok' : 'err'" />
+                  <span class="card-name">{{ n.name }}</span>
+                  @if (n.leader) {
+                    <span class="crown" title="Raft leader"><pm-icon name="crown" [size]="14" /></span>
+                  }
+                  <span class="badge" [class.accent]="n.role === 'manager'">{{ n.role === 'manager' ? 'MANAGER' : 'WORKER' }}</span>
+                </div>
+                <div class="foot-line">
+                  <span>{{ n.ready ? (n.leader ? 'ready · leader' : 'ready') : 'down' }}</span>
+                  <span>{{ n.addr }}</span>
+                </div>
+                @if (n.ready) {
+                  <pm-gauge label="cpu" [valText]="nodeCpu(n.name) + '%'" [pct]="nodeCpu(n.name)" />
+                  <pm-gauge label="mem" [valText]="nodeMem(n.name) + '%'" [pct]="nodeMem(n.name)" />
+                }
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sec-label">Services · {{ converged() }}/{{ sw.services.length }} converged</div>
+          <div class="cards tight">
+            @for (s of sw.services; track s.id) {
+              <div class="card">
+                <div class="card-head">
+                  <pm-state-dot [state]="svcTone(s)" />
+                  <span class="card-name">{{ s.name }}</span>
+                  <span class="badge">{{ s.mode === 'global' ? 'GLOBAL' : 'REPLICATED' }}</span>
+                </div>
+                <div class="image">{{ s.image }}</div>
+                <div class="replicas-line">
+                  <span class="replicas" [class.ok]="svcTone(s) === 'ok'" [class.warn]="svcTone(s) === 'warn'" [class.off]="svcTone(s) === 'off'">
+                    {{ s.mode === 'global' ? s.running + ' global' : s.running + '/' + s.desired }}
+                  </span>
+                  <span class="rep-meta">replicas · :{{ s.ports }}</span>
+                </div>
+                <div class="slots">
+                  @for (on of replicaSlots(s); track $index) {
+                    <span class="slot" [class.on]="on"></span>
+                  }
+                </div>
+                <div class="actions">
+                  @if (s.mode !== 'global') {
+                    <button class="act icon" [disabled]="s.desired <= 0" (click)="scale(s, -1)"><pm-icon name="minus" [size]="14" /></button>
+                    <button class="act icon" (click)="scale(s, 1)"><pm-icon name="plus" [size]="14" /></button>
+                  }
+                  <button class="act" (click)="service(s, 'restart')"><pm-icon name="refresh" [size]="13" /> Restart</button>
+                  <button class="act icon" (click)="service(s, 'logs')"><pm-icon name="logs" [size]="14" /></button>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+      }
+    }
+
+    <!-- ============ PROXMOX ============ -->
+    @case ('proxmox') {
+      @if (proxmox(); as pv) {
+        <div class="kpis noscroll">
+          <div class="kpi">
+            <div class="k-l">Node CPU</div>
+            <div class="k-v">{{ pv.resources ? fmtPct(pv.resources.cpu) : '—' }}</div>
+            <div class="k-s">load</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Memory</div>
+            <div class="k-v">{{ memPct() != null ? memPct() + '%' : '—' }}</div>
+            <div class="k-s">{{ pv.resources ? fmtMemPair(pv.resources.mem, pv.resources.maxmem) : '—' }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Storage</div>
+            <div class="k-v">{{ diskPct() != null ? diskPct() + '%' : '—' }}</div>
+            <div class="k-s">{{ pv.resources ? fmtMemPair(pv.resources.disk, pv.resources.maxdisk) : '—' }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">Uptime</div>
+            <div class="k-v">{{ pv.resources?.uptime ? fmtUptime(pv.resources!.uptime) : 'down' }}</div>
+            <div class="k-s">{{ guestsUp() }}/{{ pv.guests.length }} up</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sec-label">Guests · {{ vmCount() }} VM · {{ ctCount() }} CT</div>
+          <div class="cards">
+            @for (g of pv.guests; track g.vmid) {
+              <div class="card">
+                <div class="card-head">
+                  <pm-state-dot [state]="g.running ? 'ok' : 'off'" />
+                  <pm-icon [name]="g.type === 'vm' ? 'cube' : 'cpu'" [size]="14" class="g-type" />
+                  <span class="card-name">{{ g.name }}</span>
+                  <span class="badge" [class.accent]="g.type === 'vm'">{{ g.type === 'vm' ? 'VM' : 'CT' }}</span>
+                </div>
+                <div class="foot-line">
+                  <span>#{{ g.vmid }}</span><span>{{ g.status }}</span>
+                </div>
+                <pm-gauge label="cpu" [valText]="g.running ? fmtPct(g.cpu) : '—'" [pct]="g.running ? g.cpu * 100 : 0" />
+                <pm-gauge label="mem" [valText]="guestMemText(g)" [pct]="guestMemPct(g)" />
+                <div class="actions">
+                  @if (g.running) {
+                    <button class="act danger" (click)="guest(g, 'shutdown')"><pm-icon name="stop" [size]="12" /> Shutdown</button>
+                  } @else {
+                    <button class="act" (click)="guest(g, 'start')"><pm-icon name="play" [size]="12" /> Start</button>
+                  }
+                  <button class="act icon" [disabled]="!g.running" (click)="guest(g, 'reboot')"><pm-icon name="refresh" [size]="14" /></button>
+                  <button class="act icon" (click)="guest(g, 'console')"><pm-icon name="terminal" [size]="14" /></button>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+      }
+    }
+  }
+</div>

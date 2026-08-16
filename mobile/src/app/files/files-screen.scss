@@ -1,0 +1,101 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.crumb-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-1);
+}
+
+.up {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-1);
+  &:disabled { color: var(--fg-3); opacity: 0.5; }
+}
+
+.crumbs-box {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 7px 11px;
+  overflow: hidden;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+
+  button {
+    color: var(--accent);
+    padding: 2px 4px;
+    flex-shrink: 0;
+    &.last { color: var(--fg-0); font-weight: 600; }
+  }
+  .sep { color: var(--fg-3); flex-shrink: 0; }
+}
+
+.list { flex: 1; overflow-y: auto; padding-bottom: 20px; }
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--border-soft);
+
+  .dir-ic { color: var(--accent); }
+  .file-ic { color: var(--fg-2); }
+  .fwd { color: var(--fg-3); }
+}
+
+.body { min-width: 0; flex: 1; }
+
+.name {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-top: 2px; }
+.mode { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex-shrink: 0; }
+
+.empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--fg-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.count { padding: 12px 16px; font-family: var(--mono); font-size: 11px; color: var(--fg-3); }

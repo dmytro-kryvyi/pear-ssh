@@ -1,0 +1,37 @@
+<div class="content">
+  @switch (tab()) {
+    @case ('hosts') {
+      <pm-hosts-screen (connect)="connect($event)" />
+    }
+    @case ('files') {
+      <pm-files-screen (hostTap)="pickerOpen.set(true)" />
+    }
+    @case ('orch') {
+      <pm-orch-screen (hostTap)="pickerOpen.set(true)" />
+    }
+    @case ('term') {
+      <pm-terminal-screen (hostTap)="pickerOpen.set(true)" />
+    }
+    @case ('claude') {
+      <pm-claude-screen (hostTap)="pickerOpen.set(true)" />
+    }
+  }
+
+  @if (session.openFile(); as file) {
+    @defer {
+      <pm-file-editor [path]="file" (closed)="session.openFile.set(null)" />
+    }
+  }
+  @if (session.editHost(); as host) {
+    <pm-host-editor [host]="host" (connectHost)="connect($event)" />
+  }
+  @if (session.editWs(); as ws) {
+    <pm-workspace-editor [workspace]="ws" />
+  }
+</div>
+
+<pm-tab-bar [tab]="tab()" [kind]="session.host()?.kind ?? 'docker'" (tabChange)="tab.set($event)" />
+
+<pm-sheet [open]="pickerOpen()" (closed)="pickerOpen.set(false)">
+  <pm-host-picker (connect)="connect($event)" (edit)="editFromPicker($event)" />
+</pm-sheet>

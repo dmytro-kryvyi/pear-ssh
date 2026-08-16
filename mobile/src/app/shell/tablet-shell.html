@@ -1,0 +1,129 @@
+<div class="layout">
+  <!-- ============ rail ============ -->
+  <div class="rail">
+    <div class="brand">
+      <pm-icon name="pear" [size]="18" class="pear" />
+      <span class="brand-name">Pear</span>
+      <button class="new-host" title="New host" (click)="session.editHost.set(session.blankHost())">
+        <pm-icon name="plus" [size]="17" />
+      </button>
+    </div>
+
+    <div class="ws-list">
+      <div
+        class="ws-row"
+        [class.on]="session.activeWsId() === null"
+        (click)="session.activeWsId.set(null)"
+      >
+        <pm-ws-glyph [ws]="{ icon: 'server', color: 'teal' }" [size]="14" />
+        <span class="ws-name">All hosts</span>
+        <span class="ws-n">{{ session.hosts().length }}</span>
+      </div>
+      @for (w of session.groups(); track w.id) {
+        <div
+          class="ws-row"
+          [class.on]="session.activeWsId() === w.id"
+          [class.dropping]="dragId() && overWs() === w.id"
+          (click)="session.activeWsId.set(w.id)"
+          (dragover)="onDragOver($any($event), w.id)"
+          (dragleave)="overWs.set(null)"
+          (drop)="$event.preventDefault(); drop(w.id)"
+        >
+          <pm-ws-glyph [ws]="w" [size]="14" />
+          <span class="ws-name">{{ w.name }}</span>
+          <span class="ws-n">{{ w.hostIds.length }}</span>
+          <span class="ws-edit" (click)="$event.stopPropagation(); editWs(w.id)">
+            <pm-icon name="pencil" [size]="12" />
+          </span>
+        </div>
+      }
+      <button class="ws-new" (click)="session.editWs.set(session.blankWs())">
+        <pm-icon name="plus" [size]="13" /> New workspace
+      </button>
+    </div>
+
+    <div class="rail-search">
+      <div class="search-box">
+        <pm-icon name="search" [size]="14" />
+        <input [value]="query()" (input)="query.set($any($event.target).value)" placeholder="Name, alias or IP" />
+        @if (query()) {
+          <button (click)="query.set('')"><pm-icon name="close" [size]="13" /></button>
+        }
+      </div>
+    </div>
+
+    <div class="rail-hosts noscroll">
+      @for (h of list(); track h.id) {
+        <div draggable="true" (dragstart)="dragId.set(h.id)" (dragend)="dragId.set(null); overWs.set(null)">
+          <pm-host-row
+            [h]="h"
+            [active]="h.id === session.activeHostId()"
+            [compact]="true"
+            (tap)="connect($event)"
+            (edit)="editHost($event)"
+          />
+        </div>
+      } @empty {
+        <div class="rail-empty">No hosts here yet.</div>
+      }
+    </div>
+
+    @if (dragId()) {
+      <div class="drag-hint">Drop on a workspace above to add it there.</div>
+    }
+  </div>
+
+  <!-- ============ working pane ============ -->
+  <div class="work">
+    <div class="topbar">
+      <div class="views">
+        @for (v of views(); track v.id) {
+          <button
+            [class.on]="view() === v.id"
+            [class.claude]="v.id === 'claude'"
+            (click)="view.set(v.id)"
+          >
+            <pm-icon [name]="v.icon" [size]="15" /> {{ v.label }}
+          </button>
+        }
+      </div>
+      <button class="tool shell" [class.on]="split()" (click)="split.set(!split())">
+        <pm-icon name="terminal" [size]="15" /> Shell
+      </button>
+      <button class="tool" (click)="editActiveHost()"><pm-icon name="pencil" [size]="14" /> Edit host</button>
+    </div>
+
+    <div class="panes">
+      <div class="main-pane" [class.split]="split()">
+        @switch (view()) {
+          @case ('files') {
+            <pm-files-screen />
+          }
+          @case ('orch') {
+            <pm-orch-screen />
+          }
+          @case ('claude') {
+            <pm-claude-screen />
+          }
+        }
+        @if (session.openFile(); as file) {
+          @defer {
+            <pm-file-editor [path]="file" (closed)="session.openFile.set(null)" />
+          }
+        }
+      </div>
+      @if (split()) {
+        <div class="term-pane">
+          <pm-terminal-screen [compact]="true" />
+        </div>
+      }
+    </div>
+  </div>
+
+  @if (session.editHost(); as host) {
+    <pm-host-editor [host]="host" [wide]="true" (connectHost)="connect($event)" />
+  }
+  @if (session.editWs(); as ws) {
+    <pm-workspace-editor [workspace]="ws" [wide]="true" />
+  }
+</div>

@@ -1,0 +1,122 @@
+.head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + var(--safe-top)) 12px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-1);
+}
+
+.back {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  .fc { color: var(--accent); flex-shrink: 0; }
+}
+
+.name {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+
+.path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.save {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 8px 14px;
+  border-radius: 9px;
+  color: var(--fg-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+
+  &.ready {
+    color: var(--bg-0);
+    background: var(--accent);
+    border-color: transparent;
+  }
+}
+
+.err-bar {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--err);
+  background: oklch(0.62 0.14 25 / 0.12);
+  border-bottom: 1px solid oklch(0.62 0.14 25 / 0.3);
+  padding: 8px 14px;
+}
+
+.cm-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--term-bg);
+  &.loading { opacity: 0.4; }
+}
+
+.cm-host {
+  position: absolute;
+  inset: 0;
+
+  ::ng-deep .cm-editor { height: 100%; }
+}
+
+.foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  padding: 8px 16px calc(8px + var(--safe-bottom));
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-1);
+
+  .lang {
+    margin-left: auto;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+}

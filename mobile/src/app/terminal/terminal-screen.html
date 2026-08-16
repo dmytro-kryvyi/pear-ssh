@@ -1,0 +1,58 @@
+@if (!compact()) {
+  <pm-header
+    title="Terminal"
+    [host]="session.host()"
+    [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
+    (hostTap)="hostTap.emit()"
+  >
+    <span slot="left" class="term-glyph"><pm-icon name="terminal" [size]="17" /></span>
+    <pm-icon-btn slot="right" icon="refresh" [iconSize]="17" label="Clear" (click)="clear()" />
+  </pm-header>
+}
+
+<!-- session tab strip -->
+<div class="strip noscroll">
+  @for (h of tabs(); track h.id) {
+    <button class="tab" [class.on]="h.id === session.activeHostId()" (click)="switchTo(h.id)">
+      <span
+        class="dot"
+        [class.warn]="h.id === session.activeHostId() && status() === 'opening'"
+        [class.off]="h.id === session.activeHostId() && (status() === 'exited' || status() === 'failed')"
+      ></span
+      >{{ h.name }}
+    </button>
+  } @empty {
+    <span class="new">no session</span>
+  }
+  @if (compact()) {
+    <button class="clear" (click)="clear()"><pm-icon name="refresh" [size]="12" /> clear</button>
+  }
+  <span class="size" [class.pushed]="compact()">{{ statusLabel() }}</span>
+</div>
+
+<!-- xterm -->
+<div class="term-wrap">
+  <div #mount class="term-body"></div>
+  @if (status() === 'exited' || status() === 'failed') {
+    <button class="dead" (click)="reconnect()">
+      <pm-icon name="refresh" [size]="15" />
+      {{ status() === 'failed' ? 'Connection failed — retry' : 'Session closed — reconnect' }}
+    </button>
+  }
+</div>
+
+<!-- quick keys -->
+@if (!compact()) {
+  <div class="quick noscroll">
+    @for (k of quick; track k) {
+      <button (click)="send(k)">{{ k.trim() || k }}</button>
+    }
+  </div>
+}
+
+<!-- accessory keys -->
+<div class="acc noscroll" [class.compact]="compact()">
+  @for (k of keys; track k.label) {
+    <button (click)="send(k.seq)">{{ k.label }}</button>
+  }
+</div>

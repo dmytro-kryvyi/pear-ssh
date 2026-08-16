@@ -1,3 +1,7 @@
+// Pure-JVM sshj engine (own build so it tests with a plain JDK, no SDK).
+// Composite: the app's 'app.pear:ssh-engine' dependency substitutes to it.
+includeBuild 'ssh-engine'
+
 include ':app'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
