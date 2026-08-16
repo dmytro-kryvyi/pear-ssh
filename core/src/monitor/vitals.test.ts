@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VITALS_UNSUPPORTED, parseVitals } from './vitals';
+import { VITALS_UNSUPPORTED, parseVitals, summarizeVitals } from './vitals';
 
 const STAT_8CORE = [
   'cpu  1000 50 300 8000 200 10 20 5 0 0',
@@ -129,4 +129,60 @@ test('missing /proc/stat throws the unsupported marker', () => {
     () => parseVitals('sh: cat: /proc/stat: No such file or directory\n=P1\n=P2\n'),
     new RegExp(VITALS_UNSUPPORTED),
   );
+});
+
+// ---- summarizeVitals --------------------------------------------------------
+
+const sample = (over: Partial<import('../types').HostVitalsSample>) => ({
+  at: 0,
+  cpu: { idle: 800, total: 1000 },
+  cores: [
+    { idle: 400, total: 500 },
+    { idle: 400, total: 500 },
+  ],
+  loadavg: [0.5, 0.4, 0.3] as [number, number, number],
+  uptimeSec: 100,
+  kernel: '6.1.0',
+  memTotalKB: 1000,
+  memAvailableKB: 600,
+  swapTotalKB: 100,
+  swapFreeKB: 90,
+  mounts: [{ fs: '/dev/sda1', mount: '/', totalKB: 1000, usedKB: 250 }],
+  net: [{ name: 'eth0', rxBytes: 1000, txBytes: 2000 }],
+  ...over,
+});
+
+test('summarizeVitals computes rates from counter deltas', () => {
+  const a = sample({});
+  const b = sample({
+    at: 2000,
+    cpu: { idle: 900, total: 1200 },
+    cores: [
+      { idle: 450, total: 600 },
+      { idle: 500, total: 600 },
+    ],
+    memAvailableKB: 400,
+    net: [
+      { name: 'eth0', rxBytes: 3000, txBytes: 2000 },
+      { name: 'eth1', rxBytes: 5, txBytes: 5 },
+    ],
+  });
+  const s = summarizeVitals(a, b);
+  assert.equal(s.cpuPercent, 50); // idleΔ 100 of totalΔ 200
+  assert.deepEqual(s.corePercents, [50, 0]);
+  assert.equal(s.mem.usedKB, 600);
+  assert.equal(s.mem.usedPercent, 60);
+  assert.equal(s.swap.usedKB, 10);
+  assert.equal(s.mounts[0].usedPercent, 25);
+  assert.deepEqual(s.net[0], { name: 'eth0', rxBytesPerSec: 1000, txBytesPerSec: 0 });
+  // Interface that appeared between samples has no baseline — rate 0, not NaN.
+  assert.deepEqual(s.net[1], { name: 'eth1', rxBytesPerSec: 0, txBytesPerSec: 0 });
+});
+
+test('summarizeVitals guards zero deltas and zero totals', () => {
+  const a = sample({});
+  const s = summarizeVitals(a, sample({ memTotalKB: 0, memAvailableKB: 0 }));
+  assert.equal(s.cpuPercent, 0);
+  assert.equal(s.mem.usedPercent, 0);
+  assert.ok(s.net.every((n) => n.rxBytesPerSec === 0 && n.txBytesPerSec === 0));
 });

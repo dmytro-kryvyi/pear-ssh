@@ -1,0 +1,164 @@
+// Claude's warm marker — deliberately distinct from the app accent.
+:host {
+  --claude: oklch(0.72 0.12 45);
+  --claude-soft: oklch(0.72 0.12 45 / 0.13);
+  --claude-line: oklch(0.72 0.12 45 / 0.38);
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 0;
+  background: var(--bg-0);
+  border-left: 1px solid var(--border);
+}
+
+.claude-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.claude-spark {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  background: var(--claude-soft);
+  color: var(--claude);
+  flex-shrink: 0;
+
+  &.big {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+}
+
+.claude-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.claude-warn {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: oklch(0.68 0.18 25 / 0.16);
+  color: var(--err);
+}
+
+.claude-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.claude-btn {
+  padding: 5px;
+  border-radius: 5px;
+  color: var(--fg-2);
+  display: flex;
+
+  &:hover {
+    background: var(--bg-2);
+    color: var(--fg-0);
+  }
+}
+
+.claude-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg);
+}
+
+.claude-term {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 0 4px 8px;
+}
+
+.claude-hint {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 30px;
+  text-align: center;
+  max-width: 300px;
+}
+
+.hint-title {
+  font-size: 13px;
+  color: var(--fg-1);
+  font-weight: 600;
+}
+
+.hint-sub {
+  font-size: 11.5px;
+  color: var(--fg-3);
+  line-height: 1.6;
+
+  code {
+    font-family: var(--mono);
+    color: var(--fg-2);
+  }
+}
+
+.hint-cmd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-1);
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 6px 10px;
+  user-select: all;
+}
+
+.hint-error {
+  font-size: 11px;
+  color: var(--err);
+  line-height: 1.5;
+}
+
+.hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--claude);
+  color: oklch(0.16 0.02 45);
+
+  &:hover {
+    filter: brightness(1.08);
+  }
+}
+
+.claude-exited {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in oklab, var(--term-bg) 82%, transparent);
+  backdrop-filter: blur(1px);
+}

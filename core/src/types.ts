@@ -1,7 +1,7 @@
 // Shared domain types for Pear. These cross the core <-> desktop <-> ui
 // boundary, so keep them JSON-serializable.
 
-export type HostKind = 'docker' | 'swarm' | 'proxmox' | 'plain';
+export type HostKind = FacetKind | 'plain';
 export type HostStatus = 'online' | 'idle' | 'offline' | 'unknown';
 
 export interface HostAuth {
@@ -15,9 +15,15 @@ export interface HostAuth {
   password?: string;
 }
 
+/**
+ * Container engines Pear can enter as a sub-host. Adding one (e.g. podman)
+ * means extending this union and adding its adapter in ssh/subhost.ts.
+ */
+export type SubHostType = 'docker' | 'lxc';
+
 /** What a sub-host enters on its parent: a container engine target. */
 export interface SubHostTarget {
-  type: 'docker' | 'lxc';
+  type: SubHostType;
   /** docker: container name (stable across recreation); lxc: vmid as string. */
   ref: string;
 }
@@ -51,6 +57,14 @@ export interface HostConfig {
 export interface TermSize {
   cols: number;
   rows: number;
+}
+
+/** Claude Code dock availability (the CLI itself is user-installed). */
+export interface ClaudeStatus {
+  /** `claude` resolves in the user's login shell. */
+  installed: boolean;
+  /** Pear's MCP server is up and the workspace dir is provisioned. */
+  mcpReady: boolean;
 }
 
 export interface FileEntry {
@@ -120,6 +134,62 @@ export interface SwarmStackGroup {
   services: SwarmServiceInfo[];
 }
 
+/** Lifecycle states a swarm task reports (docker's state list, lowercased). */
+export type SwarmTaskState =
+  | 'new'
+  | 'allocated'
+  | 'pending'
+  | 'assigned'
+  | 'accepted'
+  | 'preparing'
+  | 'ready'
+  | 'starting'
+  | 'running'
+  | 'complete'
+  | 'shutdown'
+  | 'failed'
+  | 'rejected'
+  | 'remove'
+  | 'orphaned';
+
+/** One row of `docker service ps` — includes historical (shutdown) tasks. */
+export interface SwarmTaskInfo {
+  /** Full task id (--no-trunc); also the target for `docker service logs`. */
+  id: string;
+  /** "svc.1" (replicated) or "svc.<nodeid>" (global). History repeats names. */
+  name: string;
+  /** The part after "<service>.": replica slot number, or node id for global. */
+  slot: string;
+  image: string;
+  /** Hostname of the node the task was placed on ('' while unscheduled). */
+  node: string;
+  /** What the orchestrator wants: "running" or "shutdown" (lowercased). */
+  desiredState: string;
+  state: SwarmTaskState;
+  /** Docker's human relative time, e.g. "4 hours ago" ('' if unparsed). */
+  sinceText: string;
+  /** Task error with docker's wrapping quotes stripped; '' when none. */
+  error: string;
+}
+
+/** One parsed line of `docker service logs --raw -t` for a single task. */
+export interface TaskLogLine {
+  /** RFC3339Nano timestamp — also the --since cursor for follow polling. */
+  ts: string;
+  /**
+   * CLI stream the line arrived on: container stdout vs stderr. Tasks
+   * running with a TTY merge everything into 'out'.
+   */
+  stream: 'out' | 'err';
+  text: string;
+}
+
+export interface TaskLogChunk {
+  lines: TaskLogLine[];
+  /** Latest timestamp seen — pass as `since` on the next poll. Null when empty. */
+  lastTs: string | null;
+}
+
 export interface ProxmoxResources {
   /** CPU load as a 0..1 fraction. */
   cpu: number;
@@ -170,14 +240,23 @@ export interface ProxmoxFacet {
   groups: ProxmoxGuestGroup[];
 }
 
-export type FacetKind = 'docker' | 'swarm' | 'proxmox';
+/**
+ * The single source of truth for which orchestration facets exist and what
+ * their live state looks like. Adding a facet (e.g. podman) means: add its
+ * data shape here, its actions to FacetActionMap, and register a provider in
+ * core/src/orchestration — every facet type below is derived from these maps,
+ * and the provider registry is compile-checked against them.
+ */
+export interface FacetDataMap {
+  docker: DockerFacet;
+  swarm: SwarmFacet;
+  proxmox: ProxmoxFacet;
+}
+
+export type FacetKind = keyof FacetDataMap;
 
 /** Which orchestration systems a host runs (a host can be several at once). */
-export interface HostFacets {
-  docker: boolean;
-  swarm: boolean;
-  proxmox: boolean;
-}
+export type HostFacets = Record<FacetKind, boolean>;
 
 /**
  * A host's live orchestration state. Any subset of facets may be present —
@@ -185,24 +264,36 @@ export interface HostFacets {
  * both `swarm` services and `docker` standalone containers). An empty object
  * means nothing orchestration-related was detected.
  */
-export interface Orchestration {
-  docker?: DockerFacet;
-  swarm?: SwarmFacet;
-  proxmox?: ProxmoxFacet;
-}
+export type Orchestration = { [K in FacetKind]?: FacetDataMap[K] };
 
-export type OrchAction =
+export type DockerAction =
   | { type: 'container'; id: string; name: string; op: 'start' | 'stop' | 'restart' | 'logs' }
   | { type: 'compose'; project: string; op: 'start' | 'stop' | 'restart' | 'logs' }
-  | { type: 'service'; name: string; op: 'restart' | 'logs' }
-  | { type: 'service'; name: string; op: 'scale'; replicas: number }
-  | {
-      type: 'guest';
-      vmid: number;
-      guestType: 'vm' | 'lxc';
-      op: 'start' | 'shutdown' | 'reboot' | 'console';
-    }
   | { type: 'engine'; op: 'prune' };
+
+export type SwarmAction =
+  | { type: 'service'; name: string; op: 'restart' | 'logs' }
+  | { type: 'service'; name: string; op: 'scale'; replicas: number };
+
+export type ProxmoxAction = {
+  type: 'guest';
+  vmid: number;
+  guestType: 'vm' | 'lxc';
+  op: 'start' | 'shutdown' | 'reboot' | 'console';
+};
+
+/**
+ * Actions each facet's provider handles, keyed like FacetDataMap. The `type`
+ * discriminants must stay globally unique — they are how an action finds its
+ * provider.
+ */
+export interface FacetActionMap {
+  docker: DockerAction;
+  swarm: SwarmAction;
+  proxmox: ProxmoxAction;
+}
+
+export type OrchAction = FacetActionMap[FacetKind];
 
 export interface OrchActionResult {
   /** Set for streaming actions (logs, console): run this in the terminal. */

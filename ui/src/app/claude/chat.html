@@ -1,0 +1,166 @@
+<!-- context meter -->
+<div class="ctx-meter">
+  <span>context</span>
+  <div class="ctx-track">
+    <div class="ctx-fill" [class.warn]="ctxTone() === 'warn'" [class.err]="ctxTone() === 'err'" [style.width.%]="ctxPct()"></div>
+  </div>
+  <span>{{ tokensLabel() }} / {{ maxLabel() }}</span>
+  <button class="model-chip" (click)="openModelMenu($event)" title="Switch model">
+    {{ modelLabel() }}
+    <pear-icon name="chevronDown" [size]="10" />
+  </button>
+</div>
+
+<!-- transcript -->
+<div #body class="chat-body" (scroll)="onScroll()">
+  @if (store.blocks().length === 0) {
+    <div class="chat-empty">
+      <span class="empty-spark"><pear-icon name="sparkle" [size]="18" /></span>
+      <div class="empty-title">Ask Claude about your servers</div>
+      <div class="empty-hints">“why is nginx 502ing on edge-01?”<br />“prune unused docker images”<br />“tail the gateway logs for errors”</div>
+    </div>
+  }
+  @for (b of store.blocks(); track b.id) {
+    @switch (b.kind) {
+      @case ('user') {
+        <div class="turn-user">
+          <div class="role">You</div>
+          <div class="bubble" [innerHTML]="rich(b.text)"></div>
+        </div>
+      }
+      @case ('text') {
+        <div class="turn-asst">
+          <span class="dot"><pear-icon name="sparkle" [size]="11" /></span>
+          <div class="asst-text md" [innerHTML]="md(b.text)"></div>
+        </div>
+      }
+      @case ('think') {
+        <div class="think">
+          <button class="think-hd" (click)="toggle(b.id)">
+            <pear-icon name="sparkle" [size]="11" />
+            <span>{{ b.secs === null ? 'Thinking…' : 'Thought for ' + b.secs + 's' }}</span>
+            <pear-icon name="chevronDown" [size]="12" [class.closed]="!isOpen(b.id)" />
+          </button>
+          @if (isOpen(b.id)) {
+            <div class="think-body">{{ b.text }}</div>
+          }
+        </div>
+      }
+      @case ('tool') {
+        <div class="card">
+          <button class="card-hd" (click)="b.output && toggle(b.id)">
+            <pear-icon name="terminal" [size]="13" />
+            <span class="mono ellipsis">{{ b.display }}</span>
+            <span class="pill" [class.run]="b.status === 'running'" [class.err]="b.status === 'error'" [class.ok]="b.status === 'done'">
+              {{ b.status === 'running' ? 'running' : b.status === 'error' ? 'failed' : 'done' }}
+            </span>
+            @if (b.output) {
+              <pear-icon name="chevronDown" [size]="12" [class.closed]="!isOpen(b.id)" />
+            }
+          </button>
+          @if (b.output && isOpen(b.id)) {
+            <div class="card-out">{{ b.output }}</div>
+          }
+        </div>
+      }
+      @case ('permission') {
+        <div class="card perm" [class.pending]="b.status === 'pending'">
+          <div class="card-hd static">
+            <pear-icon name="shield" [size]="13" [class.accent]="b.status === 'pending'" />
+            <span class="perm-title">Claude wants to {{ b.diff ? 'write a file' : 'run a command' }}</span>
+            @if (b.status !== 'pending') {
+              <span class="pill" [class.err]="b.status === 'deny'" [class.ok]="b.status !== 'deny'">
+                {{ b.status === 'deny' ? 'denied' : b.status === 'always' ? 'allowed · session' : 'allowed' }}
+              </span>
+            }
+          </div>
+          <div class="perm-cmd">
+            <span class="perm-prompt">$</span>
+            <span class="mono">{{ b.display }}</span>
+          </div>
+          @if (b.diff; as d) {
+            <div class="diff">
+              @for (line of diff(d); track $index) {
+                <div class="diff-line" [class.add]="line.kind === 'add'" [class.del]="line.kind === 'del'">{{ line.text }}</div>
+              }
+            </div>
+          }
+          @if (b.status === 'pending') {
+            <div class="btn-row">
+              <button class="cbtn primary" (click)="store.answerPermission(b.requestId, 'allow')"><pear-icon name="check" [size]="12" /> Allow</button>
+              <button class="cbtn" (click)="store.answerPermission(b.requestId, 'always')">Allow for session</button>
+              <button class="cbtn ghost" (click)="store.answerPermission(b.requestId, 'deny')">Deny</button>
+            </div>
+          }
+        </div>
+      }
+      @case ('question') {
+        <div class="card">
+          @for (q of b.questions; track q.question) {
+            <div class="card-hd static q-title">
+              <pear-icon name="sparkle" [size]="13" class="claude-color" />
+              <span>{{ q.question }}</span>
+            </div>
+            @for (opt of q.options; track opt.label) {
+              <button
+                class="q-opt"
+                [class.picked]="b.choices?.[q.question] === opt.label"
+                [class.locked]="b.choices !== null"
+                [disabled]="b.choices !== null"
+                (click)="pick(b.requestId, q.question, opt.label)"
+              >
+                <span class="radio" [class.on]="b.choices?.[q.question] === opt.label"></span>
+                <span>
+                  {{ opt.label }}
+                  @if (opt.description) {
+                    <span class="q-desc">{{ opt.description }}</span>
+                  }
+                </span>
+              </button>
+            }
+          }
+        </div>
+      }
+      @case ('divider') {
+        <div class="chat-divider"><span class="line"></span>{{ b.text }}<span class="line"></span></div>
+      }
+      @case ('error') {
+        <div class="chat-error">{{ b.text }}</div>
+      }
+    }
+  }
+  @if (store.busy()) {
+    <div class="turn-asst working">
+      <span class="dot"><pear-icon name="sparkle" [size]="11" /></span>
+      <div class="asst-text dim"><span class="pulse"></span> working…</div>
+    </div>
+  }
+</div>
+
+<!-- composer -->
+<div class="composer">
+  <div class="input-wrap">
+    <textarea
+      #input
+      rows="1"
+      [value]="draft()"
+      (input)="grow($event)"
+      (keydown)="onKeydown($event)"
+      placeholder="Message Claude"
+      spellcheck="false"
+    ></textarea>
+    <div class="c-row">
+      <button class="mode-pill" (click)="toggleAutoApprove()" [title]="'Toggle auto-approve'">
+        <pear-icon name="shield" [size]="11" [class.warn]="store.autoApprove()" />
+        {{ store.autoApprove() ? 'auto-approve' : 'ask each time' }}
+      </button>
+      @if (store.busy()) {
+        <button class="send-btn stop" (click)="stop()" title="Stop"><pear-icon name="stop" [size]="12" /></button>
+      } @else {
+        <button class="send-btn" [class.on]="draft().trim().length > 0" (click)="send()" title="Send">
+          <pear-icon name="send" [size]="13" />
+        </button>
+      }
+    </div>
+  </div>
+</div>

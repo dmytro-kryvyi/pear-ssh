@@ -105,6 +105,64 @@ export function parseVitals(stdout: string): HostVitalsSample {
   };
 }
 
+/** Human/model-ready rates derived from two samples — see summarizeVitals. */
+export interface VitalsSummary {
+  cpuPercent: number;
+  corePercents: number[];
+  loadavg: [number, number, number];
+  uptimeSec: number;
+  kernel: string;
+  mem: { totalKB: number; usedKB: number; usedPercent: number };
+  swap: { totalKB: number; usedKB: number };
+  mounts: Array<MountUsage & { usedPercent: number }>;
+  net: Array<{ name: string; rxBytesPerSec: number; txBytesPerSec: number }>;
+}
+
+function cpuPercent(a: CpuTicks | undefined, b: CpuTicks | undefined): number {
+  if (!a || !b) return 0;
+  const total = b.total - a.total;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.max(0, (1 - (b.idle - a.idle) / total) * 100));
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+/**
+ * Rates between two samples of the same host (`a` earlier, `b` later). CPU and
+ * network are cumulative counters, so a single sample cannot yield a
+ * percentage — callers grab two ~1s apart. Static fields come from `b`.
+ */
+export function summarizeVitals(a: HostVitalsSample, b: HostVitalsSample): VitalsSummary {
+  const dtSec = Math.max(0.001, (b.at - a.at) / 1000);
+  const memUsedKB = Math.max(0, b.memTotalKB - b.memAvailableKB);
+  const byName = new Map(a.net.map((n) => [n.name, n]));
+  return {
+    cpuPercent: round1(cpuPercent(a.cpu, b.cpu)),
+    corePercents: b.cores.map((core, i) => round1(cpuPercent(a.cores[i], core))),
+    loadavg: b.loadavg,
+    uptimeSec: b.uptimeSec,
+    kernel: b.kernel,
+    mem: {
+      totalKB: b.memTotalKB,
+      usedKB: memUsedKB,
+      usedPercent: b.memTotalKB > 0 ? round1((memUsedKB / b.memTotalKB) * 100) : 0,
+    },
+    swap: { totalKB: b.swapTotalKB, usedKB: Math.max(0, b.swapTotalKB - b.swapFreeKB) },
+    mounts: b.mounts.map((m) => ({
+      ...m,
+      usedPercent: m.totalKB > 0 ? round1((m.usedKB / m.totalKB) * 100) : 0,
+    })),
+    net: b.net.map((n) => {
+      const prev = byName.get(n.name);
+      return {
+        name: n.name,
+        rxBytesPerSec: prev ? Math.max(0, Math.round((n.rxBytes - prev.rxBytes) / dtSec)) : 0,
+        txBytesPerSec: prev ? Math.max(0, Math.round((n.txBytes - prev.txBytes) / dtSec)) : 0,
+      };
+    }),
+  };
+}
+
 export async function fetchVitals(exec: Exec): Promise<HostVitalsSample> {
   const result = await exec(VITALS_COMMAND);
   // The compound command exits with the last cat's status; judge by content,

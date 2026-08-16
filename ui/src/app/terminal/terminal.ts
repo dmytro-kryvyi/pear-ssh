@@ -16,11 +16,12 @@ import { Settings } from '../settings';
 import { ContextMenuService } from '../menu/context-menu';
 import { History } from './history';
 import { InlineSuggest } from './suggest';
+import { TermRegistry } from './term-registry';
 import type { TermTab } from './tabs';
 
 // xterm themes need concrete colors; these are hex approximations of the
 // oklch design tokens in styles.scss.
-const THEME = {
+export const TERM_THEME = {
   background: '#16181d',
   foreground: '#f3f4f6',
   cursor: '#7ab8b3',
@@ -64,6 +65,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
   private readonly history = inject(History);
   private readonly settings = inject(Settings);
   private readonly menu = inject(ContextMenuService);
+  private readonly registry = inject(TermRegistry);
 
   private xterm?: Terminal;
   private fit?: FitAddon;
@@ -94,7 +96,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       lineHeight: 1.2,
       cursorBlink: true,
       scrollback: 10_000,
-      theme: THEME,
+      theme: TERM_THEME,
     });
     xterm.attachCustomKeyEventHandler((e) => this.handleClipboardKeys(e));
     const fit = new FitAddon();
@@ -103,6 +105,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
     fit.fit();
     this.xterm = xterm;
     this.fit = fit;
+    this.registry.register(this.tab().id, (lines) => readBuffer(xterm, lines));
 
     const { term } = this.pear.api;
     const tab = this.tab();
@@ -233,11 +236,24 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.registry.unregister(this.tab().id);
     this.resizeObserver?.disconnect();
     for (const unsub of this.unsubscribes) unsub();
     if (this.termId) this.pear.api.term.close(this.termId);
     this.xterm?.dispose();
   }
+}
+
+/** Last N buffer lines (screen + scrollback) as plain text, trailing blank
+ *  lines trimmed. translateToString(true) drops right-side padding. */
+function readBuffer(xterm: Terminal, lines: number): string {
+  const buf = xterm.buffer.active;
+  const end = buf.length;
+  const start = Math.max(0, end - lines);
+  const out: string[] = [];
+  for (let i = start; i < end; i++) out.push(buf.getLine(i)?.translateToString(true) ?? '');
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out.join('\n');
 }
 
 function cleanIpcError(err: unknown): string {

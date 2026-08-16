@@ -1,0 +1,133 @@
+<div class="scrim" (click)="closed.emit()"></div>
+<aside class="drawer">
+  <div class="head">
+    @if (service(); as s) {
+      <span class="dot" [class.ok]="s.running === s.desired && s.running > 0" [class.warn]="s.running > 0 && s.running < s.desired" [class.off]="s.running === 0"></span>
+    } @else {
+      <span class="dot off"></span>
+    }
+    <div class="head-text">
+      <div class="head-title">{{ ctx().serviceName }}</div>
+      <div class="head-sub">
+        @if (service(); as s) {
+          {{ s.image }} · {{ s.mode === 'global' ? s.running + ' global' : s.running + '/' + s.desired + ' replicas' }} ·
+        }
+        {{ hostName() }}
+      </div>
+    </div>
+    <div class="head-actions">
+      @if (missing() > 0) {
+        <span class="pill err">{{ missing() }} replica{{ missing() > 1 ? 's' : '' }} missing</span>
+      } @else if (failedCount() > 0) {
+        <span class="pill warn">{{ failedCount() }} failed recently</span>
+      }
+      <button class="icon-btn" title="Force rolling restart" [disabled]="busy()" (click)="restart()">
+        <pear-icon name="refresh" [size]="14" />
+      </button>
+      <button class="icon-btn plain" title="Close (Esc)" (click)="closed.emit()">
+        <pear-icon name="close" [size]="14" />
+      </button>
+    </div>
+  </div>
+
+  <div class="cmd-row">
+    <div class="cmd"><span class="prompt">$ </span>{{ psCmd() }}</div>
+    <button class="chip" [class.on]="copied() === 'ps'" (click)="copy('ps', psCmd())" title="Copy command">
+      <pear-icon [name]="copied() === 'ps' ? 'check' : 'copy'" [size]="12" /> {{ copied() === 'ps' ? 'Copied' : 'Copy' }}
+    </button>
+    <button class="chip" (click)="runInTerminal(psCmd(), ctx().serviceName)" title="Run in terminal">
+      <pear-icon name="terminal" [size]="12" /> Run
+    </button>
+    <button class="chip" (click)="refreshTasks()" title="Refresh task list">
+      <pear-icon name="refresh" [size]="12" />
+    </button>
+  </div>
+
+  <div class="filters">
+    @for (f of filters; track f) {
+      <button class="seg" [class.on]="filter() === f" (click)="filter.set(f)">{{ f }} {{ count(f) }}</button>
+    }
+    <span class="hint">↑↓ to move · includes shut-down history</span>
+  </div>
+
+  <div class="table-wrap">
+    <div class="thead">
+      <span>Task</span><span>ID</span><span>Node</span><span>State</span><span>Error</span>
+    </div>
+    @if (tasksState()?.error; as err) {
+      <div class="empty err-text">{{ err }}</div>
+    } @else if (tasksState()?.loading && !tasks().length) {
+      <div class="empty">Loading tasks…</div>
+    } @else if (!shown().length) {
+      <div class="empty">No tasks in this state</div>
+    }
+    @for (t of shown(); track t.id) {
+      <button class="row" [class.selected]="selected()?.id === t.id" [class.failed]="taskTone(t) === 'err'" (click)="selectedId.set(t.id)">
+        <span class="name-cell">
+          <span class="dot" [class]="taskTone(t)"></span>
+          <span class="cell">{{ taskLabel(t) }}</span>
+        </span>
+        <span class="cell dim">{{ shortId(t.id) }}</span>
+        <span class="cell dim">{{ t.node || '—' }}</span>
+        <span class="cell state" [class]="taskTone(t)">{{ t.state }} <span class="since">{{ t.sinceText }}</span></span>
+        <span class="cell dim" [class.err-text]="t.error">{{ t.error || '—' }}</span>
+      </button>
+    }
+  </div>
+
+  <div class="log-pane">
+    <div class="log-head">
+      @if (selected(); as t) {
+        <div class="cmd"><span class="prompt">$ </span>{{ logsCmd() }}</div>
+        <button class="chip" [class.on]="copied() === 'logs'" (click)="copy('logs', logsCmd())" title="Copy command">
+          <pear-icon [name]="copied() === 'logs' ? 'check' : 'copy'" [size]="12" /> {{ copied() === 'logs' ? 'Copied' : 'Copy' }}
+        </button>
+        <button class="chip" (click)="followInTerminal()" title="Stream in terminal">
+          <pear-icon name="terminal" [size]="12" /> Run
+        </button>
+        <button class="chip" [class.on]="stderrOnly()" (click)="stderrOnly.set(!stderrOnly())" title="stderr only">stderr</button>
+        @if (t.state === 'running') {
+          <button class="chip" [class.on]="follow()" (click)="follow.set(!follow())" title="Follow (-f)">
+            <pear-icon [name]="follow() ? 'pause' : 'play'" [size]="11" /> -f
+          </button>
+        }
+        <label class="search">
+          <pear-icon name="search" [size]="12" />
+          <input [value]="grep()" (input)="grep.set($any($event.target).value)" placeholder="grep" />
+        </label>
+      }
+    </div>
+    @if (selected(); as t) {
+      @if (diagnose(t.error); as d) {
+        <div class="diag" [class.err]="taskTone(t) === 'err'" [class.warn]="taskTone(t) !== 'err'">
+          <pear-icon name="warning" [size]="14" class="diag-icon" />
+          <div class="diag-text">
+            <div class="diag-title">{{ d.title }}</div>
+            <div class="diag-hint">{{ d.hint }}</div>
+          </div>
+        </div>
+      }
+      <div class="log-scroll" #logScroll>
+        @if (logError(); as err) {
+          <div class="empty">{{ err }}</div>
+        } @else if (logLoading()) {
+          <div class="empty">Loading log…</div>
+        } @else if (!visibleLines().length) {
+          <div class="empty">{{ logLines().length ? 'No lines match' : 'No output' }}</div>
+        }
+        @for (l of visibleLines(); track $index) {
+          <div class="line" [class.err]="l.stream === 'err'">
+            <span class="time">{{ clock(l.ts) }}</span>
+            <span class="tag">{{ l.stream }}</span>
+            <span class="text">{{ l.text }}</span>
+          </div>
+        }
+        @if (follow()) {
+          <div class="line streaming"><span class="pulse">▍streaming…</span></div>
+        }
+      </div>
+    } @else {
+      <div class="empty tall">Select a task to read its log</div>
+    }
+  </div>
+</aside>

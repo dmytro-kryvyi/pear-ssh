@@ -307,6 +307,43 @@
 .view-tab pear-icon.accent { color: var(--accent); }
 .view-tab.active { color: var(--fg-0); border-bottom-color: var(--accent); }
 
+// Claude's warm accent, deliberately distinct from the app accent.
+.ask-claude {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: oklch(0.72 0.12 45);
+  background: oklch(0.72 0.12 45 / 0.13);
+  border: 1px solid oklch(0.72 0.12 45 / 0.3);
+
+  &:hover { background: oklch(0.72 0.12 45 / 0.2); }
+}
+
+.claude-resizer {
+  width: 5px;
+  margin: 0 -2px;
+  cursor: ew-resize;
+  z-index: 5;
+  flex-shrink: 0;
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  &:hover::after { background: oklch(0.72 0.12 45 / 0.38); }
+}
+
 .resizer {
   height: 5px;
   margin: -2px 0;

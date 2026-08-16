@@ -1,4 +1,5 @@
 import type {
+  ClaudeStatus,
   ContainerStatsMap,
   DirListing,
   DockerDiskRow,
@@ -9,10 +10,20 @@ import type {
   OrchActionResult,
   Orchestration,
   SubHostTarget,
+  SwarmTaskInfo,
+  TaskLogChunk,
   TermSize,
 } from './types';
 import type { HistoryEntry } from './history/store';
 import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './transfers/engine';
+import type {
+  ClaudeChatEvent,
+  ClaudeFocus,
+  ClaudePermissionAnswer,
+  ClaudeSessionMeta,
+  ClaudeUiRequest,
+  ClaudeUiResponse,
+} from './claude/events';
 
 /**
  * The bridge surface the desktop shell exposes to the renderer
@@ -53,7 +64,12 @@ export interface PearApi {
      * Ask the user to pick local files (native dialog) and queue their upload
      * into remoteDir as a transfer job. Resolves once queued (or cancelled).
      */
-    upload(hostId: string, remoteDir: string, conflict: ConflictPolicy): Promise<void>;
+    upload(
+      hostId: string,
+      remoteDir: string,
+      conflict: ConflictPolicy,
+      verify: boolean,
+    ): Promise<void>;
     /** lstat of a single path; null when it does not exist. */
     stat(hostId: string, path: string): Promise<FileEntry | null>;
     mkdir(hostId: string, path: string): Promise<void>;
@@ -77,6 +93,7 @@ export interface PearApi {
       srcDir: string,
       names: string[],
       conflict: ConflictPolicy,
+      verify: boolean,
     ): Promise<string>;
     cancel(id: string): void;
     list(): Promise<TransferJobSnapshot[]>;
@@ -97,15 +114,17 @@ export interface PearApi {
      * ephemeral sub-host; every hostId-keyed feature works on the result.
      */
     jumpIn(parentId: string, target: SubHostTarget, name: string): Promise<HostConfig>;
+    /**
+     * QEMU variant of jumpIn: VMs have no exec tunnel, so this detects the
+     * guest's address via the guest agent and registers an ephemeral SSH host
+     * tunneled through the PVE node (via). Rejects when the agent is missing
+     * or reports no usable address.
+     */
+    jumpInVm(parentId: string, vmid: number, name: string): Promise<HostConfig>;
     /** Persist an ephemeral sub-host under its parent (same id). */
     pin(id: string): Promise<HostConfig>;
     /** Move a pinned sub-host back to ephemeral (same id). */
     unpin(id: string): Promise<HostConfig>;
-    /**
-     * Detect a QEMU VM's address via the guest agent, for promoting it to a
-     * real SSH host. Rejects when the agent is missing or reports no address.
-     */
-    vmIp(hostId: string, vmid: number): Promise<string>;
   };
   orch: {
     /**
@@ -118,6 +137,20 @@ export interface PearApi {
      * the returned terminalCommand should be typed into the host terminal.
      */
     action(hostId: string, action: OrchAction): Promise<OrchActionResult>;
+    /**
+     * Task list for one swarm service (`docker service ps`), including
+     * historical shutdown/failed entries.
+     */
+    serviceTasks(hostId: string, service: string): Promise<SwarmTaskInfo[]>;
+    /**
+     * One-shot log fetch for a single task. Follow is the renderer re-calling
+     * with `since` set to the previous chunk's lastTs (inclusive — dedup).
+     */
+    taskLogs(
+      hostId: string,
+      taskId: string,
+      opts?: { tail?: number; since?: string },
+    ): Promise<TaskLogChunk>;
   };
   monitor: {
     /**
@@ -148,6 +181,39 @@ export interface PearApi {
     importFromHost(hostId: string): Promise<{ added: number; files: string[] }>;
     /** Forget everything, or just one host's commands. */
     clear(hostId?: string): Promise<void>;
+  };
+  claude: {
+    /**
+     * Launch the user's `claude` CLI in Pear's workspace dir (a local PTY).
+     * Returns a terminal id — IO rides the regular term channels
+     * (term.write/resize/close/onData/onExit), same as any other terminal.
+     */
+    open(size: TermSize): Promise<string>;
+    status(): Promise<ClaudeStatus>;
+    // Chat mode: the same CLI driven over stream-json; Pear renders events.
+    /** Send a user turn to the active conversation (starts one if needed). */
+    chatSend(text: string): Promise<void>;
+    /** Stop the running turn (the conversation itself survives). */
+    chatInterrupt(): void;
+    /** Answer a pending permission or question card. */
+    chatAnswer(requestId: string, answer: ClaudePermissionAnswer): void;
+    chatSetAutoApprove(on: boolean): void;
+    /** Model for chat sessions (alias like 'sonnet'/'opus' or a full id);
+     *  null = the CLI's default. Applies from the next message. */
+    chatSetModel(model: string | null): void;
+    chatSessions(): Promise<ClaudeSessionMeta[]>;
+    /** Load a past session (returns its transcript) and continue it. */
+    chatResume(sessionId: string): Promise<ClaudeChatEvent[]>;
+    /** Drop the active conversation; the next send starts fresh. */
+    chatNew(): Promise<void>;
+    /** Mirror the focused workspace location so the MCP tools can mark the
+     *  focused host in list_hosts (null when nothing is open). */
+    setFocus(focus: ClaudeFocus | null): void;
+    onEvent(cb: (event: ClaudeChatEvent) => void): () => void;
+    /** Main asks the renderer to serve a UI-facing MCP tool (read_terminal,
+     *  reveal_in_app); the handler must always call uiRespond with the id. */
+    onUiRequest(cb: (request: ClaudeUiRequest) => void): () => void;
+    uiRespond(response: ClaudeUiResponse): void;
   };
   onHostDisconnected(cb: (hostId: string) => void): () => void;
 }

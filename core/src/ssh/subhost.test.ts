@@ -93,6 +93,9 @@ class FakeParent implements SshTransport {
   async uploadFile(localPath: string, remotePath: string): Promise<void> {
     this.uploadFiles.push([localPath, remotePath]);
   }
+  async hash(): Promise<string> {
+    return '';
+  }
   dispose(): void {
     this.disposed = true;
   }

@@ -28,7 +28,7 @@
       <button
         class="tab-close"
         title="Close tab"
-        (click)="$event.stopPropagation(); ws.closeTab(t.id)"
+        (click)="$event.stopPropagation(); closeTab(t)"
         (mousedown)="$event.stopPropagation()"
       >
         <pear-icon name="close" [size]="10" />
@@ -38,11 +38,16 @@
   <button class="strip-btn" title="New tab" (click)="newTab()">
     <pear-icon name="plus" [size]="13" />
   </button>
+  @if (settings.termPlacement() === 'in-pane') {
+    <button class="strip-btn" title="New terminal" (click)="openTerminal()">
+      <pear-icon name="terminal" [size]="13" />
+    </button>
+  }
   <div class="strip-right">
     <button class="strip-btn" title="Split pane" (click)="ws.splitPane(pane().id)">
       <pear-icon name="split" [size]="13" />
     </button>
-    <button class="strip-btn" title="Close pane" (click)="ws.closePane(pane().id)">
+    <button class="strip-btn" title="Close pane" (click)="closePane()">
       <pear-icon name="close" [size]="13" />
     </button>
   </div>
@@ -65,12 +70,25 @@
             [state]="state"
             (termCommand)="actions.orchCommand(tab.hostId, $event)"
             (jumpedIn)="actions.jumpedIn($event)"
-            (promoted)="actions.promoted($event)"
           />
         } @else {
           <div class="orch-pending">Probing {{ host.name }} for orchestration…</div>
         }
       }
+    }
+  }
+  @for (t of termTabs(); track t.id) {
+    @if (termTabFor(t); as tt) {
+      <pear-terminal
+        [tab]="tt"
+        [password]="''"
+        [active]="focused() && t.id === pane().activeTabId"
+        [class.hidden]="t.id !== pane().activeTabId"
+        (opened)="onTermOpened(tt, $event)"
+        (dirtied)="tabs.markDirty(tt.id)"
+        (exited)="closeTab(t)"
+        (failed)="closeTab(t)"
+      />
     }
   }
   @if (ws.dragging() === 'tab') {

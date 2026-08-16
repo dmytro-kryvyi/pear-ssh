@@ -218,6 +218,33 @@
   white-space: nowrap;
 }
 
+/* Failed-task callouts (swarm) */
+.task-alerts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.task-alert {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 14px;
+  border-radius: 9px;
+  background: oklch(0.68 0.18 25 / 0.08);
+  border: 1px solid oklch(0.68 0.18 25 / 0.28);
+}
+.alert-icon { color: var(--err); flex-shrink: 0; }
+.alert-text { min-width: 0; }
+.alert-title { font-size: 12.5px; font-family: var(--mono); color: var(--fg-0); }
+.alert-err {
+  font-size: 11.5px;
+  font-family: var(--mono);
+  color: oklch(0.78 0.14 25);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-btn { margin-left: auto; flex: 0 0 auto; }
+.card-name.clickable { text-align: left; padding: 0; background: none; border: none; cursor: pointer; }
+.card-name.clickable:hover { color: var(--accent); text-decoration: underline; }
+.task-bad { color: var(--err); }
+
 /* Swarm replica cells */
 .replica-wrap { display: flex; flex-direction: column; gap: 6px; }
 .replica-top { display: flex; align-items: baseline; gap: 8px; }

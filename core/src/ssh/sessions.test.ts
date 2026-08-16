@@ -92,6 +92,9 @@ class FakeTransport implements SshTransport {
   async copy(): Promise<void> {}
   async download(): Promise<void> {}
   async uploadFile(): Promise<void> {}
+  async hash(): Promise<string> {
+    return '';
+  }
   dispose(): void {
     this.isConnected = false;
     for (const cb of this.closeCbs) cb();
@@ -176,7 +179,7 @@ test('connections are reused per host while connected', async () => {
 
 test('orchestration probes run over the transport exec channel', async () => {
   const { sessions, transport } = harness(
-    new FakeTransport({ code: 0, stdout: 'PVE\n', stderr: '' }),
+    new FakeTransport({ code: 0, stdout: 'FACET:proxmox\n', stderr: '' }),
   );
 
   const facets = await sessions.detectOrchFacets(HOST);

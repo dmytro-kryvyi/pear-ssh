@@ -32,14 +32,18 @@ export class EphemeralHostRegistry {
     this.hosts.delete(id);
   }
 
-  /** Drop all (transitive) descendants of parentId; returns the removed ids. */
+  /**
+   * Drop all (transitive) descendants of parentId; returns the removed ids.
+   * Follows both exec sub-host links (parentId) and jump links (via) — an
+   * ephemeral VM host is reachable only through its PVE node's connection.
+   */
   removeByParent(parentId: string): string[] {
     const removed: string[] = [];
     const queue = [parentId];
     while (queue.length) {
       const current = queue.shift()!;
       for (const h of this.hosts.values()) {
-        if (h.parentId === current) {
+        if (h.parentId === current || h.via === current) {
           this.hosts.delete(h.id);
           removed.push(h.id);
           queue.push(h.id);

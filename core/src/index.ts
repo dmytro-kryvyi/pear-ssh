@@ -33,8 +33,34 @@ export {
   subExec,
   subShellCommand,
 } from './ssh/subhost';
-export { fetchStats, primaryKind } from './orchestration/orchestration';
-export { VITALS_COMMAND, VITALS_UNSUPPORTED, fetchVitals, parseVitals } from './monitor/vitals';
+export {
+  FACET_KINDS,
+  FACET_PROVIDERS,
+  detectFacets,
+  fetchOrchestration,
+  fetchProxmox,
+  fetchStats,
+  performAction,
+  primaryKind,
+  type BuiltAction,
+  type Exec,
+  type FacetProvider,
+} from './orchestration/orchestration';
+export {
+  fetchServiceTasks,
+  fetchTaskLogs,
+  parseCurrentState,
+  parseLogStream,
+  type TaskLogsOptions,
+} from './orchestration/tasks';
+export {
+  VITALS_COMMAND,
+  VITALS_UNSUPPORTED,
+  fetchVitals,
+  parseVitals,
+  summarizeVitals,
+  type VitalsSummary,
+} from './monitor/vitals';
 export { fetchDockerDf } from './monitor/docker-df';
 export { parseGuestIp } from './orchestration/guest-ip';
 export { HostStore, type HostStorage } from './hosts/store';
@@ -56,3 +82,20 @@ export {
   type ImportResult,
 } from './history/import';
 export { uuid } from './uuid';
+export {
+  coalesceChatEvents,
+  type ClaudeChatEvent,
+  type ClaudeFileDiff,
+  type ClaudeFocus,
+  type ClaudePermissionAnswer,
+  type ClaudeQuestion,
+  type ClaudeQuestionOption,
+  type ClaudeRevealAction,
+  type ClaudeSessionMeta,
+  type ClaudeTerminalInfo,
+  type ClaudeUiRequest,
+  type ClaudeUiRequestPayload,
+  type ClaudeUiResponse,
+} from './claude/events';
+export { ChatStreamParser, toolDisplay } from './claude/parser';
+export { applyEdit } from './claude/edit';

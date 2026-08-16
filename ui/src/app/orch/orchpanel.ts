@@ -3,20 +3,12 @@ import type { FacetKind, HostConfig, OrchAction, SubHostTarget } from '@pear/cor
 import { Pear } from '../pear';
 import { PearIcon } from '../icons/icon';
 import { OrchStore, type OrchState } from './store';
-import { FACET_META } from './facet-meta';
+import { FACET_KINDS, FACET_META } from './facet-meta';
 import { pctText, memPair, uptime } from './format';
 
 export interface OrchTermCommand {
   command: string;
   title: string;
-}
-
-/** A VM promoted to a real SSH host: detected address + suggested name. */
-export interface PromotedVm {
-  ip: string;
-  name: string;
-  /** The PVE host it was discovered on — becomes the new host's jump (via). */
-  viaId: string;
 }
 
 /** One collapsible section in the sidebar per orchestration facet present. */
@@ -40,13 +32,12 @@ export class OrchPanel {
   readonly expand = output<FacetKind>();
   /** An ephemeral sub-host was registered — the app should open it. */
   readonly jumpedIn = output<HostConfig>();
-  readonly promoted = output<PromotedVm>();
 
   private readonly store = inject(OrchStore);
   private readonly pear = inject(Pear);
 
-  /** Which facet sections are expanded (all open by default). */
-  readonly openFacets = signal<Record<string, boolean>>({ docker: true, swarm: true, proxmox: true });
+  /** Which facet sections are expanded (all open by default — see isOpen). */
+  readonly openFacets = signal<Record<string, boolean>>({});
   readonly busy = signal<string | null>(null);
   readonly actionError = signal<string | null>(null);
 
@@ -62,20 +53,11 @@ export class OrchPanel {
   readonly summaries = computed<FacetSummary[]>(() => {
     const data = this.data();
     if (!data) return [];
-    const out: FacetSummary[] = [];
-    if (data.docker) {
-      const running = data.docker.containers.filter((c) => c.running).length;
-      out.push({ kind: 'docker', icon: FACET_META.docker.icon, label: FACET_META.docker.tab, count: `${running}/${data.docker.containers.length}` });
-    }
-    if (data.swarm) {
-      const converged = data.swarm.services.filter((s) => s.running > 0 && s.running === s.desired).length;
-      out.push({ kind: 'swarm', icon: FACET_META.swarm.icon, label: FACET_META.swarm.tab, count: `${converged}/${data.swarm.services.length}` });
-    }
-    if (data.proxmox) {
-      const running = data.proxmox.guests.filter((g) => g.running).length;
-      out.push({ kind: 'proxmox', icon: FACET_META.proxmox.icon, label: FACET_META.proxmox.tab, count: `${running}/${data.proxmox.guests.length}` });
-    }
-    return out;
+    return FACET_KINDS.flatMap((kind) => {
+      const meta = FACET_META[kind];
+      const count = meta.summary(data);
+      return count === null ? [] : [{ kind, icon: meta.icon, label: meta.tab, count }];
+    });
   });
 
   readonly swarmRoster = computed(() => {
@@ -134,11 +116,10 @@ export class OrchPanel {
     });
   }
 
-  /** Detect a VM's IP via the guest agent so it can become a real host. */
-  async promoteVm(busyKey: string, vmid: number, name: string): Promise<void> {
+  /** Enter a VM as an ephemeral SSH host (IP detected via the guest agent). */
+  async jumpIntoVm(busyKey: string, vmid: number, name: string): Promise<void> {
     await this.guarded(busyKey, async () => {
-      const ip = await this.pear.api.subhosts.vmIp(this.host().id, vmid);
-      this.promoted.emit({ ip, name, viaId: this.host().id });
+      this.jumpedIn.emit(await this.pear.api.subhosts.jumpInVm(this.host().id, vmid, name));
     });
   }
 

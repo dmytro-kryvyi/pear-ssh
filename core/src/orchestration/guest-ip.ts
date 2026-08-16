@@ -1,5 +1,5 @@
 // Parses `qm guest cmd <vmid> network-get-interfaces` (QEMU guest agent).
-// Used by "Add as SSH host" to prefill a promoted VM's address.
+// Used by VM "Jump in" to find the address for the ephemeral SSH host.
 
 interface GuestInterface {
   name?: string;

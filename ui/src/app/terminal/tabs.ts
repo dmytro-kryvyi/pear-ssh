@@ -73,6 +73,23 @@ export class TermTabs {
     if (unbound) this.update(unbound.id, { cwd: path });
   }
 
+  /** Mint a shell TermTab and return its id, without touching the dock's
+   *  active selection — used by in-pane placement, where the shell lives in a
+   *  workspace pane rather than the bottom dock. */
+  createShell(hostId: string, cwd: string | null = null): string {
+    const tab: TermTab = {
+      id: newId(),
+      hostId,
+      row: 'shell',
+      title: cwd ? baseName(cwd) : 'bash',
+      cwd,
+      initialCommand: cwd ? `cd ${shq(cwd)}` : null,
+      dirty: false,
+    };
+    this.tabs.update((all) => [...all, tab]);
+    return tab.id;
+  }
+
   newShell(hostId: string, cwd: string | null = null): void {
     this.add({
       id: newId(),
@@ -85,15 +102,15 @@ export class TermTabs {
     });
   }
 
-  /** Open (or reactivate) a dedicated stream tab for an orchestration action. */
+  /** Open a dedicated stream tab for an orchestration action. An existing tab
+   *  for the same command is replaced, not reactivated: its stream may have
+   *  ended (`docker logs -f` on a stopped container prints and exits), and
+   *  only a fresh run is guaranteed to show current output. */
   openOrch(hostId: string, command: string, title: string): void {
     const existing = this.tabs().find(
       (t) => t.hostId === hostId && t.row === 'orch' && t.initialCommand === command,
     );
-    if (existing) {
-      this.activeId.set(existing.id);
-      return;
-    }
+    if (existing) this.close(existing.id);
     this.add({
       id: newId(),
       hostId,

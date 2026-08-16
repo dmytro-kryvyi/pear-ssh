@@ -8,6 +8,7 @@ export type SameHostDrag = 'move' | 'copy' | 'ask';
 export type ConflictSetting = 'rename' | 'overwrite' | 'skip';
 export type TermPlacement = 'shared' | 'per-host' | 'in-pane';
 export type MonitorInterval = 2 | 5 | 10;
+export type ClaudeMode = 'chat' | 'terminal';
 
 export const ACCENTS: Record<Accent, { main: string; soft: string; line: string }> = {
   teal: {
@@ -61,7 +62,8 @@ export class Settings {
   readonly sameHostDrag = signal<SameHostDrag>('move');
   readonly conflict = signal<ConflictSetting>('rename');
   readonly maxParallel = signal(2);
-  /** Preference surface only — not wired to real behaviour yet. */
+  /** Compare SHA-256 of source and dest after each streamed file; a mismatch
+   *  fails the transfer and removes the corrupt partial. */
   readonly verifyChecksums = signal(false);
   readonly termPlacement = signal<TermPlacement>('shared');
 
@@ -76,6 +78,14 @@ export class Settings {
   readonly sidebarVitals = signal(true);
   /** Collapsed `docker system df` section on the docker page. */
   readonly dockerDiskSection = signal(true);
+
+  // Claude Code dock
+  readonly claudeVisible = signal(false);
+  readonly claudeWidth = signal(392);
+  /** Dock body: rendered chat over stream-json, or the raw CLI in a terminal. */
+  readonly claudeMode = signal<ClaudeMode>('chat');
+  /** Chat-mode model alias ('' = the CLI's default). */
+  readonly claudeModel = signal('');
 
   constructor() {
     try {
@@ -115,6 +125,12 @@ export class Settings {
       if (typeof saved.dockerDiskSection === 'boolean') {
         this.dockerDiskSection.set(saved.dockerDiskSection);
       }
+      if (typeof saved.claudeVisible === 'boolean') this.claudeVisible.set(saved.claudeVisible);
+      if (typeof saved.claudeWidth === 'number') {
+        this.claudeWidth.set(Math.max(320, Math.min(620, saved.claudeWidth)));
+      }
+      if (['chat', 'terminal'].includes(saved.claudeMode)) this.claudeMode.set(saved.claudeMode);
+      if (typeof saved.claudeModel === 'string') this.claudeModel.set(saved.claudeModel);
     } catch {
       // corrupt settings: keep defaults
     }
@@ -148,6 +164,10 @@ export class Settings {
           containerStats: this.containerStats(),
           sidebarVitals: this.sidebarVitals(),
           dockerDiskSection: this.dockerDiskSection(),
+          claudeVisible: this.claudeVisible(),
+          claudeWidth: this.claudeWidth(),
+          claudeMode: this.claudeMode(),
+          claudeModel: this.claudeModel(),
         }),
       );
     });

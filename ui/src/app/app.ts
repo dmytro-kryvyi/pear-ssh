@@ -1,6 +1,6 @@
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { FacetKind, HostConfig } from '@pear/core';
+import type { FacetKind, HostConfig, HostKind } from '@pear/core';
 import { Pear } from './pear';
 import { Settings } from './settings';
 import { HostCatalog } from './hosts';
@@ -13,13 +13,16 @@ import { FileOps } from './workspace/ops';
 import { HostActions } from './host-actions';
 import { OrchPanel } from './orch/orchpanel';
 import { OrchStore } from './orch/store';
-import { FACET_META } from './orch/facet-meta';
+import { TasksDrawer } from './orch/tasks-drawer';
+import { FACET_KINDS, FACET_META } from './orch/facet-meta';
 import { PearIcon } from './icons/icon';
 import { ContextMenu } from './menu/context-menu';
 import { TransferQueue } from './transfers/queue';
 import { SettingsModal } from './settings/settings-modal';
 import { MonitorStore } from './monitor/store';
 import { HostMeter } from './monitor/host-meter';
+import { ClaudeDock } from './claude/dock';
+import { ClaudeUiBridge } from './claude/ui-bridge';
 
 const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
 
@@ -35,13 +38,15 @@ const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
     TransferQueue,
     SettingsModal,
     HostMeter,
+    ClaudeDock,
+    TasksDrawer,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
 export class App {
   private readonly pear = inject(Pear);
-  private readonly orchStore = inject(OrchStore);
+  readonly orchStore = inject(OrchStore);
   private readonly monitor = inject(MonitorStore);
   readonly settings = inject(Settings);
   readonly tabs = inject(TermTabs);
@@ -62,10 +67,11 @@ export class App {
 
   readonly facetMeta = FACET_META;
 
-  /** Hosts whose terminal channel answered this session. */
-  private readonly termConnected = signal<ReadonlySet<string>>(new Set());
+  /** A host is terminal-connected once one of its tabs has an open channel
+   *  (termId set on attach) — true for both the dock and in-pane terminals. */
   readonly connectedIds = computed<ReadonlySet<string>>(() => {
-    const union = new Set(this.termConnected());
+    const union = new Set<string>();
+    for (const t of this.tabs.tabs()) if (t.termId) union.add(t.hostId);
     for (const id of this.fsStore.fsConnected()) union.add(id);
     return union;
   });
@@ -81,12 +87,7 @@ export class App {
   /** One view-tab per orchestration facet the focused host actually runs. */
   readonly availableFacets = computed<FacetKind[]>(() => {
     const data = this.orchState()?.data;
-    if (!data) return [];
-    const out: FacetKind[] = [];
-    if (data.docker) out.push('docker');
-    if (data.swarm) out.push('swarm');
-    if (data.proxmox) out.push('proxmox');
-    return out;
+    return data ? FACET_KINDS.filter((kind) => !!data[kind]) : [];
   });
 
   /** Facet shown by the focused tab, when it is an orch tab. */
@@ -101,16 +102,71 @@ export class App {
     return state && state.status !== 'detecting' && state.status !== 'none' ? state : null;
   });
 
+  /** Bottom dock shows every host's shells at once, decoupled from the focused
+   *  pane, when the user picks the per-host terminal placement. */
+  readonly perHostTerms = computed(() => this.settings.termPlacement() === 'per-host');
+
+  /** The host the dock's chrome (+ new, label, close) acts on: the active
+   *  tab's host in per-host mode, otherwise the focused pane's host. */
+  readonly dockHost = computed(() => {
+    if (this.perHostTerms()) {
+      const active = this.tabs.tabs().find((t) => t.id === this.tabs.activeId());
+      return this.catalog.byId(active?.hostId ?? null) ?? this.selected();
+    }
+    return this.selected();
+  });
+
+  /** TermTab ids that live inside a workspace pane (in-pane placement) — the
+   *  bottom dock must never also show them. */
+  private readonly paneTermIds = computed<ReadonlySet<string>>(() => {
+    const ids = new Set<string>();
+    for (const pane of this.ws.panes()) {
+      for (const tab of pane.tabs) if (tab.termTabId) ids.add(tab.termTabId);
+    }
+    return ids;
+  });
+
   readonly hostTabs = computed(() => {
+    const owned = this.paneTermIds();
+    const dockTabs = this.tabs.tabs().filter((t) => !owned.has(t.id));
+    if (this.perHostTerms()) return dockTabs;
     const id = this.activeHostId();
-    return id ? this.tabs.tabs().filter((t) => t.hostId === id) : [];
+    return id ? dockTabs.filter((t) => t.hostId === id) : [];
   });
   readonly shellTabs = computed(() => this.hostTabs().filter((t) => t.row === 'shell'));
   readonly orchTabs = computed(() => this.hostTabs().filter((t) => t.row === 'orch'));
-  readonly orchRowIcon = computed(() => {
-    const kind = this.selected()?.kind;
-    return kind === 'swarm' ? 'layers' : kind === 'proxmox' ? 'server' : 'docker';
+
+  /** All dock-eligible tabs (every host, both rows) — the body renders these
+   *  and toggles visibility, so switching a tab never rebuilds its terminal. */
+  readonly dockTabs = computed(() => {
+    const owned = this.paneTermIds();
+    return this.tabs.tabs().filter((t) => !owned.has(t.id));
   });
+
+  /** The bottom dock is shown unless terminals live in panes (in-pane mode). */
+  readonly showDock = computed(
+    () => this.settings.termPlacement() !== 'in-pane' && this.dockTabs().length > 0,
+  );
+  readonly orchRowIcon = computed(() => this.kindIcon(this.dockHost()?.kind ?? 'plain'));
+
+  /** Sidebar/dock glyph for a host's dominant facet ('plain' shows the default). */
+  kindIcon(kind: HostKind): string {
+    return kind === 'plain' ? FACET_META.docker.icon : FACET_META[kind].icon;
+  }
+
+  /** In per-host mode a tab is active purely by id; in shared mode it must
+   *  also belong to the focused pane's host (the only host the dock shows). */
+  isTabActive(t: TermTab): boolean {
+    if (t.id !== this.tabs.activeId()) return false;
+    return this.perHostTerms() || t.hostId === this.activeHostId();
+  }
+
+  /** Tab caption: host-prefixed in per-host mode so shells stay distinguishable. */
+  tabCaption(t: TermTab): string {
+    if (!this.perHostTerms()) return t.title;
+    const host = this.catalog.byId(t.hostId);
+    return host ? `${host.name} · ${t.title}` : t.title;
+  }
 
   // Quick-add form
   target = '';
@@ -122,6 +178,8 @@ export class App {
   constructor() {
     if (!this.bridged) return;
     void this.catalog.refresh();
+    // Serve read_terminal / reveal_in_app round-trips from the main process.
+    inject(ClaudeUiBridge).start();
 
     this.pear.api.onHostDisconnected((hostId) => {
       if (this.expectedDisconnects.has(hostId)) {
@@ -132,22 +190,26 @@ export class App {
         for (const child of this.childrenOf(hostId)) this.expectedDisconnects.add(child.id);
         this.showNotice(`Lost connection to ${host?.name ?? hostId}`);
       }
-      this.termConnected.update((ids) => {
-        const next = new Set(ids);
-        next.delete(hostId);
-        return next;
-      });
       this.fsStore.dropHost(hostId);
       this.orchStore.clear(hostId);
       this.monitor.drop(hostId);
       this.discovered.delete(hostId);
       this.tabs.closeHost(hostId);
       // Ephemeral sub-hosts don't outlive their connection (main sends a
-      // per-child event too; dropping by parentId here is belt-and-braces).
+      // per-child event too; dropping by parent link here is belt-and-braces).
       this.catalog.subHosts.update((list) =>
-        list.filter((s) => s.id !== hostId && s.parentId !== hostId),
+        list.filter((s) => s.id !== hostId && s.parentId !== hostId && s.via !== hostId),
       );
       this.ws.closeHost(hostId);
+    });
+
+    // Mirror the focused workspace location to the Claude integration so
+    // its list_hosts can mark which host/dir the user is looking at.
+    effect(() => {
+      const loc = this.ws.focusedLocation();
+      this.pear.api.claude.setFocus(
+        loc ? { hostId: loc.hostId, ...(loc.path.startsWith('/') ? { path: loc.path } : {}) } : null,
+      );
     });
 
     // Facet discovery on first contact with a host, whichever channel it
@@ -160,12 +222,27 @@ export class App {
       }
     });
 
-    // The bottom terminal follows the focused pane: same host, same folder.
+    // Bottom-dock placement reacts to the focused pane:
+    //  - shared: the terminal follows it (same host, cd to same folder);
+    //  - per-host: the host just gets one shell the first time it's visited,
+    //    with no cd and no stealing of the user's chosen active tab;
+    //  - in-pane: no bottom dock at all, so nothing here.
     effect(() => {
+      const placement = this.settings.termPlacement();
+      if (placement === 'in-pane') return;
       const loc = this.ws.focusedLocation();
       if (!loc || !loc.path.startsWith('/')) return;
       if (!untracked(() => this.connectedIds().has(loc.hostId))) return;
-      untracked(() => this.tabs.navigate(loc.hostId, loc.path));
+      untracked(() => {
+        if (placement === 'per-host') {
+          const hasShell = this.tabs
+            .tabs()
+            .some((t) => t.hostId === loc.hostId && t.row === 'shell');
+          if (!hasShell) this.tabs.newShell(loc.hostId);
+        } else {
+          this.tabs.navigate(loc.hostId, loc.path);
+        }
+      });
     });
 
     // Resource monitor targets: every connected host when the sidebar shows
@@ -253,8 +330,26 @@ export class App {
     await this.catalog.refresh();
   }
 
+  /**
+   * Transitive descendants for the sidebar, parent-first: exec sub-hosts
+   * (parentId) and tunneled via-hosts alike. Flat — nesting depth is not
+   * rendered, only membership under the root.
+   */
   childrenOf(id: string): HostConfig[] {
-    return this.allHosts().filter((h) => h.parentId === id);
+    const out: HostConfig[] = [];
+    const seen = new Set([id]);
+    const queue = [id];
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const h of this.allHosts()) {
+        if ((h.parentId === current || h.via === current) && !seen.has(h.id)) {
+          seen.add(h.id);
+          out.push(h);
+          queue.push(h.id);
+        }
+      }
+    }
+    return out;
   }
 
   /** Breadcrumb segments for a sub-host chain, root first: ['pve-01', 'ct:103']. */
@@ -298,7 +393,6 @@ export class App {
 
   onTabOpened(tab: TermTab, termId: string): void {
     this.tabs.attach(tab.id, termId);
-    this.termConnected.update((ids) => new Set(ids).add(tab.hostId));
   }
 
   closeTab(tabId: string): void {
@@ -315,7 +409,7 @@ export class App {
   }
 
   disconnectTerms(): void {
-    const id = this.activeHostId();
+    const id = this.perHostTerms() ? (this.dockHost()?.id ?? null) : this.activeHostId();
     if (id) this.tabs.closeHost(id);
   }
 
@@ -349,5 +443,23 @@ export class App {
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
     document.body.style.cursor = 'ns-resize';
+  }
+
+  startClaudeResize(event: MouseEvent): void {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = this.settings.claudeWidth();
+    const move = (ev: MouseEvent) => {
+      const next = startWidth + (startX - ev.clientX);
+      this.settings.claudeWidth.set(Math.max(320, Math.min(620, next)));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = '';
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    document.body.style.cursor = 'ew-resize';
   }
 }

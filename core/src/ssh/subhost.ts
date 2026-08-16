@@ -1,27 +1,71 @@
 import type { DirListing, FileEntry, SubHostTarget, TermSize } from '../types';
 import type { ExecResult, ShellChannel, SshTransport, TransferOpts } from './transport';
 import { kindOf, modeString } from './mode';
+import { sha256Command, parseSha256 } from './hash';
 import { shq } from '../shq';
 import { uuid } from '../uuid';
 
 // A sub-host is a container reachable only through its parent host: a Docker
 // container (entered with `docker exec`) or a Proxmox LXC CT (`pct exec` /
 // `pct enter`, run on the PVE node). QEMU VMs are not sub-hosts — they have no
-// exec tunnel; they get a serial console or are promoted to real SSH hosts.
+// exec tunnel; they get a serial console, or jump-in registers an ephemeral
+// SSH host tunneled through the node (via) using the guest agent's address.
+
+/**
+ * Per-engine command shapes for entering a target and moving files through
+ * it. Keyed by SubHostTarget.type — adding an engine (e.g. podman) means
+ * extending SubHostType in types.ts and adding one entry here; the Record
+ * makes a missing entry a compile error.
+ */
+interface SubHostAdapter {
+  /** CLI expected on the parent host; named in errors when missing. */
+  cli: string;
+  /** Human label for error messages, e.g. "Container 'web'". */
+  label(ref: string): string;
+  /** Non-interactive command inside the target, to be run on the parent. */
+  exec(ref: string, command: string): string;
+  /** Interactive (PTY) variant of exec. */
+  execPty(ref: string, command: string): string;
+  /** Interactive login shell inside the target. */
+  shell(ref: string): string;
+  /** Copy target:path -> staging path on the parent. */
+  pull(ref: string, path: string, tmp: string): string;
+  /** Copy parent staging path -> target:path. */
+  push(ref: string, tmp: string, path: string): string;
+}
+
+const ADAPTERS: Record<SubHostTarget['type'], SubHostAdapter> = {
+  docker: {
+    cli: 'docker',
+    label: (ref) => `Container '${ref}'`,
+    exec: (ref, command) => `docker exec ${shq(ref)} /bin/sh -c ${shq(command)}`,
+    execPty: (ref, command) =>
+      `docker exec -it -e TERM=xterm-256color ${shq(ref)} /bin/sh -c ${shq(command)}`,
+    shell: (ref) =>
+      `docker exec -it -e TERM=xterm-256color ${shq(ref)} ` +
+      `/bin/sh -c 'command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l'`,
+    pull: (ref, path, tmp) => `docker cp ${shq(`${ref}:${path}`)} ${shq(tmp)}`,
+    push: (ref, tmp, path) => `docker cp ${shq(tmp)} ${shq(`${ref}:${path}`)}`,
+  },
+  lxc: {
+    cli: 'pct',
+    label: (ref) => `CT ${ref}`,
+    exec: (ref, command) => `pct exec ${shq(ref)} -- /bin/sh -c ${shq(command)}`,
+    execPty: (ref, command) => `pct exec ${shq(ref)} -- /bin/sh -c ${shq(command)}`,
+    shell: (ref) => `pct enter ${shq(ref)}`,
+    pull: (ref, path, tmp) => `pct pull ${shq(ref)} ${shq(path)} ${shq(tmp)}`,
+    push: (ref, tmp, path) => `pct push ${shq(ref)} ${shq(tmp)} ${shq(path)}`,
+  },
+};
 
 /** Non-interactive command inside the target, to be run on the parent. */
 export function subExec(target: SubHostTarget, command: string): string {
-  return target.type === 'docker'
-    ? `docker exec ${shq(target.ref)} /bin/sh -c ${shq(command)}`
-    : `pct exec ${shq(target.ref)} -- /bin/sh -c ${shq(command)}`;
+  return ADAPTERS[target.type].exec(target.ref, command);
 }
 
 /** Interactive shell inside the target (run on the parent in a PTY). */
 export function subShellCommand(target: SubHostTarget): string {
-  return target.type === 'docker'
-    ? `docker exec -it -e TERM=xterm-256color ${shq(target.ref)} ` +
-        `/bin/sh -c 'command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l'`
-    : `pct enter ${shq(target.ref)}`;
+  return ADAPTERS[target.type].shell(target.ref);
 }
 
 /** One round trip: confirms the target is running and has a shell. */
@@ -29,13 +73,14 @@ export function probeCommand(target: SubHostTarget): string {
   return subExec(target, 'whoami 2>/dev/null || id -un 2>/dev/null || echo root');
 }
 
-/** Translate docker/pct stderr into a message a user can act on. */
+/** Translate engine-CLI stderr into a message a user can act on. */
 export function probeError(target: SubHostTarget, result: ExecResult): string {
+  const adapter = ADAPTERS[target.type];
   const err = result.stderr.trim();
   // Some runtimes/shims report exec failures on stdout — match against both,
   // but keep display text to stderr (stdout may hold unrelated chatter).
   const text = err || result.stdout.trim();
-  const label = target.type === 'docker' ? `Container '${target.ref}'` : `CT ${target.ref}`;
+  const label = adapter.label(target.ref);
   if (/no such container/i.test(text)) return `${label} not found`;
   if (/configuration file .* does not exist/i.test(text)) return `${label} not found`;
   if (/is not running|not running/i.test(text)) return `${label} is not running`;
@@ -50,8 +95,12 @@ export function probeError(target: SubHostTarget, result: ExecResult): string {
   ) {
     return `${label} has no shell (distroless image?)`;
   }
-  if (/(docker|pct): (command )?not found|command not found: (docker|pct)/i.test(text)) {
-    return `${target.type === 'docker' ? 'docker' : 'pct'} not available on the parent host`;
+  const cliMissing = new RegExp(
+    `${adapter.cli}: (command )?not found|command not found: ${adapter.cli}`,
+    'i',
+  );
+  if (cliMissing.test(text)) {
+    return `${adapter.cli} not available on the parent host`;
   }
   // A silent 126/127 is the shell convention for "cannot exec" — with docker
   // and the container confirmed present, that means no shell in the image.
@@ -246,6 +295,10 @@ export class SubHostTransport implements SshTransport {
     must(await this.exec(`cp -a -- ${shq(src)} ${shq(dest)}`), 'copy');
   }
 
+  async hash(path: string): Promise<string> {
+    return parseSha256(await this.exec(sha256Command(path)), path);
+  }
+
   /**
    * Byte progress covers only the parent→Pear SFTP leg (the network-dominant
    * one); the container-side docker cp / pct pull is a single opaque step.
@@ -276,26 +329,18 @@ export class SubHostTransport implements SshTransport {
 
   /** Copy target:path -> parent tmp. */
   private async pull(path: string, tmp: string): Promise<void> {
-    const cmd =
-      this.target.type === 'docker'
-        ? `docker cp ${shq(`${this.target.ref}:${path}`)} ${shq(tmp)}`
-        : `pct pull ${shq(this.target.ref)} ${shq(path)} ${shq(tmp)}`;
+    const cmd = ADAPTERS[this.target.type].pull(this.target.ref, path, tmp);
     must(await this.parent.exec(cmd), 'copy out of container');
   }
 
   /** Copy parent tmp -> target:path. */
   private async push(tmp: string, path: string): Promise<void> {
-    const cmd =
-      this.target.type === 'docker'
-        ? `docker cp ${shq(tmp)} ${shq(`${this.target.ref}:${path}`)}`
-        : `pct push ${shq(this.target.ref)} ${shq(tmp)} ${shq(path)}`;
+    const cmd = ADAPTERS[this.target.type].push(this.target.ref, tmp, path);
     must(await this.parent.exec(cmd), 'copy into container');
   }
 }
 
 /** Interactive (PTY) variant of subExec, for shellCommand nesting. */
 function subExecPty(target: SubHostTarget, command: string): string {
-  return target.type === 'docker'
-    ? `docker exec -it -e TERM=xterm-256color ${shq(target.ref)} /bin/sh -c ${shq(command)}`
-    : `pct exec ${shq(target.ref)} -- /bin/sh -c ${shq(command)}`;
+  return ADAPTERS[target.type].execPty(target.ref, command);
 }

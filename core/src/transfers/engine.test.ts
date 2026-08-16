@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { TransferEngine, joinPath } from './engine';
 import type { TransferEnv, TransferJobSnapshot, TransferRequest } from './engine';
 import type {
@@ -21,6 +22,8 @@ class MemTransport implements SshTransport {
   isConnected = true;
   /** Pause gate: when set, the next download/uploadFile waits on it. */
   gate: Promise<void> | null = null;
+  /** When set, hash() returns a bogus digest — simulates a corrupt read. */
+  corruptHash = false;
   fs = new Map<string, Node>();
 
   constructor(
@@ -132,6 +135,13 @@ class MemTransport implements SshTransport {
     await this.transferTo(this.relay(), localPath, this, remotePath, opts);
   }
 
+  async hash(path: string): Promise<string> {
+    if (this.corruptHash) return 'corrupt';
+    const node = this.fs.get(path);
+    if (node?.kind !== 'file') throw new Error(`${path}: not a file`);
+    return createHash('sha256').update(node.data).digest('hex');
+  }
+
   private async transferTo(
     from: MemTransport,
     fromPath: string,
@@ -214,6 +224,7 @@ const req = (over: Partial<TransferRequest>): TransferRequest => ({
   names: ['f.txt'],
   op: 'copy',
   conflict: 'rename',
+  verify: false,
   ...over,
 });
 
@@ -231,6 +242,27 @@ test('cross-host copy stages through the relay and lands on the dest', async () 
   assert.equal(await h.a.readFile('/src/f.txt'), 'hello');
   // staging cleaned
   assert.deepEqual(h.removedStaging, h.stagingDirs);
+});
+
+test('verify: a matching checksum lets the transfer complete', async () => {
+  const h = harness({ a: { '/src/f.txt': 'hello' }, b: { '/dst': null } });
+  const id = h.engine.start(req({ verify: true }));
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  assert.equal(await h.b.readFile('/dst/f.txt'), 'hello');
+});
+
+test('verify: a checksum mismatch fails the job and removes the partial', async () => {
+  const h = harness({ a: { '/src/f.txt': 'hello' }, b: { '/dst': null } });
+  h.b.corruptHash = true; // dest reads back a bogus digest
+  const id = h.engine.start(req({ verify: true }));
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'error');
+  assert.match(last.error ?? '', /checksum mismatch/);
+  // corrupt file was cleaned off the dest
+  assert.equal(await h.b.stat('/dst/f.txt'), null);
 });
 
 test('move deletes the source only after success', async () => {

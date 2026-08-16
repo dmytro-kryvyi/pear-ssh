@@ -13,6 +13,7 @@ import type {
   TransferOpts,
 } from '../ssh/transport';
 import { kindOf, modeString } from '../ssh/mode';
+import { sha256Command, parseSha256 } from '../ssh/hash';
 import { shq } from '../shq';
 
 /** Pass-through stream that reports cumulative bytes to a callback. */
@@ -365,6 +366,10 @@ export class SshConnection implements SshTransport {
       dest,
       { signal: toAbortSignal(opts?.signal) },
     );
+  }
+
+  async hash(path: string): Promise<string> {
+    return parseSha256(await this.exec(sha256Command(path)), path);
   }
 
   private async mustExec(command: string, what: string): Promise<void> {

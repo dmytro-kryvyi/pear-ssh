@@ -7,6 +7,7 @@ import {
   fetchStats,
   performAction,
 } from '../orchestration/orchestration';
+import { fetchServiceTasks, fetchTaskLogs, type TaskLogsOptions } from '../orchestration/tasks';
 import { fetchVitals } from '../monitor/vitals';
 import { fetchDockerDf } from '../monitor/docker-df';
 import { uuid } from '../uuid';
@@ -188,6 +189,14 @@ export class SessionManager {
     return performAction(this.execBinder(config), action);
   }
 
+  serviceTasks(config: HostConfig, service: string) {
+    return fetchServiceTasks(this.execBinder(config), service);
+  }
+
+  taskLogs(config: HostConfig, taskId: string, opts?: TaskLogsOptions) {
+    return fetchTaskLogs(this.execBinder(config), taskId, opts);
+  }
+
   vitals(config: HostConfig) {
     return fetchVitals(this.execBinder(config));
   }
@@ -198,6 +207,10 @@ export class SessionManager {
 
   containerStats(config: HostConfig) {
     return fetchStats(this.execBinder(config));
+  }
+
+  isConnected(hostId: string): boolean {
+    return this.connections.get(hostId)?.isConnected ?? false;
   }
 
   disconnectHost(hostId: string): void {

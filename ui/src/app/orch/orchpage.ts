@@ -1,15 +1,23 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
-import type { FacetKind, HostConfig, OrchAction, SubHostTarget } from '@pear/core';
+import type {
+  FacetKind,
+  HostConfig,
+  OrchAction,
+  SubHostTarget,
+  SwarmServiceInfo,
+  SwarmTaskInfo,
+} from '@pear/core';
 import { Pear } from '../pear';
 import { PearIcon } from '../icons/icon';
 import { Gauge } from './gauge';
 import { OrchStore, type OrchState } from './store';
-import type { OrchTermCommand, PromotedVm } from './orchpanel';
+import type { OrchTermCommand } from './orchpanel';
 import { FACET_META } from './facet-meta';
 import { Settings } from '../settings';
 import { VitalsBand } from '../monitor/vitals-band';
 import { DockerDisk } from '../monitor/docker-disk';
 import { memPair, memPct, pctNum, pctText, tone, uptime } from './format';
+import { taskTone } from './tasks-drawer';
 
 @Component({
   selector: 'pear-orchpage',
@@ -24,7 +32,6 @@ export class OrchPage {
   readonly termCommand = output<OrchTermCommand>();
   /** An ephemeral sub-host was registered — the app should open it. */
   readonly jumpedIn = output<HostConfig>();
-  readonly promoted = output<PromotedVm>();
 
   private readonly store = inject(OrchStore);
   private readonly pear = inject(Pear);
@@ -86,6 +93,31 @@ export class OrchPage {
     };
   });
 
+  /** Services whose replicas have not converged — the failed-task callout. */
+  readonly degraded = computed(
+    () => this.swarm()?.services.filter((s) => s.running < s.desired) ?? [],
+  );
+
+  /** Latest failed task from the lazily-filled cache (ps output is newest-first). */
+  latestFailure(s: SwarmServiceInfo): SwarmTaskInfo | null {
+    const cached = this.store.tasks()[`${this.host().id}/${s.name}`];
+    return cached?.tasks?.find((t) => taskTone(t) === 'err') ?? null;
+  }
+
+  failedOf(s: SwarmServiceInfo): number {
+    const cached = this.store.tasks()[`${this.host().id}/${s.name}`];
+    return cached?.tasks?.filter((t) => taskTone(t) === 'err').length ?? 0;
+  }
+
+  /** Open the service tasks drawer, preselecting the freshest failure. */
+  openTasks(s: SwarmServiceInfo): void {
+    this.store.openDrawer({
+      hostId: this.host().id,
+      serviceName: s.name,
+      initialTaskId: this.latestFailure(s)?.id,
+    });
+  }
+
   // ---- Proxmox derived -------------------------------------------------
   readonly proxmox = computed(() =>
     this.facet() === 'proxmox' ? (this.data()?.proxmox ?? null) : null,
@@ -122,11 +154,10 @@ export class OrchPage {
     });
   }
 
-  /** Detect a VM's IP via the guest agent so it can become a real host. */
-  async promoteVm(busyKey: string, vmid: number, name: string): Promise<void> {
+  /** Enter a VM as an ephemeral SSH host (IP detected via the guest agent). */
+  async jumpIntoVm(busyKey: string, vmid: number, name: string): Promise<void> {
     await this.guarded(busyKey, async () => {
-      const ip = await this.pear.api.subhosts.vmIp(this.host().id, vmid);
-      this.promoted.emit({ ip, name, viaId: this.host().id });
+      this.jumpedIn.emit(await this.pear.api.subhosts.jumpInVm(this.host().id, vmid, name));
     });
   }
 

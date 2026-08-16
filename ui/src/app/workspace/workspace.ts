@@ -1,17 +1,19 @@
 import { Injectable, computed, signal } from '@angular/core';
 import type { FacetKind } from '@pear/core';
 
-export type TabKind = 'dir' | 'file' | 'orch';
+export type TabKind = 'dir' | 'file' | 'orch' | 'term';
 
 export interface WsTab {
   id: string;
   kind: TabKind;
   hostId: string;
   /** Directory for dir tabs ('~' until resolved), file path for file tabs,
-   *  '' for orch tabs (their target is the facet, not a path). */
+   *  '' for orch and term tabs (their target is a facet / a shell). */
   path: string;
   /** Which orchestration view an orch tab shows. */
   facet?: FacetKind;
+  /** For term tabs: the backing TermTab id in TermTabs (in-pane placement). */
+  termTabId?: string;
 }
 
 export interface WsPane {
@@ -181,6 +183,12 @@ export class Workspace {
       return;
     }
     this.insertTab(pane?.id ?? null, { id: tabId(), kind: 'orch', hostId, path: '', facet });
+  }
+
+  /** Open a terminal tab inside a pane (in-pane placement). The shell itself
+   *  is a TermTab owned by TermTabs; we only hold its id. */
+  openTermTab(paneIdArg: string | null, hostId: string, termTabId: string): void {
+    this.insertTab(paneIdArg, { id: tabId(), kind: 'term', hostId, path: '', termTabId });
   }
 
   private insertTab(paneIdArg: string | null, tab: WsTab): void {

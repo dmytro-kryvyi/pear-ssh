@@ -13,19 +13,31 @@ import {
   primaryKind,
   probeCommand,
   probeError,
+  type ClaudeFocus,
+  type ClaudeUiRequestPayload,
+  type ClaudeUiResponse,
   type ConflictPolicy,
   type HostConfig,
   type OrchAction,
+  type ShellChannel,
   type SubHostTarget,
   type TermSize,
+  uuid,
   type TransferEndpoint,
   type TransferRequest,
 } from '@pear/core';
 import {
+  ClaudeChatRuntime,
+  ClaudeExecutor,
   JsonFileStorage,
   LocalConnection,
+  PearMcpServer,
+  PortForwardManager,
   SshConnection,
+  claudeInstalled,
+  launchClaudePty,
   makeStagingDir,
+  provisionClaudeWorkspace,
   removeStaging,
   sweepStaging,
 } from '@pear/core/node';
@@ -72,6 +84,7 @@ const sessions = new SessionManager(
       for (const childId of ephemeral.removeByParent(hostId)) {
         win?.webContents.send('host:disconnected', childId);
       }
+      forwards.closeForHost(hostId); // dead tunnels must not keep listening
       win?.webContents.send('host:disconnected', hostId);
     },
   },
@@ -109,6 +122,10 @@ const transfers = new TransferEngine(
   { onUpdate: (job) => win?.webContents.send('transfer:update', job) },
 );
 
+// SSH port forwards opened by the Claude tools (loopback listeners piped into
+// forwardOut legs). Torn down per-host on disconnect and wholesale on quit.
+const forwards = new PortForwardManager((host) => sessions.connection(host));
+
 /** Endpoints on a registered local host collapse to the relay side, so a
  *  local-host pane gets a 1-stage transfer instead of a pointless relay hop. */
 function normalizeEndpoint(ep: TransferEndpoint): TransferEndpoint {
@@ -116,6 +133,85 @@ function normalizeEndpoint(ep: TransferEndpoint): TransferEndpoint {
   const host = resolveHost(ep.hostId);
   if (!host) throw new Error(`Unknown host: ${ep.hostId}`);
   return host.local ? { hostId: null, dir: ep.dir } : ep;
+}
+
+// Claude Code integration: a loopback MCP server exposing the pear tools, and
+// a workspace dir the (user-installed, self-authenticated) claude CLI runs in.
+// Failure is non-fatal — the dock just reports tools as unavailable.
+let claudeMcp: PearMcpServer | null = null;
+let claudeChat: ClaudeChatRuntime | null = null;
+let claudeExecutor: ClaudeExecutor | null = null;
+const claudeDir = () => join(app.getPath('userData'), 'claude');
+// Claude PTYs are local channels outside SessionManager (no host attached);
+// they share the term:* streaming channels via this side table.
+const claudeTerms = new Map<string, ShellChannel>();
+
+// Main → renderer round-trips for the UI-facing MCP tools (read_terminal,
+// reveal_in_app). The timeout only fires when the renderer is gone or
+// reloading — handlers themselves are synchronous signal work.
+const UI_REQUEST_TIMEOUT_MS = 5_000;
+const pendingUi = new Map<
+  string,
+  { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
+>();
+
+function claudeUiRequest(payload: ClaudeUiRequestPayload): Promise<unknown> {
+  if (!win || win.isDestroyed()) return Promise.reject(new Error('Pear window is not open'));
+  const id = uuid();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingUi.delete(id);
+      reject(new Error('Pear UI did not respond (window busy or reloading)'));
+    }, UI_REQUEST_TIMEOUT_MS);
+    pendingUi.set(id, { resolve, reject, timer });
+    win?.webContents.send('claude:uiRequest', { id, payload });
+  });
+}
+
+function rejectPendingUi(reason: string): void {
+  for (const [, p] of pendingUi) {
+    clearTimeout(p.timer);
+    p.reject(new Error(reason));
+  }
+  pendingUi.clear();
+}
+
+async function startClaudeIntegration(): Promise<void> {
+  try {
+    const executor = new ClaudeExecutor({
+      hosts: () => [...hosts.list(), ...ephemeral.list()],
+      isConnected: (id) => sessions.isConnected(id),
+      exec: (host, command) => sessions.exec(host, command),
+      readFile: (host, path, maxBytes) => sessions.readFile(host, path, maxBytes),
+      writeFile: (host, path, content) => sessions.writeFile(host, path, content),
+      listDir: (host, path) => sessions.listDir(host, path),
+      uiRequest: (payload) => claudeUiRequest(payload),
+      startTransfer: (req) =>
+        transfers.start({
+          ...req,
+          src: normalizeEndpoint(req.src),
+          dest: normalizeEndpoint(req.dest),
+        }),
+      transferList: () => transfers.list(),
+      openForward: (host, remotePort, remoteHost, localPort) =>
+        forwards.open(host, remotePort, remoteHost, localPort),
+      listForwards: () => forwards.list(),
+      closeForward: (id) => forwards.close(id),
+    });
+    claudeExecutor = executor;
+    claudeChat = new ClaudeChatRuntime({
+      dir: claudeDir(),
+      storage: userFile('claude-sessions.json'),
+      emit: (event) => win?.webContents.send('claude:event', event),
+      executor,
+    });
+    claudeMcp = new PearMcpServer(executor, claudeChat.bridge);
+    const info = await claudeMcp.start();
+    await provisionClaudeWorkspace({ dir: claudeDir(), url: info.url, token: info.token });
+  } catch (err) {
+    claudeMcp = null;
+    console.warn('[claude] MCP integration unavailable:', err instanceof Error ? err.message : err);
+  }
 }
 
 function createWindow(): void {
@@ -138,7 +234,10 @@ function createWindow(): void {
   } else {
     void win.loadURL('pear://ui/index.html');
   }
-  win.on('closed', () => (win = null));
+  win.on('closed', () => {
+    win = null;
+    rejectPendingUi('Pear window was closed');
+  });
 }
 
 function registerUiProtocol(): void {
@@ -192,13 +291,68 @@ function registerIpc(): void {
     const handle = await sessions.openTerminal(config, size);
     return handle.id;
   });
-  ipcMain.on('term:write', (_e, termId: string, data: string) =>
-    sessions.writeTerminal(termId, data),
+  ipcMain.on('term:write', (_e, termId: string, data: string) => {
+    const claude = claudeTerms.get(termId);
+    if (claude) return claude.write(data);
+    sessions.writeTerminal(termId, data);
+  });
+  ipcMain.on('term:resize', (_e, termId: string, size: TermSize) => {
+    const claude = claudeTerms.get(termId);
+    if (claude) return claude.resize(size);
+    sessions.resizeTerminal(termId, size);
+  });
+  ipcMain.on('term:close', (_e, termId: string) => {
+    const claude = claudeTerms.get(termId);
+    if (claude) return claude.close();
+    sessions.closeTerminal(termId);
+  });
+
+  ipcMain.handle('claude:open', (_e, size: TermSize) => {
+    const channel = launchClaudePty(claudeDir(), size);
+    const id = uuid();
+    claudeTerms.set(id, channel);
+    channel.onData((data) => win?.webContents.send('term:data', id, data));
+    channel.onClose(() => {
+      if (claudeTerms.delete(id)) win?.webContents.send('term:exit', id);
+    });
+    return id;
+  });
+  ipcMain.handle('claude:status', async () => ({
+    installed: await claudeInstalled(),
+    mcpReady: claudeMcp !== null,
+  }));
+  ipcMain.handle('claude:chatSend', (_e, text: string) => {
+    if (!claudeChat) throw new Error('Claude integration unavailable');
+    claudeChat.send(text);
+  });
+  ipcMain.on('claude:chatInterrupt', () => claudeChat?.interrupt());
+  ipcMain.on('claude:chatAnswer', (_e, requestId: string, answer) =>
+    claudeChat?.answer(requestId, answer),
   );
-  ipcMain.on('term:resize', (_e, termId: string, size: TermSize) =>
-    sessions.resizeTerminal(termId, size),
+  ipcMain.on('claude:chatAutoApprove', (_e, on: boolean) => claudeChat?.setAutoApprove(on));
+  ipcMain.on('claude:chatModel', (_e, model: string | null) =>
+    claudeChat?.setModel(typeof model === 'string' && model ? model : null),
   );
-  ipcMain.on('term:close', (_e, termId: string) => sessions.closeTerminal(termId));
+  ipcMain.handle('claude:chatSessions', () => claudeChat?.sessions() ?? []);
+  ipcMain.handle('claude:chatResume', (_e, sessionId: string) =>
+    claudeChat?.resume(sessionId) ?? [],
+  );
+  ipcMain.handle('claude:chatNew', () => claudeChat?.newSession());
+  ipcMain.on('claude:uiResponse', (_e, r: ClaudeUiResponse) => {
+    const p = pendingUi.get(r.id);
+    if (!p) return; // stale reply after timeout or reload
+    pendingUi.delete(r.id);
+    clearTimeout(p.timer);
+    if (r.ok) p.resolve(r.value);
+    else p.reject(new Error(r.error));
+  });
+  ipcMain.on('claude:focus', (_e, focus: ClaudeFocus | null) =>
+    claudeExecutor?.setFocus(
+      focus && typeof focus.hostId === 'string'
+        ? { hostId: focus.hostId, ...(typeof focus.path === 'string' ? { path: focus.path } : {}) }
+        : null,
+    ),
+  );
 
   ipcMain.handle('fs:list', (_e, hostId: string, path: string, password?: string) => {
     const host = resolveHost(hostId);
@@ -261,6 +415,19 @@ function registerIpc(): void {
     if (!host) throw new Error(`Unknown host: ${hostId}`);
     return sessions.orchAction(host, action);
   });
+  ipcMain.handle('orch:serviceTasks', (_e, hostId: string, service: string) => {
+    const host = resolveHost(hostId);
+    if (!host) throw new Error(`Unknown host: ${hostId}`);
+    return sessions.serviceTasks(host, service);
+  });
+  ipcMain.handle(
+    'orch:taskLogs',
+    (_e, hostId: string, taskId: string, opts?: { tail?: number; since?: string }) => {
+      const host = resolveHost(hostId);
+      if (!host) throw new Error(`Unknown host: ${hostId}`);
+      return sessions.taskLogs(host, taskId, opts);
+    },
+  );
   // Monitor handlers run on every poll tick, and a dropped link makes their
   // in-flight execs fail routinely — expected, already counted by the
   // renderer's MonitorStore. Rejecting across IPC would make Electron log
@@ -313,24 +480,27 @@ function registerIpc(): void {
   });
   ipcMain.handle('subhosts:unpin', (_e, id: string) => {
     const cfg = hosts.get(id);
-    if (!cfg?.parentId) throw new Error(`Not a pinned sub-host: ${id}`);
+    if (!cfg?.parentId && !cfg?.via) throw new Error(`Not a pinned sub-host: ${id}`);
     hosts.remove(id);
     return ephemeral.add(cfg);
   });
-  ipcMain.handle('subhosts:vmIp', async (_e, hostId: string, vmid: number) => {
-    const host = resolveHost(hostId);
-    if (!host) throw new Error(`Unknown host: ${hostId}`);
-    const result = await sessions.exec(
-      host,
-      `qm guest cmd ${Number(vmid)} network-get-interfaces`,
-    );
-    if (result.code !== 0) {
-      throw new Error('Guest agent not responding — is qemu-guest-agent installed and running?');
-    }
-    const ip = parseGuestIp(result.stdout);
-    if (!ip) throw new Error('Guest agent reported no usable IP address');
-    return ip;
-  });
+  ipcMain.handle(
+    'subhosts:jumpInVm',
+    async (_e, parentId: string, vmid: number, name: string) => {
+      const parent = resolveHost(parentId);
+      if (!parent) throw new Error(`Unknown host: ${parentId}`);
+      const result = await sessions.exec(
+        parent,
+        `qm guest cmd ${Number(vmid)} network-get-interfaces`,
+      );
+      if (result.code !== 0) {
+        throw new Error('Guest agent not responding — is qemu-guest-agent installed and running?');
+      }
+      const ip = parseGuestIp(result.stdout);
+      if (!ip) throw new Error('Guest agent reported no usable IP address');
+      return ephemeral.add({ name, host: ip, port: 22, user: 'root', kind: 'plain', via: parentId });
+    },
+  );
 
   ipcMain.handle('history:list', () => history.list());
   ipcMain.on('history:record', (_e, hostId: string, command: string) =>
@@ -350,7 +520,7 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'fs:upload',
-    async (_e, hostId: string, remoteDir: string, conflict: ConflictPolicy) => {
+    async (_e, hostId: string, remoteDir: string, conflict: ConflictPolicy, verify: boolean) => {
       const host = resolveHost(hostId);
       if (!host) throw new Error(`Unknown host: ${hostId}`);
       if (!win) return;
@@ -372,6 +542,7 @@ function registerIpc(): void {
           names,
           op: 'copy',
           conflict,
+          verify,
         });
       }
     },
@@ -386,13 +557,21 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     'transfers:download',
-    (_e, srcHostId: string, srcDir: string, names: string[], conflict: ConflictPolicy) =>
+    (
+      _e,
+      srcHostId: string,
+      srcDir: string,
+      names: string[],
+      conflict: ConflictPolicy,
+      verify: boolean,
+    ) =>
       transfers.start({
         src: normalizeEndpoint({ hostId: srcHostId, dir: srcDir }),
         dest: { hostId: null, dir: app.getPath('downloads') },
         names,
         op: 'copy',
         conflict,
+        verify,
       }),
   );
   ipcMain.on('transfers:cancel', (_e, id: string) => transfers.cancel(id));
@@ -407,6 +586,7 @@ app.whenReady().then(() => {
   void sweepStaging();
   registerUiProtocol();
   registerIpc();
+  void startClaudeIntegration();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -414,6 +594,13 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  forwards.disposeAll();
   sessions.disposeAll();
+  for (const channel of claudeTerms.values()) channel.close();
+  claudeTerms.clear();
+  claudeChat?.dispose();
+  claudeChat = null;
+  void claudeMcp?.stop();
+  claudeMcp = null;
   if (process.platform !== 'darwin') app.quit();
 });

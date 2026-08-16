@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { basename, isAbsolute, join } from 'node:path';
@@ -11,7 +12,7 @@ import type { IPty } from '@lydell/node-pty';
 
 // node-pty is a native module; loaded lazily so a missing/mismatched binary
 // only breaks opening local terminals, not exec/files or the app itself.
-function loadPty(): typeof import('@lydell/node-pty') {
+export function loadPty(): typeof import('@lydell/node-pty') {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require('@lydell/node-pty');
@@ -29,7 +30,7 @@ function defaultShell(): string {
 }
 
 /** Adapts a node-pty process to the platform-neutral ShellChannel. */
-class PtyChannel implements ShellChannel {
+export class PtyChannel implements ShellChannel {
   constructor(private readonly pty: IPty) {}
 
   write(data: string): void {
@@ -215,6 +216,13 @@ export class LocalConnection implements SshTransport {
 
   async uploadFile(localPath: string, remotePath: string, opts?: TransferOpts): Promise<void> {
     await this.streamCopy(localPath, this.resolvePath(remotePath), opts);
+  }
+
+  /** Streamed SHA-256 via node:crypto — no shell dependency, portable. */
+  async hash(path: string): Promise<string> {
+    const digest = createHash('sha256');
+    await pipeline(createReadStream(this.resolvePath(path)), digest);
+    return digest.digest('hex');
   }
 
   private async streamCopy(from: string, to: string, opts?: TransferOpts): Promise<void> {

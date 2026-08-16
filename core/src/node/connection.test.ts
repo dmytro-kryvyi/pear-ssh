@@ -45,7 +45,9 @@ before(async () => {
         });
         session.on('exec', (acceptExec, _rej, info) => {
           const stream = acceptExec();
-          stream.write(info.command.includes('pvesh') ? 'PVE\n' : `ran: ${info.command}\n`);
+          stream.write(
+            info.command.includes('pvesh') ? 'FACET:proxmox\n' : `ran: ${info.command}\n`,
+          );
           stream.exit(0);
           stream.end();
         });

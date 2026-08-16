@@ -186,18 +186,27 @@ export class FileOps {
         names: src.names,
         op,
         conflict: this.settings.conflict(),
+        verify: this.settings.verifyChecksums(),
       }),
     );
   }
 
   async download(hostId: string, dir: string, names: string[]): Promise<void> {
     await this.guard(() =>
-      this.pear.api.transfers.download(hostId, dir, names, this.settings.conflict()),
+      this.pear.api.transfers.download(
+        hostId,
+        dir,
+        names,
+        this.settings.conflict(),
+        this.settings.verifyChecksums(),
+      ),
     );
   }
 
   async uploadPicker(hostId: string, dir: string): Promise<void> {
-    await this.guard(() => this.pear.api.fs.upload(hostId, dir, this.settings.conflict()));
+    await this.guard(() =>
+      this.pear.api.fs.upload(hostId, dir, this.settings.conflict(), this.settings.verifyChecksums()),
+    );
   }
 
   /** Files dropped from the OS onto a directory. */
@@ -219,6 +228,7 @@ export class FileOps {
           names,
           op: 'copy',
           conflict: this.settings.conflict(),
+          verify: this.settings.verifyChecksums(),
         });
       }
     });

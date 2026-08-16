@@ -178,6 +178,25 @@
       }
     </div>
 
+    @if (degraded().length) {
+      <div class="task-alerts">
+        @for (s of degraded(); track s.id) {
+          <div class="task-alert">
+            <pear-icon name="warning" [size]="15" class="alert-icon" />
+            <div class="alert-text">
+              <div class="alert-title">{{ s.name }} — {{ s.desired - s.running }} of {{ s.desired }} tasks not running</div>
+              @if (latestFailure(s); as f) {
+                <div class="alert-err">latest: {{ f.error || f.state + ' ' + f.sinceText }}</div>
+              }
+            </div>
+            <button class="action alert-btn" (click)="openTasks(s)">
+              <pear-icon name="logs" [size]="12" /> Inspect tasks
+            </button>
+          </div>
+        }
+      </div>
+    }
+
     <div class="section-head">
       <pear-icon name="layers" [size]="14" class="accent" />
       <span class="section-title">Services</span>
@@ -203,7 +222,7 @@
           <div class="card" [class.busy]="busy() === s.id">
           <div class="card-head">
             <span class="dot" [class]="serviceState(s.running, s.desired)"></span>
-            <span class="card-name">{{ s.name }}</span>
+            <button class="card-name clickable" title="Inspect tasks (docker service ps)" (click)="openTasks(s)">{{ s.name }}</button>
             <span class="badge">{{ s.mode === 'global' ? 'GLOBAL' : 'REPLICATED' }}</span>
           </div>
           <div class="card-image">{{ s.image }}</div>
@@ -233,8 +252,14 @@
                 <pear-icon name="plus" [size]="13" />
               </button>
             }
-            <button class="action" (click)="act(s.id, { type: 'service', name: s.name, op: 'restart' })">
-              <pear-icon name="refresh" [size]="12" /> Restart
+            <button class="action" (click)="openTasks(s)">
+              <pear-icon name="activity" [size]="12" /> Tasks
+              @if (failedOf(s); as bad) {
+                <span class="task-bad">·{{ bad }}</span>
+              }
+            </button>
+            <button class="icon-btn" title="Force rolling restart" (click)="act(s.id, { type: 'service', name: s.name, op: 'restart' })">
+              <pear-icon name="refresh" [size]="13" />
             </button>
             <button class="icon-btn" title="Logs" (click)="act(s.id, { type: 'service', name: s.name, op: 'logs' }, s.name)">
               <pear-icon name="logs" [size]="13" />
@@ -327,8 +352,8 @@
               </button>
             }
             @if (g.type === 'vm' && g.running) {
-              <button class="icon-btn" title="Add as SSH host" (click)="promoteVm('g' + g.vmid, g.vmid, g.name)">
-                <pear-icon name="link" [size]="13" />
+              <button class="icon-btn" title="Jump in (SSH via guest agent IP)" (click)="jumpIntoVm('g' + g.vmid, g.vmid, g.name)">
+                <pear-icon name="enter" [size]="13" />
               </button>
             }
           </div>

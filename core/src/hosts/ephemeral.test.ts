@@ -40,6 +40,18 @@ test('removeByParent removes transitive descendants and reports their ids', () =
   assert.ok(registry.get(unrelated.id));
 });
 
+test('removeByParent follows via links (ephemeral VM hosts die with their node)', () => {
+  const registry = new EphemeralHostRegistry();
+  const vm = registry.add(sub({ name: 'vm', parentId: undefined, target: undefined, via: 'pve' }));
+  const inner = registry.add(sub({ name: 'inner', parentId: vm.id }));
+  const unrelated = registry.add(sub({ name: 'other', parentId: undefined, target: undefined, via: 'elsewhere' }));
+
+  const removed = registry.removeByParent('pve');
+
+  assert.deepEqual(removed.sort(), [vm.id, inner.id].sort());
+  assert.ok(registry.get(unrelated.id));
+});
+
 test('update only touches known entries', () => {
   const registry = new EphemeralHostRegistry();
   const entry = registry.add(sub());

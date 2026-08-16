@@ -7,6 +7,9 @@ import { OrchPage } from '../orch/orchpage';
 import { OrchStore } from '../orch/store';
 import { FACET_META } from '../orch/facet-meta';
 import { FileList } from './filelist';
+import { Settings } from '../settings';
+import { TerminalPane } from '../terminal/terminal';
+import { TermTabs, type TermTab } from '../terminal/tabs';
 import { Workspace, type WsPane, type WsTab } from './workspace';
 
 const TAB_MIME = 'application/x-pear-tab';
@@ -19,7 +22,7 @@ interface TabDragPayload {
  *  or an orchestration view. */
 @Component({
   selector: 'pear-pane',
-  imports: [PearIcon, FileList, Editor, OrchPage],
+  imports: [PearIcon, FileList, Editor, OrchPage, TerminalPane],
   templateUrl: './pane.html',
   styleUrl: './pane.scss',
   host: {
@@ -35,6 +38,8 @@ export class Pane {
   readonly ws = inject(Workspace);
   readonly catalog = inject(HostCatalog);
   readonly actions = inject(HostActions);
+  readonly tabs = inject(TermTabs);
+  readonly settings = inject(Settings);
   private readonly orchStore = inject(OrchStore);
 
   /** Tab index the dragged tab would land at, for the insertion marker. */
@@ -54,12 +59,53 @@ export class Pane {
 
   tabIcon(tab: WsTab): string {
     if (tab.kind === 'orch') return tab.facet ? FACET_META[tab.facet].icon : 'cube';
+    if (tab.kind === 'term') return 'terminal';
     return tab.kind === 'file' ? 'fileCode' : 'folder';
   }
 
   tabTitle(tab: WsTab): string {
-    const what = tab.kind === 'orch' ? (tab.facet ?? 'orchestration') : tab.path;
+    const what =
+      tab.kind === 'orch'
+        ? (tab.facet ?? 'orchestration')
+        : tab.kind === 'term'
+          ? 'terminal'
+          : tab.path;
     return `${this.catalog.nameOf(tab.hostId)} : ${what}`;
+  }
+
+  // ---- in-pane terminals ---------------------------------------------------
+
+  /** Term tabs in this pane; rendered persistently so switching tabs never
+   *  tears the shell down (that would close the backend PTY). */
+  readonly termTabs = computed(() => this.pane().tabs.filter((t) => t.kind === 'term'));
+
+  /** The backing shell for a term tab, looked up in TermTabs. */
+  termTabFor(tab: WsTab): TermTab | null {
+    return this.tabs.tabs().find((t) => t.id === tab.termTabId) ?? null;
+  }
+
+  /** Open a shell inside this pane (in-pane placement). */
+  openTerminal(): void {
+    const host = this.activeTab()?.hostId ?? this.ws.focusedTab()?.hostId;
+    if (!host) return;
+    const termTabId = this.tabs.createShell(host);
+    this.ws.openTermTab(this.pane().id, host, termTabId);
+  }
+
+  onTermOpened(tab: TermTab, termId: string): void {
+    this.tabs.attach(tab.id, termId);
+  }
+
+  /** Close a tab from the strip; term tabs also dispose their backing shell. */
+  closeTab(tab: WsTab): void {
+    if (tab.kind === 'term' && tab.termTabId) this.tabs.close(tab.termTabId);
+    this.ws.closeTab(tab.id);
+  }
+
+  /** Close this pane, disposing any shells it holds first. */
+  closePane(): void {
+    for (const t of this.termTabs()) if (t.termTabId) this.tabs.close(t.termTabId);
+    this.ws.closePane(this.pane().id);
   }
 
   /** Orchestration state for the active orch tab's host, once discovered. */

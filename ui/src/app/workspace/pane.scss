@@ -91,6 +91,16 @@
   position: relative;
 }
 
+/* In-pane terminals persist across tab switches; the inactive ones stay
+   mounted (to keep their PTY alive) but hidden. */
+.pane-body pear-terminal {
+  flex: 1;
+  min-height: 0;
+}
+.pane-body pear-terminal.hidden {
+  display: none;
+}
+
 .orch-pending {
   flex: 1;
   display: flex;

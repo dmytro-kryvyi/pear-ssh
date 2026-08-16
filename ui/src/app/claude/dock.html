@@ -1,0 +1,64 @@
+<div class="claude-head">
+  <span class="claude-spark"><pear-icon name="sparkle" [size]="13" /></span>
+  <span class="claude-title">Claude Code</span>
+  @if (state() === 'ready' && !mcpReady()) {
+    <span
+      class="claude-warn"
+      title="Pear's MCP server failed to start — Claude can't reach your hosts this session"
+      >no tools</span
+    >
+  }
+  <span class="claude-actions">
+    @if (state() === 'ready' && settings.claudeMode() === 'chat') {
+      <button class="claude-btn" (click)="openHistory($event)" title="History">
+        <pear-icon name="clock" [size]="13" />
+      </button>
+      <button class="claude-btn" (click)="chat.newSession()" title="New session">
+        <pear-icon name="plus" [size]="13" />
+      </button>
+    }
+    <button class="claude-btn" (click)="closed.emit()" title="Close">
+      <pear-icon name="close" [size]="12" />
+    </button>
+  </span>
+</div>
+
+<div class="claude-body">
+  @switch (state()) {
+    @case ('checking') {
+      <div class="claude-hint"><span class="hint-sub">Looking for claude…</span></div>
+    }
+    @case ('missing') {
+      <div class="claude-hint">
+        <span class="claude-spark big"><pear-icon name="sparkle" [size]="18" /></span>
+        <div class="hint-title">Claude Code isn't installed</div>
+        <div class="hint-sub">
+          Pear runs your own <code>claude</code> CLI — install it, log in once, and this
+          panel becomes an assistant that can work on your hosts.
+        </div>
+        <code class="hint-cmd">npm install -g &#64;anthropic-ai/claude-code</code>
+        @if (error(); as e) {
+          <div class="hint-error">{{ e }}</div>
+        }
+        <button class="hint-btn" (click)="recheck()">Check again</button>
+      </div>
+    }
+    @case ('ready') {
+      @if (settings.claudeMode() === 'terminal') {
+        <div #term class="claude-term" (contextmenu)="onContextMenu($event)"></div>
+        @if (exited()) {
+          <div class="claude-exited">
+            @if (error(); as e) {
+              <div class="hint-error">{{ e }}</div>
+            } @else {
+              <span class="hint-sub">Claude exited.</span>
+            }
+            <button class="hint-btn" (click)="start()">Restart</button>
+          </div>
+        }
+      } @else {
+        <pear-claude-chat />
+      }
+    }
+  }
+</div>

@@ -157,7 +157,7 @@
                             <button (click)="jumpInto('g' + g.vmid, { type: 'lxc', ref: '' + g.vmid }, g.name)" title="Jump in"><pear-icon name="enter" [size]="12" /></button>
                           }
                           @if (g.type === 'vm' && g.running) {
-                            <button (click)="promoteVm('g' + g.vmid, g.vmid, g.name)" title="Add as SSH host"><pear-icon name="link" [size]="12" /></button>
+                            <button (click)="jumpIntoVm('g' + g.vmid, g.vmid, g.name)" title="Jump in"><pear-icon name="enter" [size]="12" /></button>
                           }
                         </div>
                       </div>

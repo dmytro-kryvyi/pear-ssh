@@ -43,9 +43,9 @@
           @if (termCount(h.id); as n) {
             <span class="host-term-count" title="Live terminals">{{ n }}</span>
           }
-          @if (h.kind === 'docker' || h.kind === 'swarm' || h.kind === 'proxmox') {
+          @if (h.kind !== 'plain') {
             <pear-icon
-              [name]="h.kind === 'swarm' ? 'layers' : h.kind === 'proxmox' ? 'server' : 'docker'"
+              [name]="kindIcon(h.kind)"
               [size]="12"
               class="host-kind"
               [class.active]="h.id === activeHostId()"
@@ -67,7 +67,7 @@
           >
             <span class="host-dot" [class.online]="connectedIds().has(c.id)"></span>
             <pear-icon
-              [name]="c.target?.type === 'lxc' ? 'cpu' : 'docker'"
+              [name]="c.target ? (c.target.type === 'lxc' ? 'cpu' : 'docker') : 'cube'"
               [size]="11"
               class="sub-icon"
             />
@@ -76,6 +76,8 @@
               <div class="host-meta">
                 @if (c.target; as t) {
                   {{ t.type === 'lxc' ? 'CT ' + t.ref : t.ref }}
+                } @else {
+                  {{ c.user }}&#64;{{ c.host }}
                 }
               </div>
               @if (settings.sidebarVitals() && connectedIds().has(c.id)) {
@@ -103,7 +105,7 @@
 
     @if (selected(); as host) {
       @if (orchState(); as state) {
-        <pear-orchpanel [host]="host" [state]="state" (termCommand)="actions.orchCommand(host.id, $event)" (expand)="openFacet($event)" (jumpedIn)="actions.jumpedIn($event)" (promoted)="actions.promoted($event)" />
+        <pear-orchpanel [host]="host" [state]="state" (termCommand)="actions.orchCommand(host.id, $event)" (expand)="openFacet($event)" (jumpedIn)="actions.jumpedIn($event)" />
       }
     }
 
@@ -143,11 +145,16 @@
             {{ facetMeta[facet].tab }}
           </button>
         }
+        @if (!settings.claudeVisible()) {
+          <button class="ask-claude" (click)="settings.claudeVisible.set(true)" title="Open Claude Code">
+            <pear-icon name="sparkle" [size]="13" /> Ask Claude
+          </button>
+        }
       </div>
 
       <pear-pane-grid />
 
-      @if (tabs.tabs().length && selected(); as host) {
+      @if (showDock() && dockHost(); as host) {
         <div class="resizer" (mousedown)="startResize($event)"></div>
         <div class="term-panel" [style.height.px]="termHeight()">
           <div class="term-tabs">
@@ -158,8 +165,8 @@
                 [class.active]="t.id === tabs.activeId()"
                 (click)="tabs.activeId.set(t.id)"
               >
-                <span class="tab-dot"></span>
-                <span class="tab-title">{{ t.title }}</span>
+                <span class="tab-dot" [style.background]="perHostTerms() ? catalog.color(t.hostId) : null"></span>
+                <span class="tab-title">{{ tabCaption(t) }}</span>
                 <button class="tab-close" (click)="$event.stopPropagation(); closeTab(t.id)" title="Close">
                   <pear-icon name="close" [size]="10" />
                 </button>
@@ -180,8 +187,8 @@
                   [class.active]="t.id === tabs.activeId()"
                   (click)="tabs.activeId.set(t.id)"
                 >
-                  <span class="tab-dot orch"></span>
-                  <span class="tab-title">{{ t.title }}</span>
+                  <span class="tab-dot orch" [style.background]="perHostTerms() ? catalog.color(t.hostId) : null"></span>
+                  <span class="tab-title">{{ tabCaption(t) }}</span>
                   <button class="tab-close" (click)="$event.stopPropagation(); closeTab(t.id)" title="Close">
                     <pear-icon name="close" [size]="10" />
                   </button>
@@ -190,12 +197,12 @@
             </div>
           }
           <div class="term-body">
-            @for (t of tabs.tabs(); track t.id) {
+            @for (t of dockTabs(); track t.id) {
               <pear-terminal
                 [tab]="t"
                 [password]="''"
-                [active]="t.id === tabs.activeId() && t.hostId === activeHostId()"
-                [class.hidden]="t.id !== tabs.activeId() || t.hostId !== activeHostId()"
+                [active]="isTabActive(t)"
+                [class.hidden]="!isTabActive(t)"
                 (opened)="onTabOpened(t, $event)"
                 (dirtied)="tabs.markDirty(t.id)"
                 (exited)="onTabExited(t.id)"
@@ -207,6 +214,14 @@
       }
     }
   </main>
+
+  @if (bridged && settings.claudeVisible()) {
+    <div class="claude-resizer" (mousedown)="startClaudeResize($event)"></div>
+    <pear-claude-dock
+      [style.width.px]="settings.claudeWidth()"
+      (closed)="settings.claudeVisible.set(false)"
+    />
+  }
 
   <pear-context-menu />
   <pear-transfer-queue />
@@ -225,6 +240,10 @@
         <pear-icon name="close" [size]="12" />
       </button>
     </div>
+  }
+
+  @if (orchStore.drawer(); as d) {
+    <pear-tasks-drawer [ctx]="d" (closed)="orchStore.closeDrawer()" />
   }
 
   @if (settingsOpen()) {

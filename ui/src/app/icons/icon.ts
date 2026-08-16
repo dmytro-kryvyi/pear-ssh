@@ -43,6 +43,8 @@ const ICONS: Record<string, string> = {
   expand: '<path d="M6 2H2v4M14 6V2h-4M10 14h4v-4M2 10v4h4"/>',
   folder2: '<path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>',
   sparkle: '<path d="M8 1.5l1.4 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.4-4.9L1.7 8l4.9-1.6z" fill="currentColor" stroke="none"/>',
+  send: '<path d="M14 2L7 9M14 2L9.5 14 7 9 2 6.5z"/>',
+  shield: '<path d="M8 1.5l5.5 2v4c0 3.5-2.3 5.9-5.5 7-3.2-1.1-5.5-3.5-5.5-7v-4z"/>',
   enter: '<path d="M9.5 3H13v10H9.5"/><path d="M2 8h8"/><path d="M7.5 5.5L10 8l-2.5 2.5"/>',
   pin: '<path d="M6.2 2h3.6v4.5L11.5 9h-7l1.7-2.5z"/><path d="M8 9v4.5"/>',
   pinFilled:
@@ -67,6 +69,8 @@ const ICONS: Record<string, string> = {
   filter: '<path d="M2.5 3h11L9.5 8.5V13l-3-1.5V8.5z"/>',
   pause: '<path d="M5 3.5h2v9H5zM9 3.5h2v9H9z" fill="currentColor" stroke="none"/>',
   disk: '<path d="M2 9.5h12v3.5H2z"/><path d="M2 9.5L3.8 4h8.4L14 9.5"/><circle cx="11.5" cy="11.2" r="0.6" fill="currentColor"/>',
+  warning:
+    '<path d="M8 2.5L14.5 13h-13z"/><path d="M8 6.5v3.2"/><circle cx="8" cy="11.6" r="0.5" fill="currentColor"/>',
 };
 
 @Component({

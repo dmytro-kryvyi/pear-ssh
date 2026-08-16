@@ -19,7 +19,16 @@ export class HostCatalog {
   readonly subHosts = signal<HostConfig[]>([]);
 
   readonly all = computed(() => [...this.hosts(), ...this.subHosts()]);
-  readonly roots = computed(() => this.all().filter((h) => !h.parentId));
+  /**
+   * Top-level sidebar rows. A tunneled (via) host nests under its jump host
+   * like an exec sub-host does — unless the jump host is gone (orphan), in
+   * which case it surfaces as a root so it stays reachable.
+   */
+  readonly roots = computed(() =>
+    this.all().filter(
+      (h) => !h.parentId && !(h.via && this.all().some((j) => j.id === h.via)),
+    ),
+  );
 
   byId(id: string | null): HostConfig | null {
     return id ? (this.all().find((h) => h.id === id) ?? null) : null;

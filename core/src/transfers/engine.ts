@@ -23,6 +23,9 @@ export interface TransferRequest {
   names: string[];
   op: TransferOp;
   conflict: ConflictPolicy;
+  /** Compare SHA-256 of source and destination after each file is copied,
+   *  failing the job (and removing the partial) on any mismatch. */
+  verify: boolean;
 }
 
 export interface TransferJobSnapshot {
@@ -282,6 +285,18 @@ export class TransferEngine {
       };
       if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
       else await leg.to.uploadFile(fromPath, toPath, opts);
+      if (job.req.verify) {
+        const [srcHash, destHash] = await Promise.all([
+          leg.from.hash(fromPath),
+          leg.to.hash(toPath),
+        ]);
+        if (srcHash !== destHash) {
+          // Drop the corrupt file before failing the job.
+          await this.removePartial(job);
+          job.partial = null;
+          throw new Error(`checksum mismatch: ${file.destRel}`);
+        }
+      }
       doneBytes += file.size;
       snap.bytesDone = doneBytes;
       job.partial = null;

@@ -74,6 +74,8 @@ export interface SshTransport {
   download(remotePath: string, localPath: string, opts?: TransferOpts): Promise<void>;
   /** Stream a Pear-machine file to an exact remote path. */
   uploadFile(localPath: string, remotePath: string, opts?: TransferOpts): Promise<void>;
+  /** SHA-256 hex digest of a file, for post-transfer verification. */
+  hash(path: string): Promise<string>;
   dispose(): void;
 }
 

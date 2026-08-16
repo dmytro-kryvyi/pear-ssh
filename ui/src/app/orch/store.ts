@@ -1,10 +1,13 @@
 import { Injectable, inject, signal } from '@angular/core';
-import type {
-  ContainerInfo,
-  ContainerStatsMap,
-  DockerDiskRow,
-  OrchAction,
-  Orchestration,
+import {
+  FACET_KINDS,
+  type ContainerInfo,
+  type ContainerStatsMap,
+  type DockerDiskRow,
+  type OrchAction,
+  type Orchestration,
+  type SwarmFacet,
+  type SwarmTaskInfo,
 } from '@pear/core';
 import { Pear } from '../pear';
 
@@ -20,6 +23,22 @@ export interface DockerDfState {
   error?: string;
   /** When the rows were fetched (ms epoch). */
   at?: number;
+}
+
+export interface TasksState {
+  loading: boolean;
+  tasks?: SwarmTaskInfo[];
+  error?: string;
+  /** When the tasks were fetched (ms epoch). */
+  at?: number;
+}
+
+/** What the whole-app service tasks drawer is showing. */
+export interface TasksDrawerCtx {
+  hostId: string;
+  serviceName: string;
+  /** Preselect this task (e.g. the failure that opened the drawer). */
+  initialTaskId?: string;
 }
 
 /**
@@ -72,6 +91,10 @@ export class OrchStore {
       const { [hostId]: _removed, ...rest } = all;
       return rest;
     });
+    this.tasks.update((all) =>
+      Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith(`${hostId}/`))),
+    );
+    if (this.drawer()?.hostId === hostId) this.drawer.set(null);
   }
 
   /** Live per-container stats from the monitor tick, patched in place. */
@@ -127,11 +150,55 @@ export class OrchStore {
   private async fetch(hostId: string, previous?: Orchestration): Promise<void> {
     try {
       const data = await this.pear.api.orch.get(hostId);
-      const empty = !data.docker && !data.swarm && !data.proxmox;
+      const empty = FACET_KINDS.every((kind) => !data[kind]);
       this.set(hostId, empty ? { status: 'none' } : { status: 'ready', data });
+      if (data.swarm) this.fillDegraded(hostId, data.swarm);
     } catch (err) {
       // Keep the last good data visible next to the error, if there was any
       this.set(hostId, { status: 'error', error: cleanIpcError(err), data: previous });
+    }
+  }
+
+  // ---- swarm service tasks (`docker service ps`) ---------------------------
+
+  /** Open state of the whole-app tasks drawer (rendered from app.html). */
+  readonly drawer = signal<TasksDrawerCtx | null>(null);
+
+  /** Task lists keyed `${hostId}/${serviceName}`. */
+  readonly tasks = signal<Readonly<Record<string, TasksState>>>({});
+
+  openDrawer(ctx: TasksDrawerCtx): void {
+    this.drawer.set(ctx);
+    void this.fetchTasks(ctx.hostId, ctx.serviceName);
+  }
+
+  closeDrawer(): void {
+    this.drawer.set(null);
+  }
+
+  async fetchTasks(hostId: string, service: string): Promise<void> {
+    const key = `${hostId}/${service}`;
+    if (this.tasks()[key]?.loading) return;
+    this.tasks.update((all) => ({ ...all, [key]: { ...all[key], loading: true } }));
+    try {
+      const tasks = await this.pear.api.orch.serviceTasks(hostId, service);
+      this.tasks.update((all) => ({ ...all, [key]: { loading: false, tasks, at: Date.now() } }));
+    } catch (err) {
+      this.tasks.update((all) => ({
+        ...all,
+        [key]: { ...all[key], loading: false, error: cleanIpcError(err) },
+      }));
+    }
+  }
+
+  /**
+   * Lazily fill task lists for degraded services so the cluster view's failed
+   * task callout can show the latest error. Sequential on purpose — one ssh
+   * round-trip at a time, and degraded services are usually few.
+   */
+  private async fillDegraded(hostId: string, swarm: SwarmFacet): Promise<void> {
+    for (const s of swarm.services) {
+      if (s.running < s.desired) await this.fetchTasks(hostId, s.name);
     }
   }
 }

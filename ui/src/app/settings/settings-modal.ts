@@ -8,6 +8,7 @@ export type SettingsSection =
   | 'transfers'
   | 'terminal'
   | 'monitor'
+  | 'claude'
   | 'keyboard';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
@@ -16,6 +17,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
   { id: 'transfers', label: 'Transfers', icon: 'swap' },
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'monitor', label: 'Monitoring', icon: 'cpu' },
+  { id: 'claude', label: 'Claude Code', icon: 'sparkle' },
   { id: 'keyboard', label: 'Keyboard', icon: 'activity' },
 ];
 
@@ -51,12 +53,18 @@ export class SettingsModal {
     return SECTIONS.find((s) => s.id === this.section())!.label;
   }
 
+  claudeModeHint(): string {
+    return this.settings.claudeMode() === 'chat'
+      ? 'Rendered conversation: cards for commands, approvals, and questions.'
+      : 'The claude CLI in a plain terminal — full TUI, slash commands and all.';
+  }
+
   termPlacementHint(): string {
     switch (this.settings.termPlacement()) {
       case 'per-host':
-        return 'One tab per connected host at the bottom; switch freely. (Coming soon — shared is active today.)';
+        return 'Every connected host keeps its own shell in the bottom dock; switch freely, and navigating a pane never hijacks the terminal.';
       case 'in-pane':
-        return 'No bottom dock — terminals open inside panes. (Coming soon — shared is active today.)';
+        return 'No bottom dock — open a terminal inside any pane with the ⌗ button in its tab strip.';
       default:
         return 'One terminal docked at the bottom, following the focused pane.';
     }

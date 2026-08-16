@@ -138,7 +138,7 @@
               <div class="row">
                 <div class="row-label">
                   <div class="l-title">Verify checksums after transfer</div>
-                  <div class="l-sub">Not wired up yet — preference only</div>
+                  <div class="l-sub">Compare SHA-256 on both ends; a mismatch fails the transfer</div>
                 </div>
                 <button class="toggle" [class.on]="settings.verifyChecksums()" (click)="settings.verifyChecksums.set(!settings.verifyChecksums())"><span></span></button>
               </div>
@@ -215,6 +215,26 @@
                 <button class="toggle" [class.on]="settings.dockerDiskSection()" (click)="settings.dockerDiskSection.set(!settings.dockerDiskSection())"><span></span></button>
               </div>
               <div class="hint">Images, volumes and networks stay out of Pear on purpose — the terminal is already open.</div>
+            </div>
+          }
+          @case ('claude') {
+            <div class="group">
+              <div class="g-title">Assistant</div>
+              <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Dock style</div>
+                  <div class="l-sub">Both drive your own claude CLI — pick how it looks</div>
+                </div>
+                <div class="seg-row">
+                  <button class="seg" [class.active]="settings.claudeMode() === 'chat'" (click)="settings.claudeMode.set('chat')">Chat</button>
+                  <button class="seg" [class.active]="settings.claudeMode() === 'terminal'" (click)="settings.claudeMode.set('terminal')">Terminal</button>
+                </div>
+              </div>
+              <div class="hint">{{ claudeModeHint() }}</div>
+              <div class="hint">
+                Pear never handles Claude credentials — the CLI logs in and talks to Anthropic
+                itself. Server access goes through Pear's tools over your existing SSH sessions.
+              </div>
             </div>
           }
           @case ('keyboard') {
