@@ -7,5 +7,6 @@ release/
 .DS_Store
 
 design
+docs
 .claude
 .vscode

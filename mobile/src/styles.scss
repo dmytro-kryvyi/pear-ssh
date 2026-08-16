@@ -1,0 +1,74 @@
+/* Pear mobile design tokens — from the "Pear" design project
+ * (Pear Mobile.html / Pear Tablet.html). Token names are shared with
+ * ui/src/styles.scss so components can migrate between shells; mobile adds
+ * the Claude accent and sheet/pulse animations. Fonts are bundled locally
+ * via @fontsource (see angular.json styles) — no network fetch on device. */
+:root {
+  --accent: oklch(0.72 0.09 190);
+  --accent-soft: oklch(0.72 0.09 190 / 0.14);
+  --accent-line: oklch(0.72 0.09 190 / 0.4);
+
+  --bg-0: oklch(0.18 0.006 240);
+  --bg-1: oklch(0.22 0.006 240);
+  --bg-2: oklch(0.26 0.006 240);
+  --bg-3: oklch(0.30 0.006 240);
+  --bg-4: oklch(0.34 0.006 240);
+  --term-bg: oklch(0.13 0.006 240);
+
+  --fg-0: oklch(0.96 0.003 240);
+  --fg-1: oklch(0.80 0.006 240);
+  --fg-2: oklch(0.60 0.008 240);
+  --fg-3: oklch(0.46 0.008 240);
+
+  --border: oklch(0.32 0.006 240 / 0.6);
+  --border-soft: oklch(0.32 0.006 240 / 0.35);
+
+  --ok: oklch(0.78 0.14 150);
+  --off: oklch(0.55 0.008 240);
+  --warn: oklch(0.78 0.14 75);
+  --err: oklch(0.68 0.18 25);
+
+  --claude: oklch(0.72 0.12 45);
+  --claude-soft: oklch(0.72 0.12 45 / 0.13);
+
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --ui: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Safe areas (status bar / gesture nav) — shells pad with these. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-family: var(--ui);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+*, *::before, *::after { box-sizing: border-box; }
+button {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+input, textarea { font: inherit; color: inherit; background: none; border: 0; outline: 0; }
+
+/* Mobile scroll containers hide scrollbars. */
+.noscroll::-webkit-scrollbar { width: 0; height: 0; }
+.noscroll { scrollbar-width: none; }
+
+a { color: var(--accent); text-decoration: none; }
+
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes ccpulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
