@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import type { HostConfig } from '@pear/core';
 import { ORCH_ICON, ORCH_TAB, PmWsGlyph } from '../chrome/chrome';
 import { PmClaudeScreen } from '../claude/claude-screen';
@@ -49,6 +49,14 @@ export class PmTabletShell {
   protected readonly query = signal('');
   protected readonly dragId = signal<string | null>(null);
   protected readonly overWs = signal<string | null>(null);
+
+  constructor() {
+    // Logs/console actions type into the terminal — make sure the split
+    // showing it is open.
+    effect(() => {
+      if (this.session.shellPing() > 0) this.split.set(true);
+    });
+  }
 
   protected readonly list = computed(() => {
     const q = this.query().trim().toLowerCase();

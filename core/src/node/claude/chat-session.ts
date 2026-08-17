@@ -75,7 +75,7 @@ export class ClaudeChatSession {
   send(text: string): void {
     if (this.disposed) throw new Error('Chat session disposed');
     if (!this.child) this.spawnProcess();
-    this.onEvent({ type: 'user', text });
+    // The runtime records the 'user' event — sessions only transmit.
     this.child!.stdin!.write(
       JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n',
     );

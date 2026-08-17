@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import type { ClaudeStore } from './claude-store';
 
 // Scripted M1 demo of the Claude chat (design src-mobile/claude.jsx). The
 // block/view models intentionally mirror what core's ClaudeChatEvent stream
@@ -72,8 +73,10 @@ export const DEMO_SESSIONS: ClaudeDemoSession[] = [
 ];
 
 @Injectable({ providedIn: 'root' })
-export class ClaudeDemo {
-  readonly sessions = DEMO_SESSIONS;
+export class ClaudeDemo implements ClaudeStore {
+  readonly sessions = signal(
+    DEMO_SESSIONS.map(({ id, title, when, turns, tokens }) => ({ id, title, when, turns, tokens })),
+  );
   readonly sessionId = signal('s1');
   readonly messages = signal<ClaudeMsg[]>(seedMain());
   readonly tokens = signal(38_200);
@@ -84,10 +87,20 @@ export class ClaudeDemo {
     this.messages.update((prev) => [...prev, ...items.map((x) => ({ id: mid(), ...x }) as ClaudeMsg)]);
   }
 
-  load(s: ClaudeDemoSession): void {
+  load(sessionId: string): void {
+    const s = DEMO_SESSIONS.find((x) => x.id === sessionId);
+    if (!s) return;
     this.sessionId.set(s.id);
     this.messages.set(s.seed());
     this.tokens.set(s.tokens);
+  }
+
+  refreshSessions(): void {
+    // static demo data
+  }
+
+  toggleAutoApprove(): void {
+    this.autoApprove.update((on) => !on);
   }
 
   newSession(): void {

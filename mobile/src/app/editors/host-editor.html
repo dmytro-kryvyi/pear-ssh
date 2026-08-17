@@ -164,6 +164,21 @@
         <div class="f-hint">Where files and new shells open.</div>
       </div>
 
+      <div class="m-field">
+        <div class="f-label">Connect via</div>
+        <select
+          class="m-input"
+          [value]="d().via ?? ''"
+          (change)="set('via', $any($event.target).value || undefined)"
+        >
+          <option value="">Direct (no jump)</option>
+          @for (h of jumpCandidates(); track h.id) {
+            <option [value]="h.id" [selected]="d().via === h.id">{{ h.name }}</option>
+          }
+        </select>
+        <div class="f-hint">Reach this host by tunnelling through another (ProxyJump). Auth still happens end-to-end here.</div>
+      </div>
+
       <div class="sec-label">Environment</div>
       @for (e of d().env ?? []; track $index; let i = $index) {
         <div class="kv-row">

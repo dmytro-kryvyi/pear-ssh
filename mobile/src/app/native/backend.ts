@@ -1,16 +1,26 @@
 import {
+  ClaudeChatRuntime,
+  ClaudeExecutor,
   HistoryStore,
   HostGroupStore,
   SessionManager,
+  TransferEngine,
   importShellHistory,
   primaryKind,
+  type ClaudeChatEvent,
+  type ClaudeFocus,
+  type ClaudeSessionMeta,
   type HostConfig,
   type PearApi,
   type ProbeResult,
+  type TransferJobSnapshot,
 } from '@pear/core';
+import { SshChatSession } from './claude/ssh-chat-session';
+import { claudeWorkspaceDir, provisionSshWorkspace } from './claude/workspace';
 import { SshEventHub } from './event-hub';
 import { MobileHostStore } from './host-store';
 import { syncStorage, type AsyncCipher, type AsyncKv } from './kv';
+import { LocalFsTransport } from './local-fs';
 import type { PearSshPlugin } from './pear-ssh';
 import { CapacitorSshTransport, type HostKeyGate } from './transport';
 
@@ -30,6 +40,42 @@ interface Ready {
 
 const notYet = (what: string) => () => Promise.reject(new Error(what));
 
+const CLAUDE_HOST_KEY = 'pear.claudeHost';
+
+/** Mobile-only extras beyond PearApi (the Claude tab's host picker). */
+export interface MobileClaudeConfig {
+  getClaudeHost(): Promise<string | null>;
+  setClaudeHost(id: string | null): Promise<void>;
+}
+
+/** Mobile-only transfer extras: SAF flows PearApi has no shape for. */
+export interface MobileTransfersConfig {
+  /** SAF picker → upload the chosen documents into destDir on the host.
+   *  Resolves with the job id, or null when the user cancels the picker. */
+  pickAndUpload(hostId: string, destDir: string): Promise<string | null>;
+}
+
+function randomToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/** A Claude setup failure with a message already written for the user. */
+class ClaudeSetupError extends Error {}
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Typed reject code from the plugin bridge (SshError.code), when present. */
+function codeOf(e: unknown): string | undefined {
+  return (e as { code?: string })?.code;
+}
+
 /**
  * The real Android backend: PearApi over core's SessionManager with
  * CapacitorSshTransport underneath — the same session/orchestration/monitor
@@ -40,11 +86,36 @@ const notYet = (what: string) => () => Promise.reject(new Error(what));
  * Deliberately deferred, per docs/ANDROID.md: transfers + fs.upload (M6),
  * claude (M4), subhosts/via (M5), addLocal (never — the phone is not a host).
  */
-export function createNativeBackend(deps: NativeBackendDeps): PearApi {
+export function createNativeBackend(
+  deps: NativeBackendDeps,
+): PearApi & MobileClaudeConfig & MobileTransfersConfig {
   const termData = new Set<(termId: string, data: string) => void>();
   const termExit = new Set<(termId: string) => void>();
   const hostDown = new Set<(hostId: string) => void>();
+  const claudeEvents = new Set<(e: ClaudeChatEvent) => void>();
   const hub = new SshEventHub(deps.plugin);
+
+  // ---- Claude over SSH (lazy — provisioned on first chat use) --------------
+  interface ClaudeState {
+    runtime: ClaudeChatRuntime;
+    executor: ClaudeExecutor;
+    dispose(): void;
+  }
+  let claudeState: Promise<ClaudeState> | null = null;
+
+  /** Tear down a built Claude session's tunnel + server; best-effort. */
+  const teardownClaude = (): void => {
+    const pending = claudeState;
+    claudeState = null;
+    activeClaudeHostId = null;
+    void pending?.then((s) => s.dispose()).catch(() => {});
+  };
+  let activeClaudeHostId: string | null = null;
+  let claudeFocus: ClaudeFocus | null = null;
+  let claudeAutoApprove = false;
+  let claudeModel: string | null = null;
+
+  const emitClaude = (e: ClaudeChatEvent) => claudeEvents.forEach((cb) => cb(e));
 
   const ready: Promise<Ready> = (async () => {
     const hosts = await MobileHostStore.load(deps.kv, deps.cipher);
@@ -54,7 +125,13 @@ export function createNativeBackend(deps: NativeBackendDeps): PearApi {
       {
         onTermData: (termId, data) => termData.forEach((cb) => cb(termId, data)),
         onTermExit: (termId) => termExit.forEach((cb) => cb(termId)),
-        onHostDisconnected: (hostId) => hostDown.forEach((cb) => cb(hostId)),
+        onHostDisconnected: (hostId) => {
+          // The Claude runtime deliberately survives a dropped connection:
+          // the detached runner keeps working on the host, and the chat
+          // session re-dials + re-forwards the tunnel itself (ensureTunnel).
+          // Teardown only happens on host switch or backend dispose.
+          hostDown.forEach((cb) => cb(hostId));
+        },
       },
       (cfg, jump) => new CapacitorSshTransport(cfg, { plugin: deps.plugin, hub, gate: deps.gate }, jump),
       (id) => hosts.get(id),
@@ -70,6 +147,245 @@ export function createNativeBackend(deps: NativeBackendDeps): PearApi {
     const cfg = await hosts.decryptAuth(host);
     if (password) cfg.auth = { ...cfg.auth, password };
     return cfg;
+  };
+
+  const transportFor = async (hostId: string): Promise<CapacitorSshTransport> => {
+    const { sessions } = await ready;
+    const conn = await sessions.connection(await cfgFor(hostId));
+    if (!(conn instanceof CapacitorSshTransport)) throw new Error('Unexpected transport type');
+    return conn;
+  };
+
+  // ---- transfers: TransferEngine with the phone as the relay ---------------
+
+  const transferUpdates = new Set<(job: TransferJobSnapshot) => void>();
+  /** jobId → staging dir to publish into system Downloads on success. */
+  const downloadJobs = new Map<string, string>();
+  /** jobId → staging dir to delete once the job reaches a terminal state. */
+  const jobStaging = new Map<string, string>();
+  const localFs = new LocalFsTransport(deps.plugin);
+
+  /** Move every staged file into the Downloads collection, then clean up. */
+  const publishDownloads = async (dir: string): Promise<void> => {
+    const walk = async (d: string): Promise<void> => {
+      const listing = await deps.plugin.localList({ path: d });
+      for (const entry of listing.entries) {
+        const p = `${d}/${entry.name}`;
+        if (entry.kind === 'dir') await walk(p);
+        else await deps.plugin.saveToDownloads({ localPath: p });
+      }
+    };
+    try {
+      await walk(dir);
+    } finally {
+      void deps.plugin.localRemove({ path: dir, recursive: true }).catch(() => {});
+    }
+  };
+
+  const settleTransferJob = (job: TransferJobSnapshot): void => {
+    const downloadDir = downloadJobs.get(job.id);
+    const stagingDir = jobStaging.get(job.id);
+    downloadJobs.delete(job.id);
+    jobStaging.delete(job.id);
+    if (job.status === 'done' && downloadDir) {
+      void publishDownloads(downloadDir);
+      return;
+    }
+    for (const dir of [downloadDir, stagingDir]) {
+      if (dir) void deps.plugin.localRemove({ path: dir, recursive: true }).catch(() => {});
+    }
+  };
+
+  const transfers = new TransferEngine(
+    {
+      connection: async (hostId) =>
+        hostId === null ? localFs : (await ready).sessions.connection(await cfgFor(hostId)),
+      makeStagingDir: async () => (await deps.plugin.makeStagingDir()).path,
+      removeStaging: async (dir) => deps.plugin.localRemove({ path: dir, recursive: true }),
+    },
+    {
+      onUpdate: (job) => {
+        transferUpdates.forEach((cb) => cb(job));
+        if (job.status === 'done' || job.status === 'error' || job.status === 'canceled') {
+          settleTransferJob(job);
+        }
+      },
+    },
+  );
+
+  // ---- resilient terminals via tmux (screen-off / backgrounding) ----------
+  const TMUX_SESSION = 'pear';
+  const tmuxAvailable = new Map<string, boolean>();
+  const tmuxWarned = new Set<string>();
+
+  const wrapTerminalInTmux = async (
+    sessions: SessionManager,
+    cfg: HostConfig,
+    termId: string,
+  ): Promise<void> => {
+    try {
+      let has = tmuxAvailable.get(cfg.id);
+      if (has === undefined) {
+        const r = await sessions.exec(
+          cfg,
+          '"$SHELL" -lc \'command -v tmux\' >/dev/null 2>&1 && echo yes || echo no',
+        );
+        has = r.stdout.includes('yes');
+        tmuxAvailable.set(cfg.id, has);
+      }
+      if (has) {
+        // Attach-or-create: reconnect re-attaches the same live session.
+        sessions.writeTerminal(termId, `tmux new-session -A -s ${TMUX_SESSION}\n`);
+      } else if (!tmuxWarned.has(cfg.id)) {
+        tmuxWarned.add(cfg.id);
+        termData.forEach((cb) =>
+          cb(
+            termId,
+            '\x1b[2m[pear] tmux not found — install it for terminal sessions that survive backgrounding\x1b[0m\r\n',
+          ),
+        );
+      }
+    } catch {
+      // best-effort: a plain shell still works
+    }
+  };
+
+  const buildClaude = async (): Promise<ClaudeState> => {
+    const hostId = await deps.kv.get(CLAUDE_HOST_KEY);
+    if (!hostId) {
+      throw new ClaudeSetupError('Pick a Claude host from the ⋯ menu — a server with the claude CLI installed and logged in.');
+    }
+    const { hosts, sessions } = await ready;
+    const hostName = hosts.get(hostId)?.name ?? hostId;
+
+    let transport: CapacitorSshTransport;
+    try {
+      transport = await transportFor(hostId);
+    } catch (e) {
+      throw new ClaudeSetupError(`Couldn't connect to the Claude host "${hostName}": ${errText(e)}`);
+    }
+    const pluginSession = transport.pluginSessionId;
+    if (!pluginSession) throw new ClaudeSetupError(`The Claude host "${hostName}" isn't connected.`);
+
+    // Preflight: is the CLI actually there? A clear message beats a code-127
+    // exit mid-turn after the tunnel is already up.
+    const dir = await claudeWorkspaceDir(transport).catch((e: unknown) => {
+      throw new ClaudeSetupError(`Couldn't reach "${hostName}"'s home directory: ${errText(e)}`);
+    });
+    const probe = await transport.exec('"$SHELL" -lc \'command -v claude\' >/dev/null 2>&1 && echo yes || echo no');
+    if (!probe.stdout.includes('yes')) {
+      throw new ClaudeSetupError(`The claude CLI isn't installed (or not on PATH) on "${hostName}". Install it there and run \`claude login\`, then try again.`);
+    }
+
+    // Tunnel: device relay ← SSH remote forward ← claude on the host.
+    const token = randomToken();
+    const { port } = await deps.plugin.mcpStart();
+    const cleanup = () => {
+      void deps.plugin.mcpStop();
+    };
+
+    let remotePort: number;
+    try {
+      ({ remotePort } = await deps.plugin.remoteForwardOpen({ sessionId: pluginSession, targetPort: port }));
+    } catch (e) {
+      cleanup();
+      if (codeOf(e) === 'FORWARD_DENIED') {
+        throw new ClaudeSetupError(`"${hostName}" won't let Claude tunnel back to your phone — its SSH server has TCP forwarding disabled. Set \`AllowTcpForwarding yes\` in /etc/ssh/sshd_config on that host and restart sshd.`);
+      }
+      throw new ClaudeSetupError(`Couldn't open the Claude tunnel to "${hostName}": ${errText(e)}`);
+    }
+
+    try {
+      await provisionSshWorkspace(transport, dir, remotePort, token);
+    } catch (e) {
+      cleanup();
+      void deps.plugin.remoteForwardClose({ sessionId: pluginSession, remotePort });
+      throw new ClaudeSetupError(`Couldn't set up Claude's workspace on "${hostName}": ${errText(e)}`);
+    }
+
+    // The MCP tunnel dies with its SSH session, but the detached claude's
+    // .mcp.json (written once above) points at a fixed remote port. So when
+    // the connection has dropped, redial and re-forward the SAME port —
+    // the running claude never notices beyond a failed call or two.
+    let tunnelSession = pluginSession;
+    let retunneling: Promise<string> | null = null;
+    const ensureTunnel = (): Promise<string> => {
+      retunneling ??= (async () => {
+        const t = await transportFor(hostId);
+        const sid = t.pluginSessionId;
+        if (!sid) throw new Error('Claude host is not connected');
+        if (sid !== tunnelSession) {
+          await deps.plugin.remoteForwardOpen({ sessionId: sid, targetPort: port, remotePort });
+          tunnelSession = sid;
+        }
+        return sid;
+      })().finally(() => (retunneling = null));
+      return retunneling;
+    };
+
+    const executor = new ClaudeExecutor({
+      hosts: () => hosts.list(),
+      isConnected: (id) => sessions.isConnected(id),
+      exec: async (host, command) => sessions.exec(await hosts.decryptAuth(host), command),
+      readFile: async (host, path, maxBytes) =>
+        sessions.readFile(await hosts.decryptAuth(host), path, maxBytes),
+      writeFile: async (host, path, content) =>
+        sessions.writeFile(await hosts.decryptAuth(host), path, content),
+      listDir: async (host, path) => sessions.listDir(await hosts.decryptAuth(host), path),
+    });
+    executor.setFocus(claudeFocus);
+
+    // Transcripts: preloaded into memory so core's sync store contract holds.
+    const indexStorage = await syncStorage(deps.kv, 'pear.claude.sessions');
+    const transcripts = new Map<string, string>();
+    try {
+      const metas = JSON.parse(indexStorage.read() ?? '[]') as ClaudeSessionMeta[];
+      for (const meta of metas.slice(0, 20)) {
+        const data = await deps.kv.get(`pear.claude.t.${meta.id}`);
+        if (data) transcripts.set(meta.id, data);
+      }
+    } catch {
+      // corrupt index — start clean
+    }
+
+    const runtime = new ClaudeChatRuntime({
+      storage: indexStorage,
+      transcripts: {
+        read: (id) => transcripts.get(id) ?? null,
+        write: (id, data) => {
+          transcripts.set(id, data);
+          void deps.kv.set(`pear.claude.t.${id}`, data);
+        },
+      },
+      emit: emitClaude,
+      executor,
+      createSession: (opts, onEvent) =>
+        new SshChatSession({ plugin: deps.plugin, hub, dir, sessionId: ensureTunnel }, opts, onEvent),
+    });
+    runtime.setAutoApprove(claudeAutoApprove);
+    if (claudeModel) runtime.setModel(claudeModel);
+    // Lazy: the MCP SDK (with CJS ajv) is a heavy chunk only Claude needs.
+    const { McpWebViewServer } = await import('./claude/mcp-handler');
+    const mcp = new McpWebViewServer(deps.plugin, token, executor, runtime.bridge);
+    activeClaudeHostId = hostId;
+    return {
+      runtime,
+      executor,
+      dispose: () => {
+        runtime.dispose();
+        mcp.dispose();
+        deps.plugin.remoteForwardClose({ sessionId: tunnelSession, remotePort }).catch(() => {});
+        void deps.plugin.mcpStop();
+      },
+    };
+  };
+
+  const ensureClaude = (): Promise<ClaudeState> => {
+    claudeState ??= buildClaude().catch((err: unknown) => {
+      claudeState = null;
+      throw err;
+    });
+    return claudeState;
   };
 
   return {
@@ -117,6 +433,12 @@ export function createNativeBackend(deps: NativeBackendDeps): PearApi {
         const { sessions } = await ready;
         const cfg = await cfgFor(hostId, opts?.password);
         const handle = await sessions.openTerminal(cfg, size, { cwd: opts?.cwd });
+        // Resilient sessions: if the host has tmux, attach-or-create a stable
+        // per-host session so a screen-off/backgrounding disconnect doesn't
+        // kill a running command (e.g. a package update) — reconnect
+        // re-attaches to the same session. Env/cwd already ran in the outer
+        // shell, so a freshly created tmux session inherits them.
+        void wrapTerminalInTmux(sessions, cfg, handle.id);
         return handle.id;
       },
       write: (termId, data) => {
@@ -173,21 +495,42 @@ export function createNativeBackend(deps: NativeBackendDeps): PearApi {
       },
     },
     transfers: {
-      start: notYet('Transfers arrive in M6'),
-      download: notYet('Transfers arrive in M6'),
-      cancel: () => {},
-      list: async () => [],
-      clearFinished: () => {},
-      setMaxParallel: () => {},
-      onUpdate: () => () => {},
+      start: async (req) => transfers.start(req),
+      // "Download to my device": stage on the phone, then publish every file
+      // into the system Downloads collection (Download/Pear) when done.
+      download: async (srcHostId, srcDir, names, conflict, verify) => {
+        const staging = (await deps.plugin.makeStagingDir()).path;
+        const id = transfers.start({
+          src: { hostId: srcHostId, dir: srcDir },
+          dest: { hostId: null, dir: staging },
+          names,
+          op: 'copy',
+          conflict,
+          verify,
+        });
+        downloadJobs.set(id, staging);
+        return id;
+      },
+      cancel: (id) => transfers.cancel(id),
+      list: async () => transfers.list(),
+      clearFinished: () => transfers.clearFinished(),
+      setMaxParallel: (n) => transfers.setMaxParallel(n),
+      onUpdate: (cb) => {
+        transferUpdates.add(cb);
+        return () => transferUpdates.delete(cb);
+      },
+      // No OS file drag-drop on Android — uploads go through pickAndUpload.
       pathForFile: () => '',
     },
     subhosts: {
+      // Sub-host *descent* (docker exec / pct enter into a container or guest)
+      // is a separate, still-deferred feature — not the same as `via`/ProxyJump
+      // (M5), which reaches a full SSH host through a jump and is supported.
       list: async () => [],
-      jumpIn: notYet('Sub-hosts arrive in M5'),
-      jumpInVm: notYet('Sub-hosts arrive in M5'),
-      pin: notYet('Sub-hosts arrive in M5'),
-      unpin: notYet('Sub-hosts arrive in M5'),
+      jumpIn: notYet('Sub-host descent is not available on mobile yet'),
+      jumpInVm: notYet('Sub-host descent is not available on mobile yet'),
+      pin: notYet('Sub-host descent is not available on mobile yet'),
+      unpin: notYet('Sub-host descent is not available on mobile yet'),
     },
     orch: {
       get: async (hostId) => {
@@ -245,24 +588,84 @@ export function createNativeBackend(deps: NativeBackendDeps): PearApi {
       clear: async (hostId) => (await ready).history.clear(hostId),
     },
     claude: {
-      open: notYet('Claude arrives in M4'),
-      status: notYet('Claude arrives in M4'),
-      chatSend: notYet('Claude arrives in M4'),
-      chatInterrupt: () => {},
-      chatAnswer: () => {},
-      chatSetAutoApprove: () => {},
-      chatSetModel: () => {},
-      chatSessions: async () => [],
-      chatResume: notYet('Claude arrives in M4'),
-      chatNew: async () => {},
-      setFocus: () => {},
-      onEvent: () => () => {},
+      open: notYet('Claude terminal mode is desktop-only — chat runs over SSH here'),
+      status: async () => {
+        const hostId = await deps.kv.get(CLAUDE_HOST_KEY);
+        if (!hostId) return { installed: false, mcpReady: false };
+        try {
+          const transport = await transportFor(hostId);
+          const result = await transport.exec(
+            '"$SHELL" -lc \'command -v claude\' >/dev/null 2>&1 && echo yes || echo no',
+          );
+          return { installed: result.stdout.includes('yes'), mcpReady: claudeState !== null };
+        } catch {
+          return { installed: false, mcpReady: false };
+        }
+      },
+      chatSend: async (text) => (await ensureClaude()).runtime.send(text),
+      chatInterrupt: () => {
+        void claudeState?.then((s) => s.runtime.interrupt());
+      },
+      chatAnswer: (requestId, answer) => {
+        void claudeState?.then((s) => s.runtime.answer(requestId, answer));
+      },
+      chatSetAutoApprove: (on) => {
+        claudeAutoApprove = on;
+        void claudeState?.then((s) => s.runtime.setAutoApprove(on));
+      },
+      chatSetModel: (model) => {
+        claudeModel = model;
+        void claudeState?.then((s) => s.runtime.setModel(model));
+      },
+      chatSessions: async () => {
+        try {
+          const raw = await deps.kv.get('pear.claude.sessions');
+          const metas = raw ? (JSON.parse(raw) as ClaudeSessionMeta[]) : [];
+          return metas.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+        } catch {
+          return [];
+        }
+      },
+      chatResume: async (sessionId) => (await ensureClaude()).runtime.resume(sessionId),
+      chatNew: async () => {
+        await claudeState?.then((s) => s.runtime.newSession());
+      },
+      setFocus: (focus) => {
+        claudeFocus = focus;
+        void claudeState?.then((s) => s.executor.setFocus(focus));
+      },
+      onEvent: (cb) => {
+        claudeEvents.add(cb);
+        return () => claudeEvents.delete(cb);
+      },
       onUiRequest: () => () => {},
       uiRespond: () => {},
     },
     onHostDisconnected: (cb) => {
       hostDown.add(cb);
       return () => hostDown.delete(cb);
+    },
+    getClaudeHost: async () => (await deps.kv.get(CLAUDE_HOST_KEY)) || null,
+    setClaudeHost: async (id) => {
+      await deps.kv.set(CLAUDE_HOST_KEY, id ?? '');
+      // Different host = different tunnel and workspace — tear down and
+      // rebuild lazily on the next chat use.
+      teardownClaude();
+    },
+    pickAndUpload: async (hostId, destDir) => {
+      const picked = await deps.plugin.pickFiles();
+      if (!picked.files.length) return null;
+      const dir = picked.dir ?? picked.files[0].path.split('/').slice(0, -1).join('/');
+      const id = transfers.start({
+        src: { hostId: null, dir },
+        dest: { hostId, dir: destDir },
+        names: picked.files.map((f) => f.name),
+        op: 'copy',
+        conflict: 'rename',
+        verify: false,
+      });
+      jobStaging.set(id, dir);
+      return id;
     },
   };
 }

@@ -4,8 +4,32 @@
   [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
   (hostTap)="hostTap.emit()"
 >
-  <pm-icon-btn slot="right" icon="upload" [iconSize]="19" label="Upload" />
+  <pm-icon-btn slot="right" icon="upload" [iconSize]="19" label="Upload" (click)="upload()" />
 </pm-header>
+
+@if (jobs().length) {
+  <div class="xfers">
+    @for (j of jobs(); track j.id) {
+      <div class="xfer" [class.err]="j.status === 'error'">
+        <div class="x-body">
+          <div class="x-label">
+            {{ j.label }}
+            @if (j.stages === 2) { <span class="x-stage">stage {{ j.stage + 1 }}/2</span> }
+          </div>
+          @if (jobActive(j)) {
+            <div class="x-bar"><div class="x-fill" [style.width.%]="pct(j)"></div></div>
+            <div class="x-meta">{{ pct(j) }}%{{ j.currentName ? ' · ' + j.currentName : '' }}</div>
+          } @else {
+            <div class="x-meta">{{ j.status }}{{ j.error ? ' — ' + j.error : '' }}</div>
+          }
+        </div>
+        <button class="x-btn" (click)="jobActive(j) ? cancelJob(j.id) : dismissJob(j.id)">
+          <pm-icon name="close" [size]="14" />
+        </button>
+      </div>
+    }
+  </div>
+}
 
 <div class="crumb-bar">
   <button class="up" [disabled]="session.path() === '/'" (click)="goUp()">
@@ -40,6 +64,12 @@
         <pm-icon name="forward" [size]="15" class="fwd" />
       } @else {
         <span class="mode">{{ e.mode }}</span>
+        <span
+          class="dl"
+          role="button"
+          title="Download to device"
+          (click)="download(e, $event)"
+        ><pm-icon name="download" [size]="16" /></span>
       }
     </button>
   } @empty {

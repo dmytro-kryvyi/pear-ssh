@@ -1,3 +1,4 @@
+import { uuid } from '@pear/core';
 import type {
   DirListing,
   ExecResult,
@@ -7,6 +8,7 @@ import type {
   ShellChannel,
   SshTransport,
   TermSize,
+  TransferOpts,
 } from '@pear/core';
 import type { SshEventHub } from './event-hub';
 import type { PearSshPlugin, SshAuthSpec, SshConnectSpec } from './pear-ssh';
@@ -76,17 +78,16 @@ class CapShellChannel implements ShellChannel {
     private readonly channelId: string,
     private readonly deps: TransportDeps,
   ) {
-    deps.hub.bindChannel(
-      channelId,
-      (chunk) => {
+    deps.hub.bindChannel(channelId, {
+      onData: (chunk) => {
         if (this.early) this.early.push(chunk);
         else for (const cb of this.dataCbs) cb(chunk);
       },
-      () => {
+      onExit: () => {
         if (this.early) this.earlyExit = true;
         else for (const cb of this.closeCbs) cb();
       },
-    );
+    });
   }
 
   write(data: string): void {
@@ -127,20 +128,27 @@ class CapShellChannel implements ShellChannel {
  * UNKNOWN_HOST_KEY / HOST_KEY_CHANGED rejections route through the
  * HostKeyGate (UI sheet) and retry with the confirmed fingerprint.
  *
- * `jump` (via/ProxyJump) is not supported until M5 — the plugin dials
- * directly.
+ * With `jump` set (via/ProxyJump), the dial is tunneled through the jump's
+ * already-authenticated plugin session (connectVia) instead of dialing the
+ * target's socket directly; auth + TOFU still run end-to-end against the
+ * target. The jump is itself a CapacitorSshTransport — the whole chain (A → B
+ * → C) is just nested jumps that SessionManager builds bottom-up.
  */
 export class CapacitorSshTransport implements SshTransport {
   private sessionId?: string;
   private connected = false;
   private readonly closeCbs: (() => void)[] = [];
+  private readonly jump?: CapacitorSshTransport;
 
   constructor(
     readonly config: HostConfig,
     private readonly deps: TransportDeps,
     jump?: SshTransport,
   ) {
-    if (jump) throw new Error('via/jump hosts are not supported on Android yet (M5)');
+    if (jump && !(jump instanceof CapacitorSshTransport)) {
+      throw new Error('Jump host must be a native SSH connection');
+    }
+    this.jump = jump;
   }
 
   async connect(): Promise<void> {
@@ -178,19 +186,36 @@ export class CapacitorSshTransport implements SshTransport {
       this.connected = false;
       for (const cb of this.closeCbs) cb();
     });
+    // A dying jump EOFs the tunnel and the engine already fires sessionClosed
+    // for the target; tear down deterministically too so a wedged carrier
+    // never leaves this transport marked connected (mirrors desktop).
+    this.jump?.onClose(() => this.dispose());
   }
 
   private async dial(spec: SshConnectSpec): Promise<void> {
     try {
-      const { sessionId } = await this.deps.plugin.connect(spec);
+      const { sessionId } = await this.dialPlugin(spec);
       this.sessionId = sessionId;
     } catch (e) {
       throw codeOf(e) ? e : toError(e);
     }
   }
 
+  private dialPlugin(spec: SshConnectSpec): Promise<{ sessionId: string }> {
+    if (!this.jump) return this.deps.plugin.connect(spec);
+    const jumpSessionId = this.jump.pluginSessionId;
+    if (!jumpSessionId) throw new Error('Jump host is not connected');
+    return this.deps.plugin.connectVia({ ...spec, jumpSessionId });
+  }
+
   get isConnected(): boolean {
     return this.connected;
+  }
+
+  /** Plugin session handle — the Claude runtime layers channels/forwards on
+   *  the same authenticated connection. */
+  get pluginSessionId(): string | null {
+    return this.connected ? (this.sessionId ?? null) : null;
   }
 
   onClose(cb: () => void): void {
@@ -269,16 +294,55 @@ export class CapacitorSshTransport implements SshTransport {
     return hash;
   }
 
-  async upload(): Promise<string> {
-    throw new Error('File transfers arrive in M6');
+  async upload(localPath: string, remoteDir: string): Promise<string> {
+    const name = localPath.split('/').pop() ?? localPath;
+    const remotePath = `${remoteDir.replace(/\/$/, '')}/${name}`;
+    await this.uploadFile(localPath, remotePath);
+    return remotePath;
   }
 
-  async download(): Promise<void> {
-    throw new Error('File transfers arrive in M6');
+  download(remotePath: string, localPath: string, opts?: TransferOpts): Promise<void> {
+    return this.transfer('download', remotePath, localPath, opts);
   }
 
-  async uploadFile(): Promise<void> {
-    throw new Error('File transfers arrive in M6');
+  uploadFile(localPath: string, remotePath: string, opts?: TransferOpts): Promise<void> {
+    return this.transfer('upload', localPath, remotePath, opts);
+  }
+
+  /** Shared plumbing: progress via the hub, cancellation via transferAbort. */
+  private async transfer(
+    kind: 'download' | 'upload',
+    from: string,
+    to: string,
+    opts?: TransferOpts,
+  ): Promise<void> {
+    const transferId = uuid();
+    const onAbort = () => void this.deps.plugin.transferAbort({ transferId });
+    if (opts?.onProgress) {
+      this.deps.hub.bindTransfer(transferId, (bytes, total) => opts.onProgress?.({ bytes, total }));
+    }
+    opts?.signal?.addEventListener('abort', onAbort);
+    if (opts?.signal?.aborted) onAbort();
+    try {
+      if (kind === 'download') {
+        await this.deps.plugin.download({
+          sessionId: this.session,
+          remotePath: from,
+          localPath: to,
+          transferId,
+        });
+      } else {
+        await this.deps.plugin.upload({
+          sessionId: this.session,
+          localPath: from,
+          remotePath: to,
+          transferId,
+        });
+      }
+    } finally {
+      opts?.signal?.removeEventListener('abort', onAbort);
+      this.deps.hub.unbindTransfer(transferId);
+    }
   }
 
   dispose(): void {

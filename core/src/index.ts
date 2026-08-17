@@ -101,3 +101,20 @@ export {
 } from './claude/events';
 export { ChatStreamParser, toolDisplay } from './claude/parser';
 export { applyEdit } from './claude/edit';
+export {
+  ClaudeExecutor,
+  utf8ByteLength,
+  type ClaudeExecutorEnv,
+  type ClaudeHostInfo,
+  type RunResult,
+} from './claude/executor';
+export { PermissionBridge, type PermissionAnswer } from './claude/permission-bridge';
+export { registerPearTools, truncateOutput } from './claude/tools';
+export {
+  ClaudeChatRuntime,
+  type ChatIndexStorage,
+  type ChatRuntimeOpts,
+  type ChatSessionFactory,
+  type ChatSessionHandle,
+  type ChatTranscriptStore,
+} from './claude/chat-runtime';

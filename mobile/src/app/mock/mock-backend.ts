@@ -11,6 +11,8 @@ import type {
 } from '@pear/core';
 import { Provider } from '@angular/core';
 import { PEAR_BACKEND } from '../backend';
+import { ClaudeDemo } from '../claude/claude-demo';
+import { CLAUDE_STORE } from '../claude/claude-store';
 import { FakePty } from './fake-pty';
 import { FILE_CONTENTS, ORCH, SEED_GROUPS, SEED_HOSTS, TREE } from './seed';
 
@@ -344,6 +346,9 @@ export function createMockBackend(): PearApi {
   };
 }
 
-export function provideMockBackend(): Provider {
-  return { provide: PEAR_BACKEND, useFactory: createMockBackend };
+export function provideMockBackend(): Provider[] {
+  return [
+    { provide: PEAR_BACKEND, useFactory: createMockBackend },
+    { provide: CLAUDE_STORE, useExisting: ClaudeDemo },
+  ];
 }

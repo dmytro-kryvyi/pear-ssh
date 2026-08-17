@@ -53,8 +53,35 @@ export interface SessionClosedEvent {
   sessionId: string;
 }
 
+export interface McpRequestEvent {
+  id: string;
+  path: string;
+  authorization: string;
+  body: string;
+}
+
+export interface TransferProgressEvent {
+  transferId: string;
+  bytes: number;
+  total: number;
+}
+
+/** A document picked via SAF, already staged into the app cache. */
+export interface PickedFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
 export interface PearSshPlugin {
   connect(spec: SshConnectSpec): Promise<{ sessionId: string }>;
+  /**
+   * ProxyJump/`via`: connect to the target described by `spec`, tunneling the
+   * TCP leg through `jumpSessionId` (an already-connected session). Auth + TOFU
+   * still run end-to-end against the target, so the jump never sees the
+   * target's credentials. Same rejection codes as `connect`.
+   */
+  connectVia(spec: SshConnectSpec & { jumpSessionId: string }): Promise<{ sessionId: string }>;
   disconnect(opts: { sessionId: string }): Promise<void>;
   isConnected(opts: { sessionId: string }): Promise<{ connected: boolean }>;
   forgetHostKey(opts: { host: string; port: number }): Promise<void>;
@@ -66,16 +93,39 @@ export interface PearSshPlugin {
     stderr: string;
   }>;
 
-  /** PTY channel: login shell when `command` is omitted. */
+  /**
+   * PTY channel: login shell when `command` is omitted. With `pty: false`,
+   * a streaming exec channel instead — clean demuxed stdout/stderr
+   * (shellStderr events), stdin via shellWrite; the Claude runtime rides
+   * this.
+   */
   shellOpen(opts: {
     sessionId: string;
     command?: string;
     cols: number;
     rows: number;
+    pty?: boolean;
   }): Promise<{ channelId: string }>;
   shellWrite(opts: { channelId: string; data: string }): Promise<void>;
   shellResize(opts: { channelId: string; cols: number; rows: number }): Promise<void>;
+  /** Deliver a signal (TERM, INT, …) to the channel's remote process. */
+  shellSignal(opts: { channelId: string; signal: string }): Promise<void>;
   shellClose(opts: { channelId: string }): Promise<void>;
+
+  /**
+   * MCP relay: a loopback HTTP server on the device; each POST arrives as an
+   * mcpRequest event and is answered via mcpRespond. The Claude host reaches
+   * it through remoteForwardOpen (SSH remote port-forward to the relay).
+   */
+  mcpStart(): Promise<{ port: number }>;
+  mcpRespond(opts: { id: string; status: number; body: string }): Promise<void>;
+  mcpStop(): Promise<void>;
+  /** `remotePort` re-requests a specific server port (tunnel re-establish
+   *  after a redial); omitted/0 lets the server pick. */
+  remoteForwardOpen(opts: { sessionId: string; targetPort: number; remotePort?: number }): Promise<{
+    remotePort: number;
+  }>;
+  remoteForwardClose(opts: { sessionId: string; remotePort: number }): Promise<void>;
 
   sftpList(opts: { sessionId: string; path: string }): Promise<{
     path: string;
@@ -95,6 +145,38 @@ export interface PearSshPlugin {
   sftpCopy(opts: { sessionId: string; src: string; dest: string }): Promise<void>;
   sftpHash(opts: { sessionId: string; path: string }): Promise<{ hash: string }>;
 
+  /**
+   * Streaming file transfers with progress events (`transferProgress` by
+   * transferId, engine-throttled) and cancellation via transferAbort.
+   */
+  download(opts: {
+    sessionId: string;
+    remotePath: string;
+    localPath: string;
+    transferId?: string;
+  }): Promise<void>;
+  upload(opts: {
+    sessionId: string;
+    localPath: string;
+    remotePath: string;
+    transferId?: string;
+  }): Promise<void>;
+  transferAbort(opts: { transferId: string }): Promise<void>;
+
+  /** The phone's own filesystem — the cross-host transfer relay + staging. */
+  localList(opts: { path: string }): Promise<{ path: string; entries: SshEntry[] }>;
+  localStat(opts: { path: string }): Promise<{ exists: boolean; entry?: SshEntry }>;
+  localMkdir(opts: { path: string }): Promise<void>;
+  localRemove(opts: { path: string; recursive?: boolean }): Promise<void>;
+  localRename(opts: { oldPath: string; newPath: string }): Promise<void>;
+  localHash(opts: { path: string }): Promise<{ hash: string }>;
+  makeStagingDir(): Promise<{ path: string }>;
+
+  /** Publish a staged file into the system Downloads collection. */
+  saveToDownloads(opts: { localPath: string; name?: string }): Promise<{ name: string }>;
+  /** SAF document picker; picked files arrive staged in `dir`. */
+  pickFiles(): Promise<{ files: PickedFile[]; dir?: string }>;
+
   /** Keystore-backed SecretCipher (core hosts/store.ts contract). */
   cipherAvailable(): Promise<{ available: boolean }>;
   cipherEncrypt(opts: { plain: string }): Promise<{ cipher: string }>;
@@ -105,12 +187,24 @@ export interface PearSshPlugin {
     cb: (e: ShellDataEvent) => void,
   ): Promise<PluginListenerHandle>;
   addListener(
+    event: 'shellStderr',
+    cb: (e: ShellDataEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
     event: 'shellExit',
     cb: (e: ShellExitEvent) => void,
   ): Promise<PluginListenerHandle>;
   addListener(
     event: 'sessionClosed',
     cb: (e: SessionClosedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    event: 'mcpRequest',
+    cb: (e: McpRequestEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    event: 'transferProgress',
+    cb: (e: TransferProgressEvent) => void,
   ): Promise<PluginListenerHandle>;
 }
 

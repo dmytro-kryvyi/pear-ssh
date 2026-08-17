@@ -86,6 +86,74 @@
 .meta { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-top: 2px; }
 .mode { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex-shrink: 0; }
 
+.dl {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: -6px -8px -6px 0;
+  border-radius: 8px;
+  color: var(--fg-3);
+  &:active { color: var(--accent); background: var(--bg-3); }
+}
+
+// ---- transfer strip (active + just-finished jobs) --------------------------
+
+.xfers { border-bottom: 1px solid var(--border-soft); background: var(--bg-1); }
+
+.xfer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+
+  &.err .x-meta { color: var(--err); }
+}
+
+.x-body { flex: 1; min-width: 0; }
+
+.x-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x-stage { color: var(--fg-3); margin-left: 6px; font-size: 10.5px; }
+
+.x-bar {
+  height: 3px;
+  margin: 5px 0 3px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+
+.x-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+.x-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--fg-3);
+  &:active { background: var(--bg-3); }
+}
+
 .empty {
   padding: 60px 20px;
   text-align: center;

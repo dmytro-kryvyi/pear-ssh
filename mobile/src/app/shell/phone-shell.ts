@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal } from '@angular/core';
 import type { HostConfig } from '@pear/core';
 import { PmSheet, PmTabBar, type MobileTab } from '../chrome/chrome';
 import { PmClaudeScreen } from '../claude/claude-screen';
@@ -42,6 +42,14 @@ export class PmPhoneShell {
   protected readonly session = inject(PearSession);
   protected readonly tab = signal<MobileTab>(initialTab());
   protected readonly pickerOpen = signal(false);
+
+  constructor() {
+    // Logs/console actions type into the terminal — jump there so the
+    // output is actually visible.
+    effect(() => {
+      if (this.session.shellPing() > 0) this.tab.set('term');
+    });
+  }
 
   protected connect(h: HostConfig): void {
     this.pickerOpen.set(false);

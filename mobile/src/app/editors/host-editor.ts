@@ -42,6 +42,10 @@ export class PmHostEditor {
   protected readonly isNew = computed(() => !this.host().name);
   protected readonly stripeColor = computed(() => wsColor(this.d().color));
   protected readonly autoLabel = computed(() => autoShort(this.d().name) || '—');
+  /** Hosts this one can jump through (ProxyJump/`via`) — anything but itself. */
+  protected readonly jumpCandidates = computed(() =>
+    this.session.hosts().filter((h) => h.id !== this.d().id),
+  );
 
   constructor() {
     effect(() => {

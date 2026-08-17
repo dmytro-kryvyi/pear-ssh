@@ -3,6 +3,9 @@ package app.pear.ssh
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Session
+import net.schmizz.sshj.connection.channel.direct.Signal
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
+import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
 import net.schmizz.sshj.sftp.FileAttributes
 import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.RemoteFile
@@ -48,6 +51,7 @@ class SshEngine(
         val sftpLock = Any()
         var sftp: SFTPClient? = null
         val closed = AtomicBoolean(false)
+        val forwards = ConcurrentHashMap<Int, RemotePortForwarder.Forward>()
     }
 
     private class ChannelState(
@@ -66,8 +70,7 @@ class SshEngine(
     /** Dial + verify + authenticate one endpoint; returns the session id. */
     fun connect(spec: ConnectSpec): String {
         val client = SSHClient(DefaultConfig())
-        val verifier = TofuVerifier(knownHosts, spec.host, spec.port, spec.trustFingerprint)
-        client.addHostKeyVerifier(verifier)
+        val verifier = addVerifier(client, spec)
         client.connectTimeout = spec.timeoutMs
         try {
             client.connect(spec.host, spec.port)
@@ -76,6 +79,51 @@ class SshEngine(
             throw verifier.failure
                 ?: SshError(SshError.CONNECT_FAILED, e.message ?: "connect failed", cause = e)
         }
+        return authAndRegister(client, spec, verifier)
+    }
+
+    /**
+     * Connect to `spec.host:spec.port` through an already-connected jump
+     * session (ProxyJump / `via`). The TCP leg is a direct-tcpip channel the
+     * jump opens on our behalf; the target's transport + auth still run
+     * end-to-end over that tunnel, so the jump never sees the target's
+     * credentials and TOFU verifies the *target's* host key. Returns a fresh
+     * session id that behaves like any other — channels, SFTP, forwards, and
+     * disconnect all ride the tunnel and it cascades closed when the jump dies.
+     */
+    fun connectVia(spec: ConnectSpec, jumpSessionId: String): String {
+        val jump = require(jumpSessionId)
+        val client = SSHClient(DefaultConfig())
+        val verifier = addVerifier(client, spec)
+        val direct = try {
+            jump.client.newDirectConnection(spec.host, spec.port)
+        } catch (e: IOException) {
+            quietly { client.close() }
+            throw SshError(
+                SshError.CONNECT_FAILED,
+                "the jump host could not reach ${spec.host}:${spec.port}: ${e.message}",
+                cause = e,
+            )
+        }
+        try {
+            client.connectVia(direct)
+        } catch (e: IOException) {
+            quietly { client.close() }
+            throw verifier.failure
+                ?: SshError(SshError.CONNECT_FAILED, e.message ?: "connect via jump failed", cause = e)
+        }
+        return authAndRegister(client, spec, verifier)
+    }
+
+    private fun addVerifier(client: SSHClient, spec: ConnectSpec): TofuVerifier {
+        val verifier = TofuVerifier(knownHosts, spec.host, spec.port, spec.trustFingerprint)
+        client.addHostKeyVerifier(verifier)
+        return verifier
+    }
+
+    /** Shared tail of connect()/connectVia(): authenticate, then register the
+     *  live session with keepalive + disconnect instrumentation. */
+    private fun authAndRegister(client: SSHClient, spec: ConnectSpec, verifier: TofuVerifier): String {
         try {
             authenticate(client, spec)
         } catch (e: SshError) {
@@ -93,7 +141,10 @@ class SshEngine(
         val state = SessionState(UUID.randomUUID().toString(), client)
         sessions[state.id] = state
         client.transport.disconnectListener =
-            net.schmizz.sshj.transport.DisconnectListener { _, _ -> onSessionDead(state) }
+            net.schmizz.sshj.transport.DisconnectListener { reason, message ->
+                val detail = message.ifBlank { reason.toString() }
+                onSessionDead(state, "ssh session closed: $detail")
+            }
         return state.id
     }
 
@@ -138,13 +189,19 @@ class SshEngine(
         }
     }
 
-    private fun onSessionDead(state: SessionState) {
+    private fun onSessionDead(state: SessionState, reason: String? = null) {
         if (!state.closed.compareAndSet(false, true)) return
         sessions.remove(state.id)
         for ((id, ch) in channels) {
             if (ch.sessionId == state.id) {
                 channels.remove(id)
-                if (ch.exited.compareAndSet(false, true)) events.shellExit(id, -1)
+                if (ch.exited.compareAndSet(false, true)) {
+                    // Route the disconnect reason to the channel's stderr so
+                    // callers can report *why* -1 happened (batcher flushes
+                    // stderr before the exit event — see ShellDataBatcher.run).
+                    if (reason != null) events.shellStderr(id, reason + "\n")
+                    events.shellExit(id, -1)
+                }
             }
         }
         events.sessionClosed(state.id)
@@ -211,16 +268,24 @@ class SshEngine(
     // ------------------------------------------------------------------ shell
 
     /**
-     * Open a PTY channel: the login shell when `command` is null, otherwise
-     * the command in a fresh PTY (closes on exit). Data/exit arrive through
-     * EngineEvents; stdout and stderr are merged like the desktop transport.
+     * Open a command/shell channel. With `pty` (the default): a terminal —
+     * login shell when `command` is null, stdout+stderr merged like the
+     * desktop transport. Without `pty`: a streaming exec channel with clean
+     * demuxed streams (shellStderr events) — what the Claude stream-json
+     * runtime rides on.
      */
-    fun shellOpen(sessionId: String, command: String?, cols: Int, rows: Int): String {
+    fun shellOpen(
+        sessionId: String,
+        command: String?,
+        cols: Int,
+        rows: Int,
+        pty: Boolean = true,
+    ): String {
         val state = require(sessionId)
         val session = state.client.startSession()
         val channel: Session.Command
         try {
-            session.allocatePTY(TERM, cols, rows, 0, 0, emptyMap<PTYMode, Int>())
+            if (pty) session.allocatePTY(TERM, cols, rows, 0, 0, emptyMap<PTYMode, Int>())
             channel = if (command == null) {
                 session.startShell() as Session.Command
             } else {
@@ -235,11 +300,15 @@ class SshEngine(
 
         val stderrDone = AtomicBoolean(false)
         thread(name = "pear-ssh-ch-${ch.id}-err", isDaemon = true) {
-            pump(channel.errorStream::read, ch.id)
+            if (pty) {
+                pump(channel.errorStream::read, ch.id, events::shellData)
+            } else {
+                pump(channel.errorStream::read, ch.id, events::shellStderr)
+            }
             stderrDone.set(true)
         }
         thread(name = "pear-ssh-ch-${ch.id}-out", isDaemon = true) {
-            pump(channel.inputStream::read, ch.id)
+            pump(channel.inputStream::read, ch.id, events::shellData)
             // stdout EOF = channel is closing; give stderr a moment to drain
             // so its tail is not lost behind the exit event.
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
@@ -254,7 +323,11 @@ class SshEngine(
         return ch.id
     }
 
-    private fun pump(read: (ByteArray) -> Int, channelId: String) {
+    private fun pump(
+        read: (ByteArray) -> Int,
+        channelId: String,
+        emit: (String, String) -> Unit,
+    ) {
         val decoder = StreamingUtf8()
         val buf = ByteArray(32 * 1024)
         while (true) {
@@ -266,10 +339,10 @@ class SshEngine(
             if (n < 0) break
             if (n == 0) continue
             val text = decoder.decode(buf, 0, n)
-            if (text.isNotEmpty()) events.shellData(channelId, text)
+            if (text.isNotEmpty()) emit(channelId, text)
         }
         val tail = decoder.finish()
-        if (tail.isNotEmpty()) events.shellData(channelId, tail)
+        if (tail.isNotEmpty()) emit(channelId, tail)
     }
 
     private fun channel(channelId: String): ChannelState =
@@ -287,9 +360,55 @@ class SshEngine(
         (ch.channel as? Session.Shell)?.changeWindowDimensions(cols, rows, 0, 0)
     }
 
+    /** Deliver a signal (TERM, INT, KILL…) to a channel's remote process. */
+    fun shellSignal(channelId: String, name: String) {
+        val ch = channels[channelId] ?: return
+        val signal = try {
+            Signal.valueOf(name.uppercase())
+        } catch (_: IllegalArgumentException) {
+            throw SshError(SshError.NO_CHANNEL, "unknown signal '$name'")
+        }
+        quietly { ch.channel.signal(signal) }
+    }
+
     fun shellClose(channelId: String) {
         val ch = channels[channelId] ?: return
         quietly { ch.session.close() }
+    }
+
+    // --------------------------------------------------------- port forwards
+
+    /**
+     * Ask the server to listen on a loopback port and tunnel connections back
+     * to 127.0.0.1:targetPort on this device (the MCP relay). Returns the
+     * server-allocated remote port. `remotePort` re-requests a specific port —
+     * re-establishing a tunnel after a redial keeps the address a running
+     * claude already has in its .mcp.json valid.
+     */
+    fun remoteForwardOpen(sessionId: String, targetPort: Int, remotePort: Int = 0): Int {
+        val state = require(sessionId)
+        val forward = try {
+            state.client.remotePortForwarder.bind(
+                RemotePortForwarder.Forward("127.0.0.1", remotePort),
+                SocketForwardingConnectListener(InetSocketAddress("127.0.0.1", targetPort)),
+            )
+        } catch (e: Exception) {
+            // The server refused the tcpip-forward request — almost always
+            // `AllowTcpForwarding no` (or `remote`/`local`-only) in sshd_config.
+            throw SshError(
+                SshError.FORWARD_DENIED,
+                "the SSH server refused a remote port-forward (AllowTcpForwarding)",
+                cause = e,
+            )
+        }
+        state.forwards[forward.port] = forward
+        return forward.port
+    }
+
+    fun remoteForwardClose(sessionId: String, remotePort: Int) {
+        val state = sessions[sessionId] ?: return
+        val forward = state.forwards.remove(remotePort) ?: return
+        quietly { state.client.remotePortForwarder.cancel(forward) }
     }
 
     // ------------------------------------------------------------------- sftp
@@ -399,6 +518,87 @@ class SshEngine(
             )
         }
         return token.lowercase()
+    }
+
+    // -------------------------------------------------------------- transfers
+
+    private val aborts = ConcurrentHashMap<String, AtomicBoolean>()
+
+    /** Cancel a running download/upload; it fails with TRANSFER_ABORTED. */
+    fun transferAbort(transferId: String) {
+        aborts[transferId]?.set(true)
+    }
+
+    /** Stream a remote file to a local path, with throttled progress events. */
+    fun download(sessionId: String, remotePath: String, localPath: String, transferId: String? = null) {
+        val sftp = sftp(require(sessionId))
+        val total = sftp.stat(remotePath).size
+        val file: RemoteFile = sftp.open(remotePath)
+        try {
+            // Read-ahead pipelines SFTP requests — plain reads round-trip
+            // per 32KB block and crawl on any real-world latency.
+            file.ReadAheadRemoteFileInputStream(16).use { input ->
+                java.io.FileOutputStream(localPath).use { output ->
+                    pumpBytes(input, output, total, transferId)
+                }
+            }
+        } finally {
+            quietly { file.close() }
+        }
+    }
+
+    /** Stream a local file to an exact remote path, with progress events. */
+    fun upload(sessionId: String, localPath: String, remotePath: String, transferId: String? = null) {
+        val sftp = sftp(require(sessionId))
+        val local = java.io.File(localPath)
+        val total = local.length()
+        val modes = EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)
+        val file = sftp.open(remotePath, modes)
+        try {
+            java.io.FileInputStream(local).use { input ->
+                file.RemoteFileOutputStream(0, 16).use { output ->
+                    pumpBytes(input, output, total, transferId)
+                }
+            }
+        } finally {
+            quietly { file.close() }
+        }
+    }
+
+    private fun pumpBytes(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        total: Long,
+        transferId: String?,
+    ) {
+        val flag = transferId?.let { id -> AtomicBoolean(false).also { aborts[id] = it } }
+        try {
+            // ≤32KB per write: sshj maps each write() onto ONE SFTP request,
+            // and servers cap the message size (~256KB incl. headers) — a big
+            // buffer kills the whole SFTP channel. Throughput comes from the
+            // 16-deep request pipelining, not the buffer size.
+            val buf = ByteArray(32 * 1024)
+            var done = 0L
+            var lastEmit = 0L
+            while (true) {
+                if (flag?.get() == true) {
+                    throw SshError(SshError.TRANSFER_ABORTED, "transfer canceled")
+                }
+                val n = input.read(buf)
+                if (n < 0) break
+                output.write(buf, 0, n)
+                done += n
+                val now = System.currentTimeMillis()
+                if (transferId != null && now - lastEmit >= 100) {
+                    lastEmit = now
+                    events.transferProgress(transferId, done, total)
+                }
+            }
+            output.flush()
+            if (transferId != null) events.transferProgress(transferId, done, total)
+        } finally {
+            transferId?.let { aborts.remove(it) }
+        }
     }
 
     // ---------------------------------------------------------------- cleanup

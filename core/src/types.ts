@@ -66,6 +66,20 @@ export interface EnvVar {
   v: string;
 }
 
+/** One active SSH local port-forward (desktop PortForwardManager; the Claude
+ *  port_forward tools report these). Pure type — managers are per-platform. */
+export interface PortForwardInfo {
+  id: string;
+  hostId: string;
+  hostName: string;
+  /** Destination as seen from the remote host (usually 127.0.0.1). */
+  remoteHost: string;
+  remotePort: number;
+  localHost: '127.0.0.1';
+  localPort: number;
+  startedAt: number;
+}
+
 /** Result of probing one endpoint for an SSH listener. */
 export type ProbeResult =
   | { ok: true; latencyMs: number; banner?: string }

@@ -1,8 +1,9 @@
-import { Component, computed, effect, inject, output, signal } from '@angular/core';
-import type { FileEntry } from '@pear/core';
+import { Component, DestroyRef, computed, effect, inject, output, signal } from '@angular/core';
+import type { FileEntry, TransferJobSnapshot } from '@pear/core';
 import { PEAR_BACKEND } from '../backend';
 import { PmHeader, PmIconBtn } from '../chrome/chrome';
 import { PmIcon } from '../icons/icon';
+import type { MobileTransfersConfig } from '../native/backend';
 import { PearSession } from '../state/session';
 import { fmtBytes, fmtMtime } from '../util/fmt';
 
@@ -21,6 +22,8 @@ export class PmFilesScreen {
 
   protected readonly entries = signal<FileEntry[]>([]);
   protected readonly error = signal('');
+  /** Transfer jobs still worth showing (running, or terminal until dismissed). */
+  protected readonly jobs = signal<TransferJobSnapshot[]>([]);
 
   protected readonly parts = computed(() => {
     const p = this.session.path();
@@ -41,6 +44,18 @@ export class PmFilesScreen {
       if (!hostId) return;
       void this.load(hostId, path);
     });
+    const offUpdate = this.backend.transfers.onUpdate((job) => {
+      this.jobs.update((list) => {
+        const i = list.findIndex((j) => j.id === job.id);
+        return i >= 0 ? [...list.slice(0, i), job, ...list.slice(i + 1)] : [...list, job];
+      });
+      // A finished upload into the open directory should show up right away.
+      if (job.status === 'done') {
+        const hostId = this.session.activeHostId();
+        if (hostId) void this.load(hostId, this.session.path());
+      }
+    });
+    inject(DestroyRef).onDestroy(offUpdate);
   }
 
   private async load(hostId: string, path: string): Promise<void> {
@@ -68,6 +83,50 @@ export class PmFilesScreen {
     const full = `${base}/${e.name}`;
     if (e.kind === 'dir') this.session.navigate(full);
     else this.session.openFile.set(full);
+  }
+
+  // ---- transfers -----------------------------------------------------------
+
+  /** SAF picker → upload into the open directory (native backend only). */
+  protected async upload(): Promise<void> {
+    const hostId = this.session.activeHostId();
+    if (!hostId) return;
+    const backend = this.backend as typeof this.backend & Partial<MobileTransfersConfig>;
+    if (!backend.pickAndUpload) {
+      this.error.set('Uploads need the Android app');
+      return;
+    }
+    try {
+      await backend.pickAndUpload(hostId, this.session.path());
+    } catch (err) {
+      this.error.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Queue a copy of one entry into the device's Downloads collection. */
+  protected download(e: FileEntry, ev: Event): void {
+    ev.stopPropagation();
+    const hostId = this.session.activeHostId();
+    if (!hostId) return;
+    this.backend.transfers
+      .download(hostId, this.session.path(), [e.name], 'rename', false)
+      .catch((err: unknown) => {
+        this.error.set(err instanceof Error ? err.message : String(err));
+      });
+  }
+
+  protected cancelJob(id: string): void {
+    this.backend.transfers.cancel(id);
+  }
+  protected dismissJob(id: string): void {
+    this.jobs.update((list) => list.filter((j) => j.id !== id));
+    this.backend.transfers.clearFinished();
+  }
+  protected jobActive(j: TransferJobSnapshot): boolean {
+    return j.status === 'running' || j.status === 'queued';
+  }
+  protected pct(j: TransferJobSnapshot): number {
+    return j.bytesTotal > 0 ? Math.round((j.bytesDone / j.bytesTotal) * 100) : 0;
   }
 
   protected readonly fmtBytes = fmtBytes;

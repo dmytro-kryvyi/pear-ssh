@@ -6,7 +6,7 @@
 >
   <span slot="left" class="cc-glyph"><pm-icon name="sparkle" [size]="17" /></span>
   <div slot="right" class="head-actions">
-    <pm-icon-btn icon="history" [iconSize]="17" label="History" (click)="menuOpen.set(!menuOpen())" />
+    <pm-icon-btn icon="history" [iconSize]="17" label="History" (click)="openMenu()" />
     <pm-icon-btn icon="plus" [iconSize]="18" label="New session" (click)="newSession()" />
   </div>
 </pm-header>
@@ -16,19 +16,19 @@
   <span>context</span>
   <div class="bar"><div class="fill" [style.width.%]="pct()" [style.background]="meterColor()"></div></div>
   <span>{{ tokensText() }}</span>
-  <button (click)="demo.compact()"><pm-icon name="fold" [size]="11" /> compact</button>
+  <button (click)="chat.compact()"><pm-icon name="fold" [size]="11" /> compact</button>
 </div>
 
 <!-- transcript -->
 <div #body class="transcript noscroll">
-  @if (!demo.messages().length) {
+  @if (!chat.messages().length) {
     <div class="hello">
       <span class="cc-glyph big"><pm-icon name="sparkle" [size]="20" /></span>
       <div class="hi">Ask Claude about {{ session.host()?.name ?? 'this host' }}</div>
       <div class="examples">“why is nginx 502ing?”<br />“prune unused docker images”<br />“tail the gateway logs”</div>
     </div>
   }
-  @for (m of demo.messages(); track m.id) {
+  @for (m of chat.messages(); track m.id) {
     <div class="turn">
       @switch (m.role) {
         @case ('user') {
@@ -85,11 +85,11 @@
             </div>
             @if (m.status === 'pending') {
               <div class="perm-actions">
-                <button class="cbtn primary" (click)="demo.resolvePermission(m.id, 'once')">
+                <button class="cbtn primary" (click)="chat.resolvePermission(m.id, 'once')">
                   <pm-icon name="check" [size]="13" /> Allow
                 </button>
-                <button class="cbtn" (click)="demo.resolvePermission(m.id, 'always')">Session</button>
-                <button class="cbtn ghost" (click)="demo.resolvePermission(m.id, 'denied')">Deny</button>
+                <button class="cbtn" (click)="chat.resolvePermission(m.id, 'always')">Session</button>
+                <button class="cbtn ghost" (click)="chat.resolvePermission(m.id, 'denied')">Deny</button>
               </div>
             }
           </div>
@@ -106,7 +106,7 @@
                 [class.picked]="m.answer === i"
                 [class.dimmed]="m.answer != null && m.answer !== i"
                 [disabled]="m.answer != null"
-                (click)="demo.answerQuestion(m.id, i)"
+                (click)="chat.answerQuestion(m.id, i)"
               >
                 <span class="radio" [class.on]="m.answer === i"><span></span></span>
                 <span [innerHTML]="rich(opt)"></span>
@@ -142,7 +142,7 @@
       }
     </div>
   }
-  @if (demo.busy()) {
+  @if (chat.busy()) {
     <div class="asst-row">
       <span class="avatar"><pm-icon name="sparkle" [size]="12" /></span>
       <span class="working"><span class="cc-work"></span> working…</span>
@@ -162,11 +162,11 @@
       [placeholder]="'Message Claude · ' + (session.host()?.name ?? 'pear')"
     ></textarea>
     <div class="box-foot">
-      <button class="auto" (click)="demo.autoApprove.set(!demo.autoApprove())">
-        <pm-icon name="shield" [size]="12" [class.warn-ic]="demo.autoApprove()" />
-        {{ demo.autoApprove() ? 'auto-approve' : 'ask each time' }}
+      <button class="auto" (click)="chat.toggleAutoApprove()">
+        <pm-icon name="shield" [size]="12" [class.warn-ic]="chat.autoApprove()" />
+        {{ chat.autoApprove() ? 'auto-approve' : 'ask each time' }}
       </button>
-      <button class="send" [class.ready]="input().trim() && !demo.busy()" (click)="send()">
+      <button class="send" [class.ready]="input().trim() && !chat.busy()" (click)="send()">
         <pm-icon name="sendUp" [size]="17" />
       </button>
     </div>
@@ -175,16 +175,40 @@
 
 <!-- history sheet -->
 <pm-sheet [open]="menuOpen()" maxHeight="64%" (closed)="menuOpen.set(false)">
-  <div class="sess-title">Sessions on {{ session.host()?.name ?? '—' }}</div>
+  @if (chat.hostPick; as hp) {
+    <div class="sess-title">Claude runs on</div>
+    <div class="hostpick noscroll">
+      @for (h of session.hosts(); track h.id) {
+        <button class="hp" [class.on]="hp.current() === h.id" (click)="pickClaudeHost(h.id)">
+          {{ h.name }}
+        </button>
+      }
+    </div>
+    <div class="hp-hint">A host with the claude CLI installed and logged in.</div>
+  }
+  @if (chat.modelPick; as mp) {
+    <div class="sess-title">Model</div>
+    <div class="hostpick noscroll">
+      @for (m of models; track m.label) {
+        <button class="hp" [class.on]="mp.current() === m.value" (click)="pickModel(m.value)">
+          {{ m.label }}
+        </button>
+      }
+    </div>
+    <div class="hp-hint">Applies from the next reply.</div>
+  }
+  <div class="sess-title">Sessions</div>
   <div class="sess-list noscroll">
-    @for (s of demo.sessions; track s.id) {
-      <button class="sess" [class.on]="s.id === demo.sessionId()" (click)="loadSession(s)">
+    @for (s of chat.sessions(); track s.id) {
+      <button class="sess" [class.on]="s.id === chat.sessionId()" (click)="loadSession(s.id)">
         <div class="sess-head">
           <span class="sess-name">{{ s.title }}</span>
           <span class="sess-when">{{ s.when }}</span>
         </div>
         <div class="sess-meta">{{ s.turns }} turns · {{ (s.tokens / 1000).toFixed(1) }}k tokens</div>
       </button>
+    } @empty {
+      <div class="sess-empty">No sessions yet — send a message to start one.</div>
     }
     <button class="sess-new" (click)="newSession()"><pm-icon name="plus" [size]="15" /> New session</button>
   </div>

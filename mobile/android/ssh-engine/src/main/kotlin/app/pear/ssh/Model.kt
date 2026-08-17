@@ -22,6 +22,8 @@ class SshError(
         const val FILE_TOO_LARGE = "FILE_TOO_LARGE"
         const val SFTP_FAILED = "SFTP_FAILED"
         const val EXEC_FAILED = "EXEC_FAILED"
+        const val FORWARD_DENIED = "FORWARD_DENIED"
+        const val TRANSFER_ABORTED = "TRANSFER_ABORTED"
     }
 }
 
@@ -77,6 +79,10 @@ data class DirListingData(val path: String, val entries: List<RemoteEntry>)
 /** Engine → embedder events; the plugin batches these across the bridge. */
 interface EngineEvents {
     fun shellData(channelId: String, data: String)
+    /** Only non-PTY channels demux stderr; PTY channels merge it into data. */
+    fun shellStderr(channelId: String, data: String)
     fun shellExit(channelId: String, code: Int)
     fun sessionClosed(sessionId: String)
+    /** Byte progress for a running download/upload (throttled by the engine). */
+    fun transferProgress(transferId: String, bytes: Long, total: Long) {}
 }

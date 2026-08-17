@@ -12,7 +12,7 @@ import type {
 } from './pear-ssh';
 import { CapacitorSshTransport, toAuthSpec, type HostKeyGate } from './transport';
 import { createNativeBackend } from './backend';
-import type { HostConfig } from '@pear/core';
+import type { HostConfig, SshTransport } from '@pear/core';
 
 // ---------------------------------------------------------------- test dolls
 
@@ -44,12 +44,19 @@ class FakePlugin implements PearSshPlugin {
     const impl = this.connectQueue.shift();
     return impl ? impl() : Promise.resolve({ sessionId: 's1' });
   }
+  connectVia(spec: SshConnectSpec & { jumpSessionId: string }): Promise<{ sessionId: string }> {
+    this.calls.push({ method: 'connectVia', args: spec });
+    const impl = this.connectQueue.shift();
+    return impl ? impl() : Promise.resolve({ sessionId: 's2' });
+  }
   disconnect(o: { sessionId: string }) { return this.record('disconnect', o, undefined as void); }
   isConnected(o: { sessionId: string }) { return this.record('isConnected', o, { connected: true }); }
   forgetHostKey(o: { host: string; port: number }) { return this.record('forgetHostKey', o, undefined as void); }
   probe(o: { host: string; port: number }) { return this.record('probe', o, { ms: 7 }); }
+  /** Maps a command substring to canned stdout (e.g. tmux detection). */
+  execStdout: (command: string) => string = () => '';
   exec(o: { sessionId: string; command: string }) {
-    return this.record('exec', o, { code: 0, stdout: '', stderr: '' });
+    return this.record('exec', o, { code: 0, stdout: this.execStdout(o.command), stderr: '' });
   }
   shellOpen(o: object) { return this.record('shellOpen', o, { channelId: `ch${++this.nextChannel}` }); }
   shellWrite(o: object) { return this.record('shellWrite', o, undefined as void); }
@@ -63,7 +70,27 @@ class FakePlugin implements PearSshPlugin {
   }
   sftpRead(o: object) { return this.record('sftpRead', o, { content: 'hello' }); }
   sftpWrite(o: object) { return this.record('sftpWrite', o, undefined as void); }
-  sftpStat(o: object) { return this.record('sftpStat', o, { exists: false }); }
+  /** path → fake remote entry consulted by sftpStat (null = missing). */
+  remoteStat: (path: string) => { kind: 'file' | 'dir'; size: number } | null = () => null;
+  sftpStat(o: { path: string }) {
+    const entry = this.remoteStat(o.path);
+    return this.record(
+      'sftpStat',
+      o,
+      entry
+        ? {
+            exists: true,
+            entry: {
+              name: o.path.split('/').pop()!,
+              kind: entry.kind,
+              size: entry.size,
+              mtimeMs: 0,
+              mode: '-rw-r--r--',
+            },
+          }
+        : { exists: false },
+    );
+  }
   sftpMkdir(o: object) { return this.record('sftpMkdir', o, undefined as void); }
   sftpRemove(o: object) { return this.record('sftpRemove', o, undefined as void); }
   sftpRename(o: object) { return this.record('sftpRename', o, undefined as void); }
@@ -73,6 +100,60 @@ class FakePlugin implements PearSshPlugin {
   cipherEncrypt(o: { plain: string }) { return this.record('cipherEncrypt', o, { cipher: `enc:${o.plain}` }); }
   cipherDecrypt(o: { cipher: string }) {
     return this.record('cipherDecrypt', o, { plain: o.cipher.replace(/^enc:/, '') });
+  }
+
+  // ---- transfers / local fs / SAF ----
+  /** path → fake local entry (LocalFsTransport + Downloads-publish walk). */
+  localFiles = new Map<string, { kind: 'file' | 'dir'; size: number }>();
+  download(o: { localPath: string }) {
+    // A completed download materializes the file on the phone.
+    this.localFiles.set(o.localPath, { kind: 'file', size: 3 });
+    return this.record('download', o, undefined as void);
+  }
+  upload(o: object) { return this.record('upload', o, undefined as void); }
+  transferAbort(o: object) { return this.record('transferAbort', o, undefined as void); }
+  makeStagingDir() { return this.record('makeStagingDir', {}, { path: '/cache/pear-staging/1' }); }
+  localList(o: { path: string }) {
+    const entries = [...this.localFiles.entries()]
+      .filter(([p]) => p.startsWith(o.path + '/') && !p.slice(o.path.length + 1).includes('/'))
+      .map(([p, e]) => ({
+        name: p.split('/').pop()!,
+        kind: e.kind,
+        size: e.size,
+        mtimeMs: 0,
+        mode: e.kind === 'dir' ? 'drwxr-xr-x' : '-rw-r--r--',
+      }));
+    return this.record('localList', o, { path: o.path, entries });
+  }
+  localStat(o: { path: string }) {
+    const entry = this.localFiles.get(o.path);
+    return this.record(
+      'localStat',
+      o,
+      entry
+        ? {
+            exists: true,
+            entry: {
+              name: o.path.split('/').pop()!,
+              kind: entry.kind,
+              size: entry.size,
+              mtimeMs: 0,
+              mode: entry.kind === 'dir' ? 'drwxr-xr-x' : '-rw-r--r--',
+            },
+          }
+        : { exists: false },
+    );
+  }
+  localMkdir(o: object) { return this.record('localMkdir', o, undefined as void); }
+  localRemove(o: object) { return this.record('localRemove', o, undefined as void); }
+  localRename(o: object) { return this.record('localRename', o, undefined as void); }
+  localHash(o: object) { return this.record('localHash', o, { hash: 'cd'.repeat(32) }); }
+  saveToDownloads(o: { localPath: string }) {
+    return this.record('saveToDownloads', o, { name: o.localPath.split('/').pop()! });
+  }
+  pickedFiles: { path: string; name: string; size: number }[] = [];
+  pickFiles() {
+    return this.record('pickFiles', {}, { files: this.pickedFiles, dir: '/cache/pear-staging/pick' });
   }
   addListener(event: string, cb: (e: never) => void) {
     const set = this.listeners.get(event) ?? new Set();
@@ -182,6 +263,84 @@ describe('CapacitorSshTransport TOFU', () => {
     const plugin = new FakePlugin();
     plugin.connectQueue = [() => Promise.reject({ message: 'auth failed', code: 'AUTH_FAILED' })];
     await expect(transport(plugin).connect()).rejects.toThrow('auth failed');
+  });
+});
+
+describe('CapacitorSshTransport via/ProxyJump', () => {
+  /** A connected jump transport (plugin session 's1') sharing plugin + hub. */
+  async function connectedJump(plugin: FakePlugin, hub: SshEventHub) {
+    const jump = new CapacitorSshTransport(host({ id: 'jump' }), { plugin, hub, gate: yesGate });
+    await jump.connect();
+    return jump;
+  }
+
+  it('tunnels the dial through the connected jump session', async () => {
+    const plugin = new FakePlugin();
+    const hub = new SshEventHub(plugin);
+    const jump = await connectedJump(plugin, hub);
+    const target = new CapacitorSshTransport(
+      host({ id: 'target', host: '10.9.9.9' }),
+      { plugin, hub, gate: yesGate },
+      jump,
+    );
+    await target.connect();
+
+    expect(target.isConnected).toBe(true);
+    // The jump used a plain connect; the target tunneled through it.
+    expect(plugin.argsOf('connect')).toHaveLength(1);
+    const via = plugin.argsOf('connectVia') as (SshConnectSpec & { jumpSessionId: string })[];
+    expect(via).toHaveLength(1);
+    expect(via[0].jumpSessionId).toBe('s1');
+    expect(via[0].host).toBe('10.9.9.9');
+  });
+
+  it('carries the target host key TOFU through the tunnel', async () => {
+    const plugin = new FakePlugin();
+    const hub = new SshEventHub(plugin);
+    const jump = await connectedJump(plugin, hub);
+    // Target's first tunneled dial trips UNKNOWN_HOST_KEY; the gate approves.
+    plugin.connectQueue = [rejection('UNKNOWN_HOST_KEY', { fingerprint: 'SHA256:tgt' })];
+    const target = new CapacitorSshTransport(host({ id: 'target' }), { plugin, hub, gate: yesGate }, jump);
+    await target.connect();
+
+    const via = plugin.argsOf('connectVia') as (SshConnectSpec & { jumpSessionId: string })[];
+    expect(via).toHaveLength(2);
+    expect(via[0].trustFingerprint).toBeUndefined();
+    expect(via[1].trustFingerprint).toBe('SHA256:tgt');
+    expect(via[1].jumpSessionId).toBe('s1');
+  });
+
+  it('rejects a non-native jump transport at construction', () => {
+    const plugin = new FakePlugin();
+    const alien = { isConnected: true } as unknown as SshTransport;
+    expect(
+      () =>
+        new CapacitorSshTransport(host(), { plugin, hub: new SshEventHub(plugin), gate: yesGate }, alien),
+    ).toThrow(/native SSH connection/);
+  });
+
+  it('fails to dial when the jump is not connected', async () => {
+    const plugin = new FakePlugin();
+    const hub = new SshEventHub(plugin);
+    const jump = new CapacitorSshTransport(host({ id: 'jump' }), { plugin, hub, gate: yesGate });
+    const target = new CapacitorSshTransport(host({ id: 'target' }), { plugin, hub, gate: yesGate }, jump);
+    await expect(target.connect()).rejects.toThrow(/not connected/);
+    expect(plugin.argsOf('connectVia')).toHaveLength(0);
+  });
+
+  it('tears down the target when the jump connection drops', async () => {
+    const plugin = new FakePlugin();
+    const hub = new SshEventHub(plugin);
+    const jump = await connectedJump(plugin, hub);
+    const target = new CapacitorSshTransport(host({ id: 'target' }), { plugin, hub, gate: yesGate }, jump);
+    await target.connect();
+    expect(target.isConnected).toBe(true);
+
+    plugin.emit('sessionClosed', { sessionId: 's1' }); // jump's carrier dies
+    await tick();
+    expect(target.isConnected).toBe(false);
+    // The dying jump also cascades a disconnect of the target session.
+    expect(plugin.argsOf('disconnect')).toContainEqual({ sessionId: 's2' });
   });
 });
 
@@ -335,6 +494,34 @@ describe('NativeSshBackend', () => {
     });
   });
 
+  it('wraps the terminal in tmux when the host has it', async () => {
+    const plugin = new FakePlugin();
+    plugin.execStdout = (cmd) => (cmd.includes('tmux') ? 'yes' : '');
+    const api = backend(plugin);
+    const id = await withHost(api);
+
+    const termId = await api.term.open(id, { cols: 80, rows: 24 });
+    await tick();
+    const writes = plugin.argsOf('shellWrite').map((a) => (a as { data: string }).data);
+    expect(writes.some((d) => d.includes(`tmux new-session -A -s pear`))).toBe(true);
+    expect(termId).toBeTruthy();
+  });
+
+  it('warns once (no tmux command) when the host lacks tmux', async () => {
+    const plugin = new FakePlugin();
+    plugin.execStdout = () => 'no';
+    const api = backend(plugin);
+    const id = await withHost(api);
+
+    const notes: string[] = [];
+    api.term.onData((_t, data) => notes.push(data));
+    await api.term.open(id, { cols: 80, rows: 24 });
+    await tick();
+    const writes = plugin.argsOf('shellWrite').map((a) => (a as { data: string }).data);
+    expect(writes.some((d) => d.includes('tmux new-session'))).toBe(false);
+    expect(notes.some((n) => n.includes('tmux not found'))).toBe(true);
+  });
+
   it('reused connections do not redial', async () => {
     const plugin = new FakePlugin();
     const api = backend(plugin);
@@ -342,5 +529,44 @@ describe('NativeSshBackend', () => {
     await api.fs.list(id, '/srv');
     await api.fs.read(id, '/srv/a.txt');
     expect(plugin.argsOf('connect')).toHaveLength(1);
+  });
+
+  it('pickAndUpload stages SAF picks and uploads them into the target dir', async () => {
+    const plugin = new FakePlugin();
+    plugin.pickedFiles = [{ path: '/cache/pear-staging/pick/x.txt', name: 'x.txt', size: 3 }];
+    plugin.localFiles.set('/cache/pear-staging/pick/x.txt', { kind: 'file', size: 3 });
+    const api = backend(plugin);
+    const id = await withHost(api);
+
+    const jobId = await api.pickAndUpload(id, '/srv');
+    expect(jobId).toBeTruthy();
+    for (let i = 0; i < 40 && !plugin.argsOf('upload').length; i++) await tick();
+
+    const up = plugin.argsOf('upload')[0] as { localPath: string; remotePath: string };
+    expect(up.localPath).toBe('/cache/pear-staging/pick/x.txt');
+    expect(up.remotePath).toBe('/srv/x.txt');
+    // the staging dir is swept once the job settles
+    for (let i = 0; i < 40 && !plugin.argsOf('localRemove').length; i++) await tick();
+    expect(plugin.argsOf('localRemove')[0]).toMatchObject({
+      path: '/cache/pear-staging/pick',
+      recursive: true,
+    });
+  });
+
+  it('transfers.download stages on the phone, then publishes into Downloads', async () => {
+    const plugin = new FakePlugin();
+    plugin.remoteStat = (path) => (path === '/srv/a.txt' ? { kind: 'file', size: 3 } : null);
+    const api = backend(plugin);
+    const id = await withHost(api);
+
+    await api.transfers.download(id, '/srv', ['a.txt'], 'rename', false);
+    for (let i = 0; i < 40 && !plugin.argsOf('saveToDownloads').length; i++) await tick();
+
+    const down = plugin.argsOf('download')[0] as { remotePath: string; localPath: string };
+    expect(down.remotePath).toBe('/srv/a.txt');
+    expect(down.localPath).toBe('/cache/pear-staging/1/a.txt');
+    expect(plugin.argsOf('saveToDownloads')[0]).toMatchObject({
+      localPath: '/cache/pear-staging/1/a.txt',
+    });
   });
 });

@@ -36,7 +36,7 @@
           "options": {
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
-            "allowedCommonJsDependencies": ["@pear/core"],
+            "allowedCommonJsDependencies": ["@pear/core", "ajv", "ajv-formats"],
             "assets": [
               {
                 "glob": "**/*",

@@ -12,9 +12,19 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { PmHeader, PmIconBtn, PmSheet } from '../chrome/chrome';
 import { PmIcon } from '../icons/icon';
 import { PearSession } from '../state/session';
-import { CTX_MAX, ClaudeDemo, type ClaudeDemoSession } from './claude-demo';
+import { CTX_MAX } from './claude-demo';
+import { CLAUDE_STORE } from './claude-store';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Same lineup as the desktop model menu; null = the CLI's default. */
+const MODELS: { label: string; value: string | null }[] = [
+  { label: 'Default', value: null },
+  { label: 'Fable 5', value: 'claude-fable-5' },
+  { label: 'Opus 4.8', value: 'claude-opus-4-8' },
+  { label: 'Sonnet 5', value: 'claude-sonnet-5' },
+  { label: 'Haiku 4.5', value: 'claude-haiku-4-5' },
+];
 
 /** Claude assistant screen — transcript chat over the scripted M1 demo store. */
 @Component({
@@ -27,7 +37,7 @@ export class PmClaudeScreen {
   readonly hostTap = output<void>();
 
   protected readonly session = inject(PearSession);
-  protected readonly demo = inject(ClaudeDemo);
+  protected readonly chat = inject(CLAUDE_STORE);
   private readonly sanitizer = inject(DomSanitizer);
 
   protected readonly input = signal('');
@@ -37,19 +47,33 @@ export class PmClaudeScreen {
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly ta = viewChild<ElementRef<HTMLTextAreaElement>>('ta');
 
-  protected readonly pct = computed(() => Math.min(100, (this.demo.tokens() / CTX_MAX) * 100));
+  protected readonly pct = computed(() => Math.min(100, (this.chat.tokens() / CTX_MAX) * 100));
   protected readonly meterColor = computed(() =>
     this.pct() > 85 ? 'var(--err)' : this.pct() > 65 ? 'var(--warn)' : 'var(--claude)',
   );
-  protected readonly tokensText = computed(() => `${(this.demo.tokens() / 1000).toFixed(1)}k / 200k`);
+  protected readonly tokensText = computed(() => `${(this.chat.tokens() / 1000).toFixed(1)}k / 200k`);
 
   constructor() {
     effect(() => {
-      this.demo.messages();
-      this.demo.busy();
+      this.chat.messages();
+      this.chat.busy();
       const el = this.body()?.nativeElement;
       if (el) queueMicrotask(() => (el.scrollTop = el.scrollHeight));
     });
+  }
+
+  protected openMenu(): void {
+    this.chat.refreshSessions();
+    this.menuOpen.set(!this.menuOpen());
+  }
+
+  protected pickClaudeHost(id: string): void {
+    this.chat.hostPick?.set(id);
+  }
+
+  protected readonly models = MODELS;
+  protected pickModel(value: string | null): void {
+    this.chat.modelPick?.set(value);
   }
 
   private readonly richCache = new Map<string, SafeHtml>();
@@ -80,11 +104,11 @@ export class PmClaudeScreen {
 
   protected send(): void {
     const text = this.input().trim();
-    if (!text || this.demo.busy()) return;
+    if (!text || this.chat.busy()) return;
     this.input.set('');
     const el = this.ta()?.nativeElement;
     if (el) el.style.height = 'auto';
-    this.demo.send(text);
+    this.chat.send(text);
   }
 
   protected grow(event: Event): void {
@@ -94,12 +118,12 @@ export class PmClaudeScreen {
     el.style.height = `${Math.min(96, el.scrollHeight)}px`;
   }
 
-  protected loadSession(s: ClaudeDemoSession): void {
-    this.demo.load(s);
+  protected loadSession(sessionId: string): void {
+    this.chat.load(sessionId);
     this.menuOpen.set(false);
   }
   protected newSession(): void {
-    this.demo.newSession();
+    this.chat.newSession();
     this.menuOpen.set(false);
     setTimeout(() => this.ta()?.nativeElement.focus(), 0);
   }

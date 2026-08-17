@@ -23,6 +23,9 @@ export class PearSession {
 
   readonly orch = signal<Orchestration | null>(null);
   readonly orchLoading = signal(false);
+  /** Bumped when an action lands in the terminal (logs, console) — the
+   *  shells react by revealing the terminal so the output is visible. */
+  readonly shellPing = signal(0);
 
   readonly host = computed(() => this.hosts().find((h) => h.id === this.activeHostId()) ?? null);
   readonly activeWs = computed(() => this.groups().find((w) => w.id === this.activeWsId()) ?? null);
@@ -64,6 +67,16 @@ export class PearSession {
     const [hosts, groups] = await Promise.all([this.backend.hosts.list(), this.backend.hostGroups.list()]);
     this.hosts.set(hosts);
     this.groups.set(groups);
+    // The active host/workspace default to mock seed ids ('h1'/'w1'); on the
+    // native backend real hosts have generated ids, so reconcile the
+    // selection against what actually loaded — otherwise every hostId-keyed
+    // call (orch, fs, term) targets a phantom host.
+    if (!hosts.some((h) => h.id === this.activeHostId())) {
+      this.activeHostId.set(hosts[0]?.id ?? null);
+    }
+    if (this.activeWsId() !== null && !groups.some((g) => g.id === this.activeWsId())) {
+      this.activeWsId.set(null);
+    }
   }
 
   // ---- connection ----------------------------------------------------------
@@ -87,11 +100,15 @@ export class PearSession {
 
   async refreshOrch(): Promise<void> {
     const id = this.activeHostId();
-    if (!id) return;
+    if (!id || !this.hosts().some((h) => h.id === id)) return;
     this.orchLoading.set(true);
     try {
       const o = await this.backend.orch.get(id);
       if (this.activeHostId() === id) this.orch.set(o);
+    } catch {
+      // Host offline or not yet reachable — leave the orch view empty rather
+      // than surfacing a boot-time console error.
+      if (this.activeHostId() === id) this.orch.set(null);
     } finally {
       this.orchLoading.set(false);
     }
@@ -101,8 +118,12 @@ export class PearSession {
     const id = this.activeHostId();
     if (!id) return;
     const result = await this.backend.orch.action(id, action);
-    // Streaming actions (logs, console) run in the host's terminal.
-    if (result.terminalCommand) void this.terms.run(id, result.terminalCommand);
+    // Streaming actions (logs, console) run in the host's terminal — and the
+    // shell must actually show it, or the tap looks like a no-op.
+    if (result.terminalCommand) {
+      void this.terms.run(id, result.terminalCommand);
+      this.shellPing.update((n) => n + 1);
+    }
     await this.refreshOrch();
   }
 

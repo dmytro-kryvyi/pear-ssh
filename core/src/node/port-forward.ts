@@ -1,20 +1,10 @@
 import { createServer, type Server, type Socket } from 'node:net';
-import type { HostConfig } from '../types';
+import type { HostConfig, PortForwardInfo } from '../types';
 import type { SshTransport } from '../ssh/transport';
 import { uuid } from '../uuid';
 import { SshConnection } from './connection';
 
-export interface PortForwardInfo {
-  id: string;
-  hostId: string;
-  hostName: string;
-  /** Destination as seen from the remote host (usually 127.0.0.1). */
-  remoteHost: string;
-  remotePort: number;
-  localHost: '127.0.0.1';
-  localPort: number;
-  startedAt: number;
-}
+export type { PortForwardInfo } from '../types';
 
 interface ActiveForward {
   info: PortForwardInfo;

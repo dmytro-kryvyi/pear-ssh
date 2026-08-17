@@ -1,0 +1,92 @@
+name: Android
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Dry-run the whole packaging path on a branch: builds and uploads the APK
+  # as a workflow artifact, but publishes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: Signed APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The Android SDK is preinstalled on ubuntu-latest; only the JDK needs
+      # pinning (the ssh-engine composite targets 17 from any 17+ toolchain).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - run: npm ci
+
+      # The tag drives versionName so v1.2.3 ships as 1.2.3 with no committed
+      # bump; versionCode is monotonic from the run number for Play upgrades.
+      - name: Set version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          sed -i "s/versionName \".*\"/versionName \"${GITHUB_REF_NAME#v}\"/" mobile/android/app/build.gradle
+          sed -i "s/versionCode .*/versionCode ${{ github.run_number }}/" mobile/android/app/build.gradle
+
+      - name: Build web app and sync Capacitor
+        run: npm run mobile:sync
+
+      - name: Decode keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pear-release.keystore"
+
+      - name: Assemble release APK
+        env:
+          PEAR_KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && format('{0}/pear-release.keystore', runner.temp) || '' }}
+          PEAR_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PEAR_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PEAR_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p release-apk
+          apk=$(ls mobile/android/app/build/outputs/apk/release/*.apk | head -1)
+          cp "$apk" "release-apk/pear-${GITHUB_REF_NAME:-dev}.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pear-android
+          path: release-apk/*.apk
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The desktop workflow may not have created the release yet — make
+        # sure it exists, then attach.
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes 2>/dev/null || true
+          gh release upload "$GITHUB_REF_NAME" release-apk/*.apk --clobber
