@@ -156,13 +156,18 @@ export class SshChatSession implements ChatSessionHandle {
   /** Exit-file content once the runner is known dead, with out.jsonl's size
    *  at that moment — settled when the tail catches up to it. */
   private runnerExit: { code: string; outSize: number; err: string } | null = null;
+  /** Tail of the previous tail-chunk, so the runner-exit sentinel can't
+   *  hide across a chunk boundary. Regex-scan only — never fed to the
+   *  parser or the consumed-byte counter. */
+  private sentinelCarry = '';
   private turnOpen = false;
   private stderrTail = '';
   private interrupted = false;
   private disposed = false;
   private reconnecting = false;
   private model: string | null;
-  private opening: Promise<void> | null = null;
+  /** Serializes every tail-establishment attempt (open vs chase). */
+  private tailLock: Promise<void> = Promise.resolve();
   sessionId: string | null = null;
 
   constructor(
@@ -275,8 +280,21 @@ export class SshChatSession implements ChatSessionHandle {
 
   private ensureOpen(): Promise<void> {
     if (this.channelId) return Promise.resolve();
-    this.opening ??= this.open().finally(() => (this.opening = null));
-    return this.opening;
+    return this.locked(async () => {
+      if (this.channelId || this.disposed) return;
+      await this.open();
+    });
+  }
+
+  /** Nothing inside a critical section may call locked() again — it would
+   *  deadlock on its own queue entry. */
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tailLock.then(fn);
+    this.tailLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async open(): Promise<void> {
@@ -302,6 +320,7 @@ export class SshChatSession implements ChatSessionHandle {
       this.lastRunDir = runDir;
       this.consumed = 0;
       this.parser = new ChatStreamParser();
+      this.sentinelCarry = '';
       this.runnerExit = null;
       this.interrupted = false;
       this.stderrTail = '';
@@ -326,6 +345,11 @@ export class SshChatSession implements ChatSessionHandle {
       rows: 50,
       pty: false,
     });
+    if (this.channelId || this.disposed || this.interrupted || this.runDir !== runDir) {
+      // State moved while shellOpen was in flight — never leave a live tail.
+      void this.env.plugin.shellClose({ channelId });
+      return;
+    }
     this.channelId = channelId;
     this.env.hub.bindChannel(channelId, {
       onData: (chunk) => {
@@ -337,8 +361,12 @@ export class SshChatSession implements ChatSessionHandle {
         }
         // The runner's own last words — claude exited (crash, clean stop):
         // everything before the sentinel is already consumed, settle now.
-        const exit = /"pear_runner_exit","code":(\d+)/.exec(chunk);
+        // Scan with a small carry so a sentinel split across tail chunks
+        // still matches; byte accounting above stays on raw chunks.
+        const scan = this.sentinelCarry + chunk;
+        const exit = /"pear_runner_exit","code":(\d+)/.exec(scan);
         if (exit) this.runnerExit = { code: exit[1], outSize: 0, err: '' };
+        this.sentinelCarry = exit ? '' : scan.slice(-64);
         this.maybeSettleDeadRunner();
       },
       onStderr: (chunk) => {
@@ -364,9 +392,13 @@ export class SshChatSession implements ChatSessionHandle {
       for (let attempt = 0; attempt < RECONNECT_TRIES; attempt++) {
         if (this.disposed || this.interrupted || !this.runDir) return;
         try {
-          const sid = await this.env.sessionId();
-          await this.readRunnerExit(sid);
-          await this.openTail(sid);
+          await this.locked(async () => {
+            if (this.disposed || this.interrupted || !this.runDir) return;
+            if (this.channelId) return; // a send re-tailed while we queued
+            const sid = await this.env.sessionId();
+            await this.readRunnerExit(sid);
+            await this.openTail(sid);
+          });
           this.maybeSettleDeadRunner();
           return;
         } catch {

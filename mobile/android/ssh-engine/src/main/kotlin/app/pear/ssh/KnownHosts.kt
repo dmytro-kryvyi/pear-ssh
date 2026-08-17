@@ -8,43 +8,56 @@ import java.security.MessageDigest
 import java.security.PublicKey
 import java.util.Base64
 
+/** A trusted host key: OpenSSH-style fingerprint plus the key algorithm
+ *  (`ssh-ed25519`, `ssh-rsa`, …). keyType is null for entries written by
+ *  older builds that stored only the fingerprint. */
+data class KnownHostEntry(val fingerprint: String, val keyType: String? = null)
+
 /**
- * Persisted trust decisions, keyed by host:port. Values are OpenSSH-style
- * `SHA256:<base64-no-pad>` fingerprints — what `ssh` prints, so users can
- * cross-check against a trusted terminal.
+ * Persisted trust decisions, keyed by host:port. Fingerprints are OpenSSH
+ * `SHA256:<base64-no-pad>` — what `ssh` prints, so users can cross-check
+ * against a trusted terminal.
  */
 interface KnownHostsStore {
-    fun get(host: String, port: Int): String?
-    fun put(host: String, port: Int, fingerprint: String)
+    fun get(host: String, port: Int): KnownHostEntry?
+    fun put(host: String, port: Int, fingerprint: String, keyType: String? = null)
     fun forget(host: String, port: Int)
 }
 
-/** One `host:port<TAB>fingerprint` line per entry; rewrites atomically. */
+/** One `host:port<TAB>fingerprint[<TAB>keyType]` line per entry; the third
+ *  field is absent in files written by older builds. Rewrites atomically. */
 class FileKnownHostsStore(private val file: File) : KnownHostsStore {
     private val lock = Any()
 
-    private fun load(): MutableMap<String, String> = synchronized(lock) {
-        val map = LinkedHashMap<String, String>()
+    private fun load(): MutableMap<String, KnownHostEntry> = synchronized(lock) {
+        val map = LinkedHashMap<String, KnownHostEntry>()
         if (file.exists()) {
             for (line in file.readLines()) {
-                val cut = line.indexOf('\t')
-                if (cut > 0) map[line.substring(0, cut)] = line.substring(cut + 1)
+                val parts = line.split('\t')
+                if (parts.size >= 2 && parts[0].isNotEmpty()) {
+                    map[parts[0]] = KnownHostEntry(parts[1], parts.getOrNull(2)?.ifEmpty { null })
+                }
             }
         }
         map
     }
 
-    private fun save(map: Map<String, String>) = synchronized(lock) {
+    private fun save(map: Map<String, KnownHostEntry>) = synchronized(lock) {
         val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(map.entries.joinToString("") { "${it.key}\t${it.value}\n" })
+        tmp.writeText(
+            map.entries.joinToString("") { (key, e) ->
+                if (e.keyType != null) "$key\t${e.fingerprint}\t${e.keyType}\n"
+                else "$key\t${e.fingerprint}\n"
+            },
+        )
         tmp.renameTo(file)
     }
 
-    override fun get(host: String, port: Int): String? = load()["$host:$port"]
+    override fun get(host: String, port: Int): KnownHostEntry? = load()["$host:$port"]
 
-    override fun put(host: String, port: Int, fingerprint: String) {
+    override fun put(host: String, port: Int, fingerprint: String, keyType: String?) {
         val map = load()
-        map["$host:$port"] = fingerprint
+        map["$host:$port"] = KnownHostEntry(fingerprint, keyType)
         save(map)
     }
 
@@ -81,7 +94,7 @@ class TofuVerifier(
         val known = store.get(host, port)
         if (known == null) {
             if (trustFingerprint == fingerprint) {
-                store.put(host, port, fingerprint)
+                store.put(host, port, fingerprint, keyType)
                 return true
             }
             failure = SshError(
@@ -96,21 +109,30 @@ class TofuVerifier(
             )
             return false
         }
-        if (known == fingerprint) return true
+        if (known.fingerprint == fingerprint) {
+            // Self-heal entries from builds that didn't record the algorithm.
+            if (known.keyType == null) store.put(host, port, fingerprint, keyType)
+            return true
+        }
         // Never auto-accept a changed key — the UI must forget explicitly.
         failure = SshError(
             SshError.HOST_KEY_CHANGED,
-            "Host key for $host:$port changed — was $known, now $fingerprint",
+            "Host key for $host:$port changed — was ${known.fingerprint}, now $fingerprint",
             mapOf(
                 "host" to host,
                 "port" to port.toString(),
                 "keyType" to keyType,
                 "fingerprint" to fingerprint,
-                "knownFingerprint" to known,
+                "knownFingerprint" to known.fingerprint,
             ),
         )
         return false
     }
 
-    override fun findExistingAlgorithms(hostname: String, portArg: Int): List<String> = emptyList()
+    /** Prefer the trusted key's algorithm during negotiation, so a server
+     *  that serves several host keys presents the one we pinned instead of
+     *  tripping a spurious HOST_KEY_CHANGED. sshj only reorders its proposal
+     *  with this — verification above stays authoritative. */
+    override fun findExistingAlgorithms(hostname: String, portArg: Int): List<String> =
+        store.get(host, port)?.keyType?.let { listOf(it) } ?: emptyList()
 }

@@ -84,9 +84,15 @@ export function toolDisplay(tool: string, input: unknown): string {
  * messages are used only for blocks that never streamed (so the parser works
  * with or without --include-partial-messages, without double-rendering).
  */
+/** Parser instances are per CLI spawn; a fresh instance must never mint
+ *  blockIds a previous one used — the chat stores key live bubbles by
+ *  blockId, and a reborn `b1` would stream into a bubble from an old turn. */
+let parserGen = 0;
+
 export class ChatStreamParser {
   private buffer = '';
   private seq = 0;
+  private readonly idPrefix: string;
   private open = new Map<number, OpenBlock>();
   /** tool_use id -> blockId, for correlating tool_result. */
   private toolBlocks = new Map<string, string>();
@@ -96,10 +102,15 @@ export class ChatStreamParser {
   /** Context size after the latest API call (per-call usage snapshot). */
   private lastContextTokens = 0;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    idPrefix?: string, // tests pass 'b' for generation-stable ids
+  ) {
+    this.idPrefix = idPrefix ?? `b${++parserGen}.`;
+  }
 
   private nextId(): string {
-    return 'b' + ++this.seq;
+    return this.idPrefix + ++this.seq;
   }
 
   push(chunk: string): ClaudeChatEvent[] {

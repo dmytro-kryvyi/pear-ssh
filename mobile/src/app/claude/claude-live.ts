@@ -80,6 +80,11 @@ export class ClaudeLive implements ClaudeStore {
     switch (e.type) {
       case 'init':
         this.sessionId.set(e.sessionId);
+        // A fresh CLI spawn = a fresh parser generation; stale block→message
+        // links must not capture the new generation's deltas (old transcripts
+        // reuse b1, b2, … across generations).
+        this.blockMsg.clear();
+        this.toolStarted.clear();
         this.refreshSessions();
         break;
       case 'user':

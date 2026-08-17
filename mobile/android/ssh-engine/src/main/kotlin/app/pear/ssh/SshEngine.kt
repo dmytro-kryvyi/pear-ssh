@@ -139,12 +139,16 @@ class SshEngine(
         client.connection.keepAlive.keepAliveInterval = KEEPALIVE_SECONDS
 
         val state = SessionState(UUID.randomUUID().toString(), client)
-        sessions[state.id] = state
         client.transport.disconnectListener =
             net.schmizz.sshj.transport.DisconnectListener { reason, message ->
                 val detail = message.ifBlank { reason.toString() }
                 onSessionDead(state, "ssh session closed: $detail")
             }
+        sessions[state.id] = state
+        // The disconnect may have fired between listener install and
+        // registration — onSessionDead saw no map entry then, so evict the
+        // already-dead state rather than leaking a zombie session.
+        if (state.closed.get()) sessions.remove(state.id)
         return state.id
     }
 
@@ -309,14 +313,20 @@ class SshEngine(
         }
         thread(name = "pear-ssh-ch-${ch.id}-out", isDaemon = true) {
             pump(channel.inputStream::read, ch.id, events::shellData)
-            // stdout EOF = channel is closing; give stderr a moment to drain
-            // so its tail is not lost behind the exit event.
+            // stdout EOF = channel is closing; give stderr up to 2s to drain
+            // so its tail is not lost behind the exit event. Accepted
+            // tradeoff: stderr slower than that is delivered after the exit
+            // event — a bounded wait beats wedging the exit indefinitely on
+            // a silent stderr stream.
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
             while (!stderrDone.get() && System.nanoTime() < deadline) Thread.sleep(5)
             quietly { channel.join(2, TimeUnit.SECONDS) }
             channels.remove(ch.id)
             if (ch.exited.compareAndSet(false, true)) {
-                events.shellExit(ch.id, channel.exitStatus ?: 0)
+                // null exitStatus = the remote died to a signal (exit-signal)
+                // or the channel closed without a status — report -1 like
+                // exec() does, never a fake success.
+                events.shellExit(ch.id, channel.exitStatus ?: -1)
             }
             quietly { session.close() }
         }

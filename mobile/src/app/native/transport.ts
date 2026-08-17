@@ -60,6 +60,9 @@ export function toAuthSpec(auth: HostAuth | undefined): SshAuthSpec {
     throw new Error('SSH agent auth is not available on Android — use a key or password');
   }
   if (a.method === 'password') return { method: 'password', password: a.password };
+  if (a.method === 'key' && !a.privateKey) {
+    throw new Error('No private key stored for this host — paste one in the host editor');
+  }
   if (a.method === 'key' || a.privateKey || !a.password) {
     return { method: 'key', privateKey: a.privateKey, passphrase: a.passphrase };
   }
@@ -182,9 +185,10 @@ export class CapacitorSshTransport implements SshTransport {
     }
     const sessionId = this.sessionId!;
     this.connected = true;
+    this.closeFired = false; // re-arm for this connection
     this.deps.hub.bindSession(sessionId, () => {
       this.connected = false;
-      for (const cb of this.closeCbs) cb();
+      this.fireClose();
     });
     // A dying jump EOFs the tunnel and the engine already fires sessionClosed
     // for the target; tear down deterministically too so a wedged carrier
@@ -220,6 +224,14 @@ export class CapacitorSshTransport implements SshTransport {
 
   onClose(cb: () => void): void {
     this.closeCbs.push(cb);
+  }
+
+  private closeFired = false;
+
+  private fireClose(): void {
+    if (this.closeFired) return;
+    this.closeFired = true;
+    for (const cb of this.closeCbs) cb();
   }
 
   private get session(): string {
@@ -352,5 +364,10 @@ export class CapacitorSshTransport implements SshTransport {
       this.deps.hub.unbindSession(id);
       void this.deps.plugin.disconnect({ sessionId: id });
     }
+    // SessionManager's cleanup (connection map, terminals, onHostDisconnected)
+    // hangs off onClose — a via-target torn down because its jump died must
+    // fire it too. The once-guard covers a late engine sessionClosed echo
+    // (the hub handler was just unbound anyway).
+    this.fireClose();
   }
 }

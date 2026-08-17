@@ -99,6 +99,10 @@ export class ClaudeChatStore {
       case 'init':
         this.activeSessionId.set(event.sessionId);
         if (event.model) this.model.set(event.model);
+        // A fresh CLI spawn = a fresh parser generation; stale block links
+        // must not capture the new generation's deltas (old transcripts
+        // reuse b1, b2, … across generations).
+        this.byBlockId.clear();
         void this.loadSessions();
         return;
       case 'user':

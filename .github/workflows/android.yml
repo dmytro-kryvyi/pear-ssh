@@ -2,8 +2,13 @@ name: Android
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   # Dry-run the whole packaging path on a branch: builds and uploads the APK
   # as a workflow artifact, but publishes nothing.
   workflow_dispatch:
@@ -12,9 +17,58 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - run: npm ci
+
+      # Mobile specs import @pear/core, which resolves to core/dist.
+      - name: Build core
+        run: npm run build -w core
+
+      - name: Core tests
+        run: npm test -w core
+
+      - name: Mobile tests
+        run: npm test -w mobile
+
+      # The ssh-engine suite drives a real scratch sshd (ScratchSshd spawns
+      # /usr/sbin/sshd with its own config — no service needed).
+      - name: Install sshd for the engine tests
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
+
+      - name: ssh-engine JVM tests
+        working-directory: mobile/android/ssh-engine
+        run: ./gradlew test --no-daemon
+
   apk:
     name: Signed APK
     runs-on: ubuntu-latest
+    needs: test
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4

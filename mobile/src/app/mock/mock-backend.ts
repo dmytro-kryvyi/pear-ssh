@@ -121,8 +121,10 @@ export function createMockBackend(): PearApi {
           // Write-only secret contract: flags survive, values never come back.
           auth.hasPassword = auth.password ? true : auth.password === '' ? false : auth.hasPassword;
           auth.hasPassphrase = auth.passphrase ? true : auth.passphrase === '' ? false : auth.hasPassphrase;
+          auth.hasPrivateKey = auth.privateKey ? true : auth.privateKey === '' ? false : auth.hasPrivateKey;
           delete auth.password;
           delete auth.passphrase;
+          delete auth.privateKey;
         }
         const next: HostConfig = {
           ...clone(input),

@@ -50,7 +50,9 @@ export async function provisionSshWorkspace(
   remotePort: number,
   token: string,
 ): Promise<void> {
-  await transport.exec(`mkdir -p ${shq(dir)}`);
+  // 700 before anything secret lands inside: .mcp.json carries the MCP
+  // bearer token, and the SFTP write below is not atomic-with-mode.
+  await transport.exec(`mkdir -p ${shq(dir)} && chmod 700 ${shq(dir)}`);
   const mcpConfig = {
     mcpServers: {
       pear: {

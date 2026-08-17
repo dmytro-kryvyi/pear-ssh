@@ -99,6 +99,7 @@ export function createNativeBackend(
   interface ClaudeState {
     runtime: ClaudeChatRuntime;
     executor: ClaudeExecutor;
+    loadTranscript(id: string): Promise<void>;
     dispose(): void;
   }
   let claudeState: Promise<ClaudeState> | null = null;
@@ -335,18 +336,10 @@ export function createNativeBackend(
     });
     executor.setFocus(claudeFocus);
 
-    // Transcripts: preloaded into memory so core's sync store contract holds.
+    // Transcripts: a write-through cache so core's sync store contract holds;
+    // backfilled from kv per session via loadTranscript before resume.
     const indexStorage = await syncStorage(deps.kv, 'pear.claude.sessions');
     const transcripts = new Map<string, string>();
-    try {
-      const metas = JSON.parse(indexStorage.read() ?? '[]') as ClaudeSessionMeta[];
-      for (const meta of metas.slice(0, 20)) {
-        const data = await deps.kv.get(`pear.claude.t.${meta.id}`);
-        if (data) transcripts.set(meta.id, data);
-      }
-    } catch {
-      // corrupt index — start clean
-    }
 
     const runtime = new ClaudeChatRuntime({
       storage: indexStorage,
@@ -371,6 +364,13 @@ export function createNativeBackend(
     return {
       runtime,
       executor,
+      // No catch: a kv failure must fail the resume — proceeding with an
+      // empty log would overwrite the stored transcript on the next turn.
+      loadTranscript: async (id) => {
+        if (transcripts.has(id)) return;
+        const data = await deps.kv.get(`pear.claude.t.${id}`);
+        if (data != null) transcripts.set(id, data);
+      },
       dispose: () => {
         runtime.dispose();
         mcp.dispose();
@@ -388,6 +388,12 @@ export function createNativeBackend(
     return claudeState;
   };
 
+  /** Fire-and-forget onto an already-building runtime; a rejected build is
+   *  swallowed here because it already surfaces via ensureClaude. */
+  const withClaude = (fn: (s: ClaudeState) => void): void => {
+    void claudeState?.then(fn).catch(() => {});
+  };
+
   return {
     hosts: {
       list: async () => (await ready).hosts.listSanitized(),
@@ -395,6 +401,11 @@ export function createNativeBackend(
       remove: async (id) => {
         const { hosts, groups, sessions } = await ready;
         sessions.disconnectHost(id);
+        // Removing the Claude host: drop the runtime + tunnel, and clear the
+        // sticky pick even when the runtime was never built this run — a
+        // dangling id would fail every future chat with a confusing error.
+        if (activeClaudeHostId === id) teardownClaude();
+        if ((await deps.kv.get(CLAUDE_HOST_KEY)) === id) await deps.kv.set(CLAUDE_HOST_KEY, '');
         groups.removeHostRefs(id);
         await hosts.remove(id);
       },
@@ -604,18 +615,18 @@ export function createNativeBackend(
       },
       chatSend: async (text) => (await ensureClaude()).runtime.send(text),
       chatInterrupt: () => {
-        void claudeState?.then((s) => s.runtime.interrupt());
+        withClaude((s) => s.runtime.interrupt());
       },
       chatAnswer: (requestId, answer) => {
-        void claudeState?.then((s) => s.runtime.answer(requestId, answer));
+        withClaude((s) => s.runtime.answer(requestId, answer));
       },
       chatSetAutoApprove: (on) => {
         claudeAutoApprove = on;
-        void claudeState?.then((s) => s.runtime.setAutoApprove(on));
+        withClaude((s) => s.runtime.setAutoApprove(on));
       },
       chatSetModel: (model) => {
         claudeModel = model;
-        void claudeState?.then((s) => s.runtime.setModel(model));
+        withClaude((s) => s.runtime.setModel(model));
       },
       chatSessions: async () => {
         try {
@@ -626,13 +637,19 @@ export function createNativeBackend(
           return [];
         }
       },
-      chatResume: async (sessionId) => (await ensureClaude()).runtime.resume(sessionId),
+      chatResume: async (sessionId) => {
+        const s = await ensureClaude();
+        await s.loadTranscript(sessionId);
+        return s.runtime.resume(sessionId);
+      },
       chatNew: async () => {
-        await claudeState?.then((s) => s.runtime.newSession());
+        // A rejected build means there is no conversation to reset; real
+        // build errors surface via ensureClaude on send/resume.
+        await claudeState?.then((s) => s.runtime.newSession()).catch(() => {});
       },
       setFocus: (focus) => {
         claudeFocus = focus;
-        void claudeState?.then((s) => s.executor.setFocus(focus));
+        withClaude((s) => s.executor.setFocus(focus));
       },
       onEvent: (cb) => {
         claudeEvents.add(cb);

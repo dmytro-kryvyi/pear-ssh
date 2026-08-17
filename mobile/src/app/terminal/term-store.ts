@@ -40,6 +40,8 @@ export interface TermHandle {
   el: HTMLDivElement;
   status: ReturnType<typeof signal<TermStatus>>;
   opened: boolean;
+  /** In-flight PTY open — single-flight guard for concurrent ensure(). */
+  opening?: Promise<void>;
 }
 
 /**
@@ -111,9 +113,18 @@ export class TermStore {
       this.handles.set(hostId, handle);
       this.openHosts.update((ids) => [...ids, hostId]);
     }
-    if (!handle.termId && handle.status() !== 'opening') handle.status.set('opening');
-    if (!handle.termId) await this.open(handle, cwd);
+    if (!handle.termId) await this.openOnce(handle, cwd);
     return handle;
+  }
+
+  /** Concurrent callers (orch action + the terminal screen's mount effect)
+   *  must share one PTY open — a second open would orphan a remote shell
+   *  whose output then buffers in `pending` forever. */
+  private openOnce(handle: TermHandle, cwd?: string): Promise<void> {
+    handle.opening ??= this.open(handle, cwd).finally(() => {
+      handle.opening = undefined;
+    });
+    return handle.opening;
   }
 
   private async open(handle: TermHandle, cwd?: string): Promise<void> {
@@ -139,7 +150,7 @@ export class TermStore {
   /** Reopen after an exit/failure (tap-to-reconnect). */
   async reconnect(hostId: string): Promise<void> {
     const handle = this.handles.get(hostId);
-    if (handle && !handle.termId) await this.open(handle);
+    if (handle && !handle.termId) await this.openOnce(handle);
   }
 
   /** Mount the host's terminal into a pane and size it to fit. */

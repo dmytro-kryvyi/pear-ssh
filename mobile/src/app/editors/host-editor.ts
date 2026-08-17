@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { autoShort, type HostConfig, type HostEndpoint } from '@pear/core';
 import { PEAR_BACKEND } from '../backend';
 import { PmSeg, PmWsGlyph } from '../chrome/chrome';
@@ -37,8 +37,12 @@ export class PmHostEditor {
   protected readonly draft = signal<HostConfig | null>(null);
   protected readonly probe = signal<Record<string, ProbeUi>>({});
   protected readonly memberIds = signal<string[]>([]);
+  protected readonly keyCleared = signal(false);
 
   protected readonly d = computed(() => this.draft() ?? this.host());
+  protected readonly hasKey = computed(
+    () => !this.keyCleared() && Boolean(this.d().auth?.hasPrivateKey),
+  );
   protected readonly isNew = computed(() => !this.host().name);
   protected readonly stripeColor = computed(() => wsColor(this.d().color));
   protected readonly autoLabel = computed(() => autoShort(this.d().name) || '—');
@@ -49,10 +53,15 @@ export class PmHostEditor {
 
   constructor() {
     effect(() => {
-      const h = this.host();
-      this.draft.set(structuredClone(h));
-      this.memberIds.set(this.session.groupsOf(h.id).map((w) => w.id));
+      const h = structuredClone(this.host());
+      // Agent auth is desktop-only — never let a mobile save persist it.
+      if (h.auth?.method === 'agent') h.auth = { ...h.auth, method: 'key', agent: undefined };
+      this.draft.set(h);
+      // untracked: reading groups() here would otherwise re-run this effect
+      // (wiping the whole draft) whenever any workspace changes.
+      this.memberIds.set(untracked(() => this.session.groupsOf(h.id)).map((w) => w.id));
       this.probe.set({});
+      this.keyCleared.set(false);
       this.section.set('connection');
     });
   }
@@ -62,6 +71,10 @@ export class PmHostEditor {
   }
   protected setAuth(patch: Partial<NonNullable<HostConfig['auth']>>): void {
     this.set('auth', { ...(this.d().auth ?? {}), ...patch });
+  }
+  protected clearKey(): void {
+    this.keyCleared.set(true);
+    this.setAuth({ privateKey: '', passphrase: '' }); // '' = explicit clear on save
   }
 
   // ---- endpoints -----------------------------------------------------------
@@ -145,8 +158,18 @@ export class PmHostEditor {
   protected async save(): Promise<void> {
     const d = this.d();
     const eps = (d.endpoints ?? []).filter((e) => e.addr.trim());
+    // In the store's merge, '' clears a secret and undefined keeps it. A field
+    // typed into and then erased must mean "keep" (per the hints) — only the
+    // explicit Clear button sends ''.
+    const auth = d.auth ? { ...d.auth } : undefined;
+    if (auth && !this.keyCleared()) {
+      for (const k of ['privateKey', 'passphrase', 'password'] as const) {
+        if (auth[k] === '') delete auth[k];
+      }
+    }
     const next: HostConfig = {
       ...d,
+      auth,
       name: d.name.trim() || 'new-host',
       endpoints: eps.length
         ? eps

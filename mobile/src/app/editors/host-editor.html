@@ -68,19 +68,39 @@
       <div class="m-field">
         <div class="f-label">Method</div>
         <pm-seg
-          [options]="[{ v: 'key', l: 'Key' }, { v: 'agent', l: 'Agent' }, { v: 'password', l: 'Password' }]"
-          [value]="d().auth?.method ?? 'key'"
+          [options]="[{ v: 'key', l: 'Key' }, { v: 'password', l: 'Password' }]"
+          [value]="d().auth?.method === 'password' ? 'password' : 'key'"
           (valueChange)="setAuth({ method: $any($event) })"
         />
       </div>
-      @if ((d().auth?.method ?? 'key') === 'key') {
+      @if (d().auth?.method !== 'password') {
         <div class="m-field">
           <div class="f-label">Private key</div>
+          <textarea
+            class="m-input key-text"
+            rows="5"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            autocorrect="off"
+            [placeholder]="hasKey() ? 'stored key (unchanged) — paste to replace' : '-----BEGIN OPENSSH PRIVATE KEY-----'"
+            (input)="setAuth({ privateKey: $any($event.target).value })"
+          ></textarea>
+          <div class="f-hint">
+            Paste the key text (OpenSSH/PEM). Kept encrypted in the device keystore. Leave empty to
+            keep the stored key.
+          </div>
+          @if (hasKey()) {
+            <button class="m-add danger" (click)="clearKey()">Clear stored key</button>
+          }
+        </div>
+        <div class="m-field">
+          <div class="f-label">Key passphrase</div>
           <input
             class="m-input"
-            [value]="d().auth?.privateKeyPath ?? ''"
-            placeholder="~/.ssh/id_ed25519"
-            (input)="setAuth({ privateKeyPath: $any($event.target).value })"
+            type="password"
+            [placeholder]="d().auth?.hasPassphrase ? '•••••••• (unchanged)' : 'only if the key is encrypted'"
+            (input)="setAuth({ passphrase: $any($event.target).value })"
           />
         </div>
       }

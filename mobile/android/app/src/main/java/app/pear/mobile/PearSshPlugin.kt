@@ -16,6 +16,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
 import java.security.Security
@@ -31,49 +32,61 @@ import java.util.concurrent.Executors
  * The TS counterpart is mobile/src/app/native/pear-ssh.ts; endpoint
  * failover and session bookkeeping stay in core's SessionManager (M3).
  */
-@CapacitorPlugin(name = "PearSsh")
+@CapacitorPlugin(
+    name = "PearSsh",
+    permissions = [
+        Permission(
+            alias = "storage",
+            strings = [android.Manifest.permission.WRITE_EXTERNAL_STORAGE],
+        ),
+    ],
+)
 class PearSshPlugin : Plugin() {
     private lateinit var engine: SshEngine
     private lateinit var batcher: ShellDataBatcher
-    private var relay: McpRelay? = null
+    private var relay: McpRelay? = null // guarded by relayLock
+    private val relayLock = Any()
     private val cipher = KeystoreCipher()
     private val pool: ExecutorService = Executors.newCachedThreadPool { r ->
         Thread(r, "pear-ssh-call").apply { isDaemon = true }
     }
-    /** Live engine sessions — drives the keep-alive foreground service. */
-    private val liveSessions = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** Guards liveSessions AND the service transition: sessions open/close
+     *  on pool threads and sshj disconnect threads, so count-then-act must
+     *  be atomic or a stale count can stop the service under a live session
+     *  (or start-then-stop it out of order). */
+    private val keepAliveLock = Any()
+    private val liveSessions = HashSet<String>() // guarded by keepAliveLock
 
     // ------------------------------------------------------------- keep-alive
 
-    private fun sessionOpened(sessionId: String) {
-        liveSessions.add(sessionId)
-        updateKeepAlive()
-    }
+    private fun sessionOpened(sessionId: String) = updateKeepAlive { liveSessions.add(sessionId) }
 
-    private fun sessionGone(sessionId: String) {
-        liveSessions.remove(sessionId)
-        updateKeepAlive()
-    }
+    private fun sessionGone(sessionId: String) = updateKeepAlive { liveSessions.remove(sessionId) }
 
     /**
      * ≥1 live session → foreground service with a notification (keeps the
      * process unfrozen and the network usable while backgrounded); 0 → stop.
+     * start/stopService are non-blocking binder posts, so holding the lock
+     * across them is cheap and keeps service state in set order.
      */
-    private fun updateKeepAlive() {
-        val n = liveSessions.size
-        try {
-            if (n > 0) {
-                requestNotificationPermission()
-                PearForegroundService.start(
-                    context,
-                    if (n == 1) "1 SSH session active" else "$n SSH sessions active",
-                )
-            } else {
-                PearForegroundService.stop(context)
+    private fun updateKeepAlive(mutate: () -> Unit) {
+        synchronized(keepAliveLock) {
+            mutate()
+            val n = liveSessions.size
+            try {
+                if (n > 0) {
+                    requestNotificationPermission()
+                    PearForegroundService.start(
+                        context,
+                        if (n == 1) "1 SSH session active" else "$n SSH sessions active",
+                    )
+                } else {
+                    PearForegroundService.stop(context)
+                }
+            } catch (_: Exception) {
+                // Android 12+ forbids foreground-service starts from the deep
+                // background — sessions still work whenever the app is scheduled.
             }
-        } catch (_: Exception) {
-            // Android 12+ forbids foreground-service starts from the deep
-            // background — sessions still work whenever the app is scheduled.
         }
     }
 
@@ -84,12 +97,15 @@ class PearSshPlugin : Plugin() {
             android.Manifest.permission.POST_NOTIFICATIONS,
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (!granted) {
-            activity?.let {
-                androidx.core.app.ActivityCompat.requestPermissions(
-                    it,
-                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                    9007,
-                )
+            // Callers run on pool/sshj threads; the request must post on main.
+            activity?.let { act ->
+                act.runOnUiThread {
+                    androidx.core.app.ActivityCompat.requestPermissions(
+                        act,
+                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                        9007,
+                    )
+                }
             }
         }
     }
@@ -367,22 +383,27 @@ class PearSshPlugin : Plugin() {
 
     @PluginMethod
     fun mcpStart(call: PluginCall) = async(call) {
-        val existing = relay
-        if (existing != null) {
-            JSObject().put("port", existing.port)
-        } else {
-            val started = McpRelay({ request, _ ->
-                notifyListeners(
-                    "mcpRequest",
-                    JSObject()
-                        .put("id", request.id)
-                        .put("path", request.path)
-                        .put("authorization", request.authorization ?: "")
-                        .put("body", request.body),
-                )
-            })
-            relay = started
-            JSObject().put("port", started.start())
+        synchronized(relayLock) {
+            val existing = relay
+            if (existing != null) {
+                JSObject().put("port", existing.port)
+            } else {
+                val started = McpRelay({ request, _ ->
+                    notifyListeners(
+                        "mcpRequest",
+                        JSObject()
+                            .put("id", request.id)
+                            .put("path", request.path)
+                            .put("authorization", request.authorization ?: "")
+                            .put("body", request.body),
+                    )
+                })
+                // start() first: a bind failure must leave relay null so the
+                // next mcpStart retries instead of serving a dead port forever.
+                val port = started.start()
+                relay = started
+                JSObject().put("port", port)
+            }
         }
     }
 
@@ -400,8 +421,10 @@ class PearSshPlugin : Plugin() {
 
     @PluginMethod
     fun mcpStop(call: PluginCall) = async(call) {
-        relay?.stop()
-        relay = null
+        synchronized(relayLock) {
+            relay?.stop()
+            relay = null
+        }
         JSObject()
     }
 
@@ -501,10 +524,32 @@ class PearSshPlugin : Plugin() {
     /**
      * Copy a finished download out of staging into the system Downloads
      * collection (MediaStore on API 29+, the public dir below), where every
-     * file manager and share sheet can see it.
+     * file manager and share sheet can see it. The pre-29 public-dir write
+     * needs the runtime WRITE_EXTERNAL_STORAGE grant (API 23-28).
      */
     @PluginMethod
-    fun saveToDownloads(call: PluginCall) = async(call) {
+    fun saveToDownloads(call: PluginCall) {
+        val legacy = android.os.Build.VERSION.SDK_INT in 23..28
+        if (legacy && getPermissionState("storage") != com.getcapacitor.PermissionState.GRANTED) {
+            requestPermissionForAlias("storage", call, "storagePermissionCallback")
+            return
+        }
+        doSaveToDownloads(call)
+    }
+
+    @com.getcapacitor.annotation.PermissionCallback
+    private fun storagePermissionCallback(call: PluginCall) {
+        if (getPermissionState("storage") == com.getcapacitor.PermissionState.GRANTED) {
+            doSaveToDownloads(call)
+        } else {
+            call.reject(
+                "Saving to Downloads needs the storage permission on this Android version",
+                "PERMISSION_DENIED",
+            )
+        }
+    }
+
+    private fun doSaveToDownloads(call: PluginCall) = async(call) {
         val localPath = call.path("localPath")
         val name = call.getString("name") ?: File(localPath).name
         val source = File(localPath)

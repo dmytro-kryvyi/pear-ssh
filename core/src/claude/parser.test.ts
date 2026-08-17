@@ -54,7 +54,7 @@ test('parser: chunks split mid-line and garbage lines are handled', () => {
 
 test('parser: thinking block gets duration from the injected clock', () => {
   let t = 1000;
-  const p = new ChatStreamParser(() => t);
+  const p = new ChatStreamParser(() => t, 'b');
   const events: ClaudeChatEvent[] = [];
   events.push(...p.push(streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } })));
   events.push(...p.push(streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } })));
@@ -65,7 +65,7 @@ test('parser: thinking block gets duration from the injected clock', () => {
 });
 
 test('parser: tool_use streams input json, correlates tool_result, dedupes full message', () => {
-  const p = new ChatStreamParser();
+  const p = new ChatStreamParser(undefined, 'b');
   const events: ClaudeChatEvent[] = [];
   events.push(...p.push(streamEvent({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'mcp__pear__run_command', id: 'tu-1' } })));
   events.push(...p.push(streamEvent({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"host":"edge-01","com' } })));
@@ -166,6 +166,18 @@ test('parser: error result and compact boundary', () => {
     events.map((e) => e.type),
     ['error', 'turn-done'],
   );
+});
+
+test('parser: two parser instances never mint the same blockId', () => {
+  const start = streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text' } });
+  const delta = streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x' } });
+  const ids = [new ChatStreamParser(), new ChatStreamParser()].map((p) => {
+    const events = [...p.push(start), ...p.push(delta)];
+    return (events.find((e) => e.type === 'text-delta') as { blockId: string }).blockId;
+  });
+  // A CLI relaunch mid-conversation builds a fresh parser; a reused id would
+  // stream the new reply into a bubble from an earlier turn.
+  assert.notEqual(ids[0], ids[1]);
 });
 
 test('toolDisplay covers pear tools, local tools, and fallback', () => {

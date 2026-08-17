@@ -335,12 +335,21 @@ describe('CapacitorSshTransport via/ProxyJump', () => {
     const target = new CapacitorSshTransport(host({ id: 'target' }), { plugin, hub, gate: yesGate }, jump);
     await target.connect();
     expect(target.isConnected).toBe(true);
+    let targetClosed = 0;
+    target.onClose(() => targetClosed++);
 
     plugin.emit('sessionClosed', { sessionId: 's1' }); // jump's carrier dies
     await tick();
     expect(target.isConnected).toBe(false);
     // The dying jump also cascades a disconnect of the target session.
     expect(plugin.argsOf('disconnect')).toContainEqual({ sessionId: 's2' });
+    // SessionManager cleanup (onHostDisconnected etc.) hangs off onClose —
+    // the cascade must fire it for the target, exactly once...
+    expect(targetClosed).toBe(1);
+    // ...even when the engine's own sessionClosed for the target trails in.
+    plugin.emit('sessionClosed', { sessionId: 's2' });
+    await tick();
+    expect(targetClosed).toBe(1);
   });
 });
 

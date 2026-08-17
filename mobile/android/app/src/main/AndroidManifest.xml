@@ -27,7 +27,11 @@
         <service
             android:name=".PearForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Interactive SSH client: keeps live terminal/SFTP/AI-agent connections open while the user works; disconnecting would drop remote shells." />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -45,7 +49,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Keep-alive while SSH sessions are connected (PearForegroundService). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Legacy Downloads-folder writes; API 29+ uses MediaStore instead. -->
     <uses-permission

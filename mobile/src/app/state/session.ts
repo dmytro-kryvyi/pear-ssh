@@ -98,19 +98,24 @@ export class PearSession {
 
   // ---- orchestration -------------------------------------------------------
 
+  /** Monotonic token so an older overlapping refresh can't apply stale
+   *  results or turn the spinner off under a newer one. */
+  private orchSeq = 0;
+
   async refreshOrch(): Promise<void> {
     const id = this.activeHostId();
     if (!id || !this.hosts().some((h) => h.id === id)) return;
+    const seq = ++this.orchSeq;
     this.orchLoading.set(true);
     try {
       const o = await this.backend.orch.get(id);
-      if (this.activeHostId() === id) this.orch.set(o);
+      if (seq === this.orchSeq && this.activeHostId() === id) this.orch.set(o);
     } catch {
       // Host offline or not yet reachable — leave the orch view empty rather
       // than surfacing a boot-time console error.
-      if (this.activeHostId() === id) this.orch.set(null);
+      if (seq === this.orchSeq && this.activeHostId() === id) this.orch.set(null);
     } finally {
-      this.orchLoading.set(false);
+      if (seq === this.orchSeq) this.orchLoading.set(false);
     }
   }
 
@@ -197,7 +202,7 @@ export class PearSession {
       aliases: [],
       tags: [],
       cwd: '/',
-      auth: { method: 'key', privateKeyPath: '~/.ssh/id_ed25519', agent: true },
+      auth: { method: 'key' },
       endpoints: [{ id: `e${Math.random().toString(36).slice(2, 8)}`, label: '', addr: '', port: 22 }],
       env: [],
       startup: [],

@@ -129,7 +129,7 @@ class SshEngineTest {
 
     @Test
     fun `changed host key is refused even with a trust token`() {
-        val real = knownHosts.get("127.0.0.1", sshd.port)!!
+        val real = knownHosts.get("127.0.0.1", sshd.port)!!.fingerprint
         knownHosts.put("127.0.0.1", sshd.port, "SHA256:tampered")
         try {
             val err = assertFailsWith<SshError> { engine.connect(spec(trust = "SHA256:tampered")) }
@@ -139,6 +139,18 @@ class SshEngineTest {
         } finally {
             knownHosts.put("127.0.0.1", sshd.port, real)
         }
+    }
+
+    @Test
+    fun `a trusted host pins its key algorithm for negotiation`() {
+        // Connect once so verify() records (or self-heals) the key algorithm
+        // next to the stored fingerprint, whatever earlier tests left behind.
+        engine.disconnect(connectTrusted())
+        val verifier = TofuVerifier(knownHosts, "127.0.0.1", sshd.port, null)
+        assertEquals(
+            listOf("ssh-ed25519"),
+            verifier.findExistingAlgorithms("127.0.0.1", sshd.port),
+        )
     }
 
     @Test
@@ -281,7 +293,10 @@ class SshEngineTest {
             val ch = engine.shellOpen(id, "sleep 30", 80, 24, pty = false)
             Thread.sleep(300)
             engine.shellSignal(ch, "TERM")
-            events.waitForExit(ch, 5_000)
+            // sshd sends exit-signal (no exit-status) for a signal death —
+            // the engine must not misreport that as success.
+            val code = events.waitForExit(ch, 5_000)
+            assertTrue(code != 0, "signal-killed command must not report exit 0 (got $code)")
         } finally {
             engine.disconnect(id)
         }
@@ -321,7 +336,7 @@ class SshEngineTest {
         try {
             // Forget the target key so TOFU must challenge on the tunneled leg —
             // proving the target's own host key is what gets verified.
-            val known = knownHosts.get("127.0.0.1", sshd.port)!!
+            val known = knownHosts.get("127.0.0.1", sshd.port)!!.fingerprint
             knownHosts.forget("127.0.0.1", sshd.port)
             try {
                 val err = assertFailsWith<SshError> { engine.connectVia(spec(), jump) }

@@ -7,8 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.ServiceCompat
 
 /**
  * Keep-alive foreground service. While at least one SSH session is live the
@@ -23,8 +25,27 @@ class PearForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "SSH sessions active"
-        startForeground(NOTIFICATION_ID, notification(text))
+        // API 34+ requires the started type to match the manifest declaration;
+        // ServiceCompat degrades to the untyped call below API 29.
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(text), type)
         return START_NOT_STICKY
+    }
+
+    // specialUse has no platform timeout today; if the system ever does time
+    // this service out, stopping promptly is what prevents the un-catchable
+    // RemoteServiceException that kills the whole app.
+    override fun onTimeout(startId: Int) = stopQuietly()
+
+    override fun onTimeout(startId: Int, fgsType: Int) = stopQuietly()
+
+    private fun stopQuietly() {
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun notification(text: String): Notification {

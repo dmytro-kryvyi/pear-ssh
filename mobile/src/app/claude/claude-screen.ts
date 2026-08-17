@@ -84,6 +84,9 @@ export class PmClaudeScreen {
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/`([^`]+)`/g, '<code>$1</code>');
       html = this.sanitizer.bypassSecurityTrustHtml(rendered);
+      // Keyed by full text, so streaming deltas mint a new key per frame.
+      // Blow the cache when it balloons — re-rendering visible rows is cheap.
+      if (this.richCache.size > 500) this.richCache.clear();
       this.richCache.set(text, html);
     }
     return html;

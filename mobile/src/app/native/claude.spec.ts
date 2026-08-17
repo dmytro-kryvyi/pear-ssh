@@ -224,6 +224,50 @@ describe('SshChatSession', () => {
     expect(plugin.execs().some((c) => c.includes('echo RUNNING'))).toBe(true);
   });
 
+  it('a send during an in-flight chase does not open a second tail', async () => {
+    const plugin = new FakePlugin();
+    const events: ClaudeChatEvent[] = [];
+    const chat = session(plugin, (e) => events.push(e));
+    chat.send('hi');
+    await tick();
+    plugin.emit('shellData', { channelId: 'ch1', data: INIT_LINE } satisfies ShellDataEvent);
+
+    // Hold the chase inside its runner-status check so it stays in-flight.
+    let releaseStatus!: () => void;
+    const gate = new Promise<void>((r) => (releaseStatus = r));
+    const baseExec = plugin.exec.bind(plugin);
+    plugin.exec = async (o: { sessionId: string; command: string }) => {
+      if (o.command.includes('echo RUNNING')) await gate;
+      return baseExec(o);
+    };
+
+    plugin.emit('shellExit', { channelId: 'ch1', code: -1 } satisfies ShellExitEvent);
+    await tick();
+    chat.send('again');
+    await tick();
+
+    // deliver() queues behind the chase instead of racing it
+    expect(plugin.calls.filter((c) => c.method === 'shellOpen')).toHaveLength(1);
+
+    releaseStatus();
+    await tick();
+    await tick();
+
+    const opens = plugin.calls
+      .filter((c) => c.method === 'shellOpen')
+      .map((c) => (c.args as { command: string }).command);
+    expect(opens).toHaveLength(2); // exactly one re-tail total
+    expect(opens[1]).toContain(`tail -c +${INIT_LINE.length + 1} -f`);
+    const writes = plugin.execs().filter((c) => c.includes('echo SENT') && c.includes('again'));
+    expect(writes).toHaveLength(1);
+
+    // only the winning tail is bound: data on a phantom third channel is dead
+    plugin.emit('shellData', { channelId: 'ch2', data: INIT_LINE } satisfies ShellDataEvent);
+    plugin.emit('shellData', { channelId: 'ch3', data: INIT_LINE } satisfies ShellDataEvent);
+    await tick();
+    expect(events.filter((e) => e.type === 'init')).toHaveLength(2);
+  });
+
   it('a runner that died while the phone was away settles the turn after catch-up', async () => {
     const plugin = new FakePlugin();
     const events: ClaudeChatEvent[] = [];
@@ -256,6 +300,26 @@ describe('SshChatSession', () => {
     await tick();
 
     expect(errorOf(events).message).toContain('exit 143');
+    expect(events.some((e) => e.type === 'turn-done')).toBe(true);
+  });
+
+  it('the exit sentinel is caught even when split across tail chunks', async () => {
+    const plugin = new FakePlugin();
+    const events: ClaudeChatEvent[] = [];
+    const chat = session(plugin, (e) => events.push(e));
+    chat.send('hi');
+    await tick();
+    plugin.emit('shellData', {
+      channelId: 'ch1',
+      data: '\n{"type":"pear_runner_exit","co',
+    } satisfies ShellDataEvent);
+    plugin.emit('shellData', {
+      channelId: 'ch1',
+      data: 'de":9}\n',
+    } satisfies ShellDataEvent);
+    await tick();
+
+    expect(errorOf(events).message).toContain('exit 9');
     expect(events.some((e) => e.type === 'turn-done')).toBe(true);
   });
 

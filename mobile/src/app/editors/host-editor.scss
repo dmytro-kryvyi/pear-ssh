@@ -71,6 +71,9 @@
 
 .notes { line-height: 1.5; resize: none; }
 
+.key-text { font-size: 12.5px; line-height: 1.5; resize: vertical; word-break: break-all; }
+.m-add.danger { color: var(--err); border-color: oklch(0.68 0.18 25 / 0.35); margin-top: 8px; }
+
 .kv-row {
   display: flex;
   gap: 7px;

@@ -66,8 +66,12 @@ export class PmFilesScreen {
         this.error.set('');
       }
     } catch (err) {
-      this.entries.set([]);
-      this.error.set(err instanceof Error ? err.message : String(err));
+      // Same staleness guard as the success path — a slow failure from a
+      // directory the user already left must not clobber the current view.
+      if (this.session.activeHostId() === hostId && this.session.path() === path) {
+        this.entries.set([]);
+        this.error.set(err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
