@@ -1,0 +1,17 @@
+{
+  "name": "pear-site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pear landing page — static, SEO-optimized, deployed to Cloudflare Pages",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.1.1",
+    "@fontsource-variable/jetbrains-mono": "^5.1.1",
+    "html-minifier-terser": "^7.2.0",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.34.2"
+  }
+}
