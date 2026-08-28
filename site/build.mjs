@@ -150,12 +150,7 @@ async function buildOgImage() {
         </radialGradient>
       </defs>
       <rect width="${W}" height="${H}" fill="url(#glow)"/>
-      <g transform="translate(72,86)">
-        <rect width="56" height="56" rx="14" fill="url(#lg)"/>
-        <path transform="translate(12,12) scale(1.0)" fill="#10161b" fill-rule="evenodd"
-          d="M9 25V7h9c3.2 0 5 2.2 5 5.5S21.2 18 18 18h-5v7H9Zm4-15v5h4.5c1.4 0 2.3-1 2.3-2.5S18.9 10 17.5 10H13Z"/>
-        <text x="72" y="40" font-family="sans-serif" font-size="40" font-weight="700" fill="#f4f7f8">Pear</text>
-      </g>
+      <text x="144" y="126" font-family="sans-serif" font-size="40" font-weight="700" fill="#f4f7f8">Pear</text>
       <text x="72" y="250" font-family="sans-serif" font-size="46" font-weight="800" fill="#f4f7f8">Every host,</text>
       <text x="72" y="304" font-family="sans-serif" font-size="46" font-weight="800" fill="#45cbc6">one workspace.</text>
       <text x="72" y="362" font-family="sans-serif" font-size="22" fill="#9fb0b8">Files, terminal, live metrics and</text>
@@ -164,9 +159,14 @@ async function buildOgImage() {
       <text x="72" y="520" font-family="monospace" font-size="18" fill="#6f8088">Free &amp; open source · no backend</text>
     </svg>`);
 
+  // Brand pear logo (the master icon) rendered at 56px for the top-left lockup.
+  const logo = await sharp(await readFile(R('src/favicon.svg')), { density: 512 })
+    .resize(56, 56).png().toBuffer();
+
   await sharp({ create: { width: W, height: H, channels: 4, background: bg } })
     .composite([
       { input: overlay, top: 0, left: 0 },
+      { input: logo, top: 86, left: 72 },
       { input: frame, top: shotY - 2, left: shotX - 2 },
       { input: shot, top: shotY, left: shotX },
     ])

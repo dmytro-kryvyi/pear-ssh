@@ -71,7 +71,9 @@ const ICONS: Record<string, string> = {
   disk: '<path d="M2 9.5h12v3.5H2z"/><path d="M2 9.5L3.8 4h8.4L14 9.5"/><circle cx="11.5" cy="11.2" r="0.6" fill="currentColor"/>',
   warning:
     '<path d="M8 2.5L14.5 13h-13z"/><path d="M8 6.5v3.2"/><circle cx="8" cy="11.6" r="0.5" fill="currentColor"/>',
-  pear: '<path d="M8 1.2c-.5 0-.9.4-.9.9 0 .2 0 .4.1.5-2 .6-3.4 2.4-3.4 4.6 0 3 2.5 4.8 4.2 4.8s4.2-1.8 4.2-4.8c0-2.2-1.4-4-3.4-4.6.1-.1.1-.3.1-.5 0-.5-.4-.9-.9-.9z" fill="currentColor" stroke="none"/><path d="M8.8 2.2c.6-.5 1.3-.8 2-.8"/>',
+  // Monochrome silhouette of the master brand pear (build/icon.svg), scaled from
+  // its 512-space paths into the 16-space glyph grid so the shape stays identical.
+  pear: '<g transform="scale(0.03125)"><path d="M256 150C288 150 302 178 297 208C292 240 331 260 353 288C380 322 388 358 381 390C372 438 320 472 256 472C192 472 140 438 131 390C124 358 132 322 159 288C181 260 220 240 215 208C210 178 224 150 256 150Z" fill="currentColor" stroke="none"/><path d="M268 140C300 100 354 94 374 104C360 150 308 164 270 150Z" fill="currentColor" stroke="none"/><path d="M258 152C252 128 254 110 262 96" fill="none" stroke="currentColor" stroke-width="15" stroke-linecap="round"/></g>',
   lightning: '<path d="M9 1L3 9h4l-1 6 6-8H8z" fill="currentColor" stroke="none"/>',
   eye: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   eyeOff:
