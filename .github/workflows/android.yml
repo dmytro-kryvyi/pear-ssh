@@ -69,6 +69,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    # The `secrets` context can't be used in a step-level `if:`, so surface the
+    # keystore flag through `env` (which secrets can populate) and gate on that.
+    # Absent secrets → the release APK builds unsigned (see app/build.gradle).
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -108,14 +113,12 @@ jobs:
         run: npm run mobile:sync
 
       - name: Decode keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pear-release.keystore"
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pear-release.keystore"
 
       - name: Assemble release APK
         env:
-          PEAR_KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && format('{0}/pear-release.keystore', runner.temp) || '' }}
+          PEAR_KEYSTORE_FILE: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && format('{0}/pear-release.keystore', runner.temp) || '' }}
           PEAR_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           PEAR_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           PEAR_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
