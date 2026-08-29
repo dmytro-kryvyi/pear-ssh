@@ -15,5 +15,6 @@
     "@types/node": "^22.15.0",
     "electron": "^43.1.1",
     "typescript": "^5.8.0"
-  }
+  },
+  "license": "MIT"
 }

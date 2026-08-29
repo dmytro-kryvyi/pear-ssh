@@ -53,13 +53,14 @@ export class Pane {
 
   tabLabel(tab: WsTab): string {
     if (tab.kind === 'orch') return tab.facet ? FACET_META[tab.facet].tab : 'Orchestration';
+    if (tab.kind === 'term') return this.termTabFor(tab)?.title ?? 'terminal';
     if (tab.path === '~' || tab.path === '/') return tab.path;
     return tab.path.split('/').filter(Boolean).pop() ?? tab.path;
   }
 
   tabIcon(tab: WsTab): string {
     if (tab.kind === 'orch') return tab.facet ? FACET_META[tab.facet].icon : 'cube';
-    if (tab.kind === 'term') return 'terminal';
+    if (tab.kind === 'term') return this.termTabFor(tab)?.row === 'orch' ? 'logs' : 'terminal';
     return tab.kind === 'file' ? 'fileCode' : 'folder';
   }
 
@@ -68,7 +69,7 @@ export class Pane {
       tab.kind === 'orch'
         ? (tab.facet ?? 'orchestration')
         : tab.kind === 'term'
-          ? 'terminal'
+          ? (this.termTabFor(tab)?.title ?? 'terminal')
           : tab.path;
     return `${this.catalog.nameOf(tab.hostId)} : ${what}`;
   }
@@ -81,7 +82,7 @@ export class Pane {
 
   /** The backing shell for a term tab, looked up in TermTabs. */
   termTabFor(tab: WsTab): TermTab | null {
-    return this.tabs.tabs().find((t) => t.id === tab.termTabId) ?? null;
+    return (tab.termTabId && this.tabs.byId().get(tab.termTabId)) || null;
   }
 
   /** Open a shell inside this pane (in-pane placement). */

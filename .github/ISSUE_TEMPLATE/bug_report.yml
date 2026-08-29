@@ -1,0 +1,33 @@
+name: Bug report
+description: Something broke
+labels: [bug]
+body:
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "Linux (Fedora 44) / Windows 11 / Android"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Pear version
+      placeholder: "0.1.0 (About or release filename)"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant context
+      description: >
+        Host OS / container runtime involved (Docker, Swarm, Proxmox), bastion setup,
+        terminal placement setting — whatever applies. Logs welcome, but please strip
+        hostnames/IPs you don't want public.

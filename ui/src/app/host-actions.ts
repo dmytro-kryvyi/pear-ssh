@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import type { HostConfig } from '@pear/core';
 import { HostCatalog } from './hosts';
-import { TermTabs } from './terminal/tabs';
+import { TermRouter } from './terminal/router';
 import { Workspace } from './workspace/workspace';
 import type { OrchTermCommand } from './orch/orchpanel';
 
@@ -13,11 +13,11 @@ import type { OrchTermCommand } from './orch/orchpanel';
 @Injectable({ providedIn: 'root' })
 export class HostActions {
   private readonly catalog = inject(HostCatalog);
-  private readonly tabs = inject(TermTabs);
+  private readonly router = inject(TermRouter);
   private readonly ws = inject(Workspace);
 
   orchCommand(hostId: string, cmd: OrchTermCommand): void {
-    this.tabs.openOrch(hostId, cmd.command, cmd.title);
+    this.router.openOrch(hostId, cmd.command, cmd.title);
   }
 
   /** A sub-host was registered by an orch view — open its files. */

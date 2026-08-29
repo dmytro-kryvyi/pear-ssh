@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy — Pear</title>
+<meta name="description" content="Pear's privacy policy: no accounts, no telemetry, no servers. Your hosts, keys and settings never leave your device." />
+<link rel="canonical" href="%BASE_URL%/privacy" />
+<meta name="robots" content="index,follow" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#12181d" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin />
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400 800;font-display:swap;src:url('/fonts/inter.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;src:url('/fonts/jetbrains-mono.woff2') format('woff2')}
+:root{
+  --accent: oklch(0.74 0.10 190);
+  --bg-0: oklch(0.16 0.006 240);
+  --bg-1: oklch(0.195 0.006 240);
+  --bg-2: oklch(0.235 0.006 240);
+  --fg-0: oklch(0.97 0.003 240);
+  --fg-1: oklch(0.80 0.006 240);
+  --fg-2: oklch(0.63 0.008 240);
+  --border-soft: oklch(0.34 0.006 240 / 0.3);
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --ui:'Inter',system-ui,-apple-system,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg-1);color:var(--fg-0);font-family:var(--ui);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 24px}
+header{border-bottom:1px solid var(--border-soft);background:oklch(0.18 0.006 240 / 0.76)}
+.nav{display:flex;align-items:center;gap:10px;height:62px}
+.nav img{width:28px;height:28px;border-radius:8px}
+.nav b{font-size:17px}
+.nav a.back{margin-left:auto;font-size:14px;color:var(--fg-1)}
+main{padding:56px 0 96px}
+h1{font-size:34px;letter-spacing:-0.02em;line-height:1.1;margin:0 0 8px}
+.updated{font-family:var(--mono);font-size:12.5px;color:var(--fg-2);margin:0 0 40px}
+h2{font-size:20px;margin:40px 0 10px;letter-spacing:-0.01em}
+p,li{color:var(--fg-1)}
+ul{padding-left:22px;margin:10px 0}
+li{margin:6px 0}
+code{font-family:var(--mono);font-size:13.5px;background:var(--bg-2);border:1px solid var(--border-soft);border-radius:6px;padding:2px 7px;color:var(--fg-0)}
+.tldr{background:var(--bg-0);border:1px solid var(--border-soft);border-radius:14px;padding:20px 24px;margin:0 0 8px}
+.tldr p{margin:0;color:var(--fg-0);font-weight:500}
+footer{border-top:1px solid var(--border-soft);padding:32px 0;color:var(--fg-2);font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <img src="/favicon.svg" alt="" width="28" height="28" /><b>Pear</b>
+    <a class="back" href="/">← pear home</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Privacy Policy</h1>
+  <p class="updated">Applies to the Pear desktop and Android apps · Last updated 2026-08-29</p>
+
+  <div class="tldr">
+    <p>Pear has no accounts, no backend and no telemetry. Everything you put into Pear
+    stays on your device, and Pear connects only to servers you configure.</p>
+  </div>
+
+  <h2>What Pear stores, and where</h2>
+  <ul>
+    <li><b>Host configurations, workspaces, settings and command history</b> are stored
+      locally on your device. They are never uploaded anywhere — there is nowhere to
+      upload them to; we operate no servers.</li>
+    <li><b>Passwords, passphrases and private keys</b> are encrypted at rest by your
+      operating system's secure storage: Keychain (macOS), DPAPI (Windows), libsecret
+      (Linux) or the Android Keystore. If no secure storage is available, Pear does not
+      persist the secret and asks again at connect time.</li>
+  </ul>
+
+  <h2>What Pear sends over the network</h2>
+  <ul>
+    <li><b>SSH traffic to your servers.</b> Pear connects only to the hosts you add,
+      over SSH. That traffic goes directly from your device to your servers (or through
+      bastion hosts you configure).</li>
+    <li><b>Nothing else.</b> No analytics, no crash reporting, no update pings from the
+      app, no third-party SDKs that phone home.</li>
+  </ul>
+
+  <h2>The AI assistant (optional)</h2>
+  <p>Pear can integrate with Claude Code, running as <em>your own</em> Claude CLI under
+  <em>your own</em> Anthropic account. If you use it, the content of your conversations
+  and any context the assistant reads from your servers is processed by Anthropic under
+  <a href="https://www.anthropic.com/legal/privacy" rel="noopener">Anthropic's privacy
+  policy</a> — the same as running the CLI yourself. Pear never sees or stores your
+  Anthropic credentials, and the assistant reaches your hosts only through a
+  local-loopback interface on your device. If you don't use the assistant, no AI-related
+  network traffic occurs.</p>
+
+  <h2>Android permissions</h2>
+  <ul>
+    <li><code>INTERNET</code> — SSH connections to your servers.</li>
+    <li><code>FOREGROUND_SERVICE</code> + notification — keeps your SSH sessions alive
+      while the app is in the background, with a visible "sessions active" indicator.</li>
+    <li><code>WRITE_EXTERNAL_STORAGE</code> (Android 9 and below only) — saving files
+      you download from your servers.</li>
+  </ul>
+
+  <h2>Data collection and sharing</h2>
+  <p>We collect no personal data, so we share none, sell none, and have none to disclose
+  in a breach. The Play Store data-safety declaration for Pear is "no data collected, no
+  data shared".</p>
+
+  <h2>Children</h2>
+  <p>Pear is a developer/operations tool and is not directed at children under 13.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy ever changes, the new version will be posted at this URL with an
+  updated date. Since Pear is open source, the history is public in the
+  <a href="https://github.com/dmytro-kryvyi/pear-ssh" rel="noopener">repository</a>.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or concerns: open an issue on
+  <a href="https://github.com/dmytro-kryvyi/pear-ssh/issues" rel="noopener">GitHub</a>.</p>
+</main>
+
+<footer>
+  <div class="wrap">© 2026 Pear · MIT licensed · <a href="/">pear home</a></div>
+</footer>
+</body>
+</html>

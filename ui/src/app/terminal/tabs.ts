@@ -1,4 +1,5 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { shq } from '@pear/core';
 import { Pear } from '../pear';
 
 export type TermRow = 'shell' | 'orch';
@@ -16,10 +17,6 @@ export interface TermTab {
   dirty: boolean;
   /** Backend terminal id, present once the shell channel is open. */
   termId?: string;
-}
-
-function shq(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function baseName(path: string): string {
@@ -45,6 +42,10 @@ export class TermTabs {
 
   readonly tabs = signal<TermTab[]>([]);
   readonly activeId = signal<string | null>(null);
+
+  /** Tabs indexed by id — the shared lookup for the router, panes, and the
+   *  terminal component's post-open re-read. */
+  readonly byId = computed(() => new Map(this.tabs().map((t) => [t.id, t])));
 
   /** Resolved home dir per host — fresh shells open there, so they get
    *  bound to it and navigating home refocuses them. */
@@ -77,29 +78,33 @@ export class TermTabs {
    *  active selection — used by in-pane placement, where the shell lives in a
    *  workspace pane rather than the bottom dock. */
   createShell(hostId: string, cwd: string | null = null): string {
-    const tab: TermTab = {
-      id: newId(),
-      hostId,
-      row: 'shell',
-      title: cwd ? baseName(cwd) : 'bash',
-      cwd,
-      initialCommand: cwd ? `cd ${shq(cwd)}` : null,
-      dirty: false,
-    };
-    this.tabs.update((all) => [...all, tab]);
-    return tab.id;
+    return this.push(this.shellTab(hostId, cwd));
+  }
+
+  /** Bind a pristine shell to a folder with a single cd — the same rule the
+   *  smart follow applies to the initial shell. */
+  bindShell(tabId: string, path: string): void {
+    const tab = this.tabs().find((t) => t.id === tabId);
+    if (!tab) return;
+    if (tab.termId) {
+      this.update(tabId, { cwd: path, title: baseName(path) });
+      this.pear.api.term.write(tab.termId, `cd ${shq(path)}\n`);
+    } else {
+      // Channel not open yet (term.open is a real round-trip) — persist the cd
+      // as initialCommand so the open path types it; a direct write here would
+      // be lost and the shell would sit at $HOME under a folder-titled tab.
+      this.update(tabId, { cwd: path, title: baseName(path), initialCommand: `cd ${shq(path)}` });
+    }
+  }
+
+  /** Mint an orch-row stream TermTab without touching the dock's active
+   *  selection — the in-pane counterpart of openOrch (see TermRouter). */
+  createOrch(hostId: string, command: string, title: string): string {
+    return this.push(this.orchTab(hostId, command, title));
   }
 
   newShell(hostId: string, cwd: string | null = null): void {
-    this.add({
-      id: newId(),
-      hostId,
-      row: 'shell',
-      title: cwd ? baseName(cwd) : 'bash',
-      cwd,
-      initialCommand: cwd ? `cd ${shq(cwd)}` : null,
-      dirty: false,
-    });
+    this.add(this.shellTab(hostId, cwd));
   }
 
   /** Open a dedicated stream tab for an orchestration action. An existing tab
@@ -111,15 +116,29 @@ export class TermTabs {
       (t) => t.hostId === hostId && t.row === 'orch' && t.initialCommand === command,
     );
     if (existing) this.close(existing.id);
-    this.add({
+    this.add(this.orchTab(hostId, command, title));
+  }
+
+  private shellTab(hostId: string, cwd: string | null): TermTab {
+    return {
       id: newId(),
       hostId,
-      row: 'orch',
-      title,
-      cwd: null,
-      initialCommand: command,
+      row: 'shell',
+      title: cwd ? baseName(cwd) : 'bash',
+      cwd,
+      initialCommand: cwd ? `cd ${shq(cwd)}` : null,
       dirty: false,
-    });
+    };
+  }
+
+  private orchTab(hostId: string, command: string, title: string): TermTab {
+    return { id: newId(), hostId, row: 'orch', title, cwd: null, initialCommand: command, dirty: false };
+  }
+
+  /** Append without touching the dock's active selection (cf. add). */
+  private push(tab: TermTab): string {
+    this.tabs.update((all) => [...all, tab]);
+    return tab.id;
   }
 
   /** The smart follow: called when the user navigates the file browser. */
@@ -144,8 +163,7 @@ export class TermTabs {
     if (active && !active.dirty) {
       if (active.cwd === null) {
         // Pristine initial shell — bind it with its single cd.
-        this.update(active.id, { cwd: path, title: baseName(path) });
-        if (active.termId) this.pear.api.term.write(active.termId, `cd ${shq(path)}\n`);
+        this.bindShell(active.id, path);
         return;
       }
       // Clean but bound to another folder: replace with a fresh tab —

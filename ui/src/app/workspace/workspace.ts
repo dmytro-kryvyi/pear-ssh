@@ -88,6 +88,19 @@ export class Workspace {
     };
   });
 
+  /** Pane tabs that wrap an in-pane terminal (a TermTab id), with their
+   *  panes — the one traversal both the dock-exclusion filter and the
+   *  terminal router build on. */
+  readonly paneTermRefs = computed<{ pane: WsPane; wsTab: WsTab; termTabId: string }[]>(() => {
+    const out: { pane: WsPane; wsTab: WsTab; termTabId: string }[] = [];
+    for (const pane of this.panes()) {
+      for (const wsTab of pane.tabs) {
+        if (wsTab.termTabId) out.push({ pane, wsTab, termTabId: wsTab.termTabId });
+      }
+    }
+    return out;
+  });
+
   /** Hosts with at least one open tab, in first-seen order. */
   readonly openHostIds = computed<string[]>(() => {
     const seen: string[] = [];

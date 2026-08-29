@@ -79,18 +79,25 @@ async function clean() {
   await mkdir(DIST_FONTS, { recursive: true });
 }
 
+/** Every src/*.html is a page; index.html is '/', anything else '/<name>'. */
+async function htmlPages() {
+  return (await readdir(SRC)).filter((f) => f.endsWith('.html'));
+}
+
 async function buildHtml() {
-  const raw = await readFile(R('src/index.html'), 'utf8');
-  const out = await minify(replaceTokens(raw), {
-    collapseWhitespace: true,
-    conservativeCollapse: true,
-    removeComments: true,
-    minifyCSS: true,
-    minifyJS: true,
-    sortAttributes: true,
-    sortClassName: true,
-  });
-  await writeFile(R('dist/index.html'), out);
+  for (const page of await htmlPages()) {
+    const raw = await readFile(path.join(SRC, page), 'utf8');
+    const out = await minify(replaceTokens(raw), {
+      collapseWhitespace: true,
+      conservativeCollapse: true,
+      removeComments: true,
+      minifyCSS: true,
+      minifyJS: true,
+      sortAttributes: true,
+      sortClassName: true,
+    });
+    await writeFile(path.join(DIST, page), out);
+  }
 }
 
 async function copyStatic() {
@@ -202,13 +209,14 @@ async function copyFonts() {
 }
 
 async function buildSitemap() {
+  const urls = (await htmlPages()).map((page) => {
+    const loc = page === 'index.html' ? `${BASE_URL}/` : `${BASE_URL}/${page.replace(/\.html$/, '')}`;
+    const priority = page === 'index.html' ? '1.0' : '0.5';
+    return `  <url>\n    <loc>${loc}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>${priority}</priority>\n  </url>`;
+  });
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>${BASE_URL}/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
+${urls.join('\n')}
 </urlset>
 `;
   await writeFile(R('dist/sitemap.xml'), xml);

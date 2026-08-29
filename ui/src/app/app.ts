@@ -134,13 +134,9 @@ export class App {
 
   /** TermTab ids that live inside a workspace pane (in-pane placement) — the
    *  bottom dock must never also show them. */
-  private readonly paneTermIds = computed<ReadonlySet<string>>(() => {
-    const ids = new Set<string>();
-    for (const pane of this.ws.panes()) {
-      for (const tab of pane.tabs) if (tab.termTabId) ids.add(tab.termTabId);
-    }
-    return ids;
-  });
+  private readonly paneTermIds = computed<ReadonlySet<string>>(
+    () => new Set(this.ws.paneTermRefs().map((r) => r.termTabId)),
+  );
 
   readonly hostTabs = computed(() => {
     const owned = this.paneTermIds();

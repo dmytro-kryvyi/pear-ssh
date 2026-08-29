@@ -146,6 +146,32 @@ export class ClaudeChat implements AfterViewInit {
     return m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
   }
 
+  onContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const selection = document.getSelection()?.toString() ?? '';
+    // Walk up to the enclosing message body so "Copy message" grabs the whole
+    // turn even when the click lands on a nested element (code span, table cell).
+    const message = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+      '.bubble, .asst-text, .think-body',
+    );
+    const items: MenuItem[] = [
+      {
+        label: 'Copy',
+        icon: 'copy',
+        shortcut: 'Ctrl+C',
+        disabled: !selection,
+        onClick: () => void navigator.clipboard.writeText(selection),
+      },
+    ];
+    if (message) {
+      items.push({
+        label: 'Copy message',
+        onClick: () => void navigator.clipboard.writeText(message.innerText),
+      });
+    }
+    this.menu.open(event.clientX, event.clientY, items);
+  }
+
   openModelMenu(event: MouseEvent): void {
     const items: MenuItem[] = MODELS.map((m) => ({
       label: m.label,

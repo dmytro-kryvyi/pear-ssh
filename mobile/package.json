@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
@@ -47,5 +47,6 @@
     "@capacitor/cli": "^7.0.0",
     "typescript": "~6.0.0",
     "vitest": "^4.1.10"
-  }
+  },
+  "license": "MIT"
 }

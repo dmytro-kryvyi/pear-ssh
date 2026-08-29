@@ -12,7 +12,7 @@
 </div>
 
 <!-- transcript -->
-<div #body class="chat-body" (scroll)="onScroll()">
+<div #body class="chat-body" (scroll)="onScroll()" (contextmenu)="onContextMenu($event)">
   @if (store.blocks().length === 0) {
     <div class="chat-empty">
       <span class="empty-spark"><pear-icon name="sparkle" [size]="18" /></span>

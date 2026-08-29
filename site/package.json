@@ -13,5 +13,6 @@
     "html-minifier-terser": "^7.2.0",
     "png-to-ico": "^2.1.8",
     "sharp": "^0.34.2"
-  }
+  },
+  "license": "MIT"
 }

@@ -11,13 +11,14 @@ import {
 } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { copySelection, handleClipboardKeys, pasteClipboard } from './clipboard-keys';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { ContextMenuService } from '../menu/context-menu';
 import { History } from './history';
 import { InlineSuggest } from './suggest';
 import { TermRegistry } from './term-registry';
-import type { TermTab } from './tabs';
+import { TermTabs, type TermTab } from './tabs';
 
 // xterm themes need concrete colors; these are hex approximations of the
 // oklch design tokens in styles.scss.
@@ -62,6 +63,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
 
   private readonly hostEl = viewChild.required<ElementRef<HTMLDivElement>>('host');
   private readonly pear = inject(Pear);
+  private readonly termTabs = inject(TermTabs);
   private readonly history = inject(History);
   private readonly settings = inject(Settings);
   private readonly menu = inject(ContextMenuService);
@@ -98,7 +100,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       scrollback: 10_000,
       theme: TERM_THEME,
     });
-    xterm.attachCustomKeyEventHandler((e) => this.handleClipboardKeys(e));
+    xterm.attachCustomKeyEventHandler((e) => handleClipboardKeys(xterm, e));
     const fit = new FitAddon();
     xterm.loadAddon(fit);
     xterm.open(this.hostEl().nativeElement);
@@ -117,7 +119,12 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       );
       this.termId = id;
       this.opened.emit(id);
-      if (tab.initialCommand) term.write(id, `${tab.initialCommand}\n`);
+      // Re-read from the store: `tab` was snapshotted before the open
+      // round-trip, and a bindShell during it (open-terminal-here on a shell
+      // still connecting) lands its cd in initialCommand — the input signal
+      // may not have re-bound yet, so the snapshot would miss it.
+      const live = this.termTabs.byId().get(tab.id) ?? tab;
+      if (live.initialCommand) term.write(id, `${live.initialCommand}\n`);
 
       const suggest = new InlineSuggest(xterm, {
         lookup: (prefix) => this.history.suggest(prefix, tab.hostId),
@@ -153,44 +160,6 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
     }
   }
 
-  /**
-   * Clipboard keys, handled before xterm turns them into PTY bytes.
-   * Ctrl+C only copies while text is selected; otherwise it stays SIGINT.
-   */
-  private handleClipboardKeys(e: KeyboardEvent): boolean {
-    if (e.type !== 'keydown' || !this.xterm) return true;
-    const key = e.key.toLowerCase();
-    const copyKey =
-      (e.ctrlKey && e.shiftKey && key === 'c') ||
-      (e.ctrlKey && !e.shiftKey && key === 'c' && this.xterm.hasSelection()) ||
-      (e.ctrlKey && key === 'insert');
-    if (copyKey) {
-      this.copySelection();
-      return false;
-    }
-    const pasteKey = (e.ctrlKey && e.shiftKey && key === 'v') || (e.shiftKey && key === 'insert');
-    if (pasteKey) {
-      void this.paste();
-      return false;
-    }
-    return true;
-  }
-
-  private copySelection(): void {
-    const text = this.xterm?.getSelection();
-    if (!text) return;
-    void navigator.clipboard.writeText(text);
-    // Deselecting is the visual receipt that the copy happened.
-    this.xterm?.clearSelection();
-  }
-
-  private async paste(): Promise<void> {
-    const text = await navigator.clipboard.readText();
-    // xterm.paste() normalizes newlines and honors bracketed paste mode, then
-    // feeds onData — the same path keystrokes take.
-    if (text) this.xterm?.paste(text);
-  }
-
   onContextMenu(event: MouseEvent): void {
     event.preventDefault();
     const xterm = this.xterm;
@@ -201,14 +170,14 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
         icon: 'copy',
         shortcut: 'Ctrl+Shift+C',
         disabled: !xterm.hasSelection(),
-        onClick: () => this.copySelection(),
+        onClick: () => copySelection(xterm),
       },
       {
         label: 'Paste',
         icon: 'clipboard',
         shortcut: 'Ctrl+Shift+V',
         onClick: () => {
-          void this.paste();
+          void pasteClipboard(xterm);
           xterm.focus();
         },
       },

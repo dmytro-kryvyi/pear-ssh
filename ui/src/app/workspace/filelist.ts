@@ -15,7 +15,7 @@ import { PearIcon } from '../icons/icon';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { HostCatalog } from '../hosts';
-import { TermTabs } from '../terminal/tabs';
+import { TermRouter } from '../terminal/router';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
 import { FsStore } from './fs-store';
 import { FileOps, joinPath, type DragSource } from './ops';
@@ -44,7 +44,7 @@ export class FileList {
   readonly ws = inject(Workspace);
   readonly settings = inject(Settings);
   readonly catalog = inject(HostCatalog);
-  private readonly termTabs = inject(TermTabs);
+  private readonly termRouter = inject(TermRouter);
   private readonly menu = inject(ContextMenuService);
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameField');
 
@@ -318,7 +318,7 @@ export class FileList {
       {
         label: 'Open terminal here',
         icon: 'terminal',
-        onClick: () => this.termTabs.navigate(t.hostId, t.path),
+        onClick: () => this.termRouter.openShell(t.hostId, t.path),
       },
       { divider: true },
       {
