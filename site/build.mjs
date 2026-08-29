@@ -19,7 +19,7 @@ const R = (...p) => path.join(__dirname, ...p);
 
 // ── The ONLY place the deployed origin lives. Change this (no trailing slash)
 //    when a custom domain is ready, then re-run the build. ──────────────────
-const BASE_URL = 'https://pear.pages.dev';
+const BASE_URL = 'https://pear-ajs.pages.dev';
 
 const SRC = R('src');
 const ASSETS_SRC = R('assets-src');
@@ -33,8 +33,8 @@ const IMAGES = [
   { name: 'shot-desktop-main', w: 1440, h: 900, widths: [768, 1216, 1440] },
   { name: 'shot-editor',       w: 1440, h: 900, widths: [640, 900, 1280] },
   { name: 'shot-cluster',      w: 755,  h: 520, widths: [560, 755] },
-  { name: 'shot-tasks',        w: 857,  h: 500, widths: [560, 857] },
-  { name: 'shot-claude-dock',  w: 382,  h: 900, widths: [382] },
+  { name: 'shot-tasks',        w: 863,  h: 798, widths: [560, 863] },
+  { name: 'shot-claude-dock',  w: 402,  h: 905, widths: [402] },
   { name: 'shot-mob-hosts',    w: 404,  h: 516, widths: [404] },
   { name: 'shot-mob-cluster',  w: 404,  h: 516, widths: [404] },
   { name: 'shot-mob-claude',   w: 404,  h: 516, widths: [404] },
