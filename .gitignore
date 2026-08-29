@@ -6,6 +6,10 @@ release/
 *.log
 .DS_Store
 
+# Signing material must never enter the repo (CI gets it via secrets).
+*.keystore
+*.jks
+
 design
 .claude
 .vscode
