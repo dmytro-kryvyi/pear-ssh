@@ -1,9 +1,13 @@
 # Google Play submission kit
 
 Everything needed to fill in the Play Console for Pear. Assets in this folder:
-`icon-512.png` (app icon), `feature-graphic.png` (1024×500). Phone screenshots:
-use the three mobile shots from `site/assets-src/shot-mob-*.png` (Play wants
-16:9-ish portrait; re-capture at device resolution if the console rejects them).
+`icon-512.png` (app icon), `feature-graphic.png` (1024×500), and
+`screenshots/` — real captures of the app (mock-backend demo data) at exact
+Play ratios: 5 phone shots at 1080×1920 (9:16) and 3 tablet shots at
+2560×1440 (16:9). Upload the same tablet files to BOTH the 7-inch and
+10-inch slots (both accept 2560×1440). To re-capture after UI changes:
+`npm start -w mobile` (mock backend in browser) + the playwright-core script
+pattern — drive Chrome at 360×640@3x for phone, 1280×720@2x for tablet.
 
 ## Identity (decided 2026-08-29)
 
@@ -83,9 +87,82 @@ Declaration text for the console:
 > remote-shell client: dataSync is time-limited (sessions are indefinite and
 > user-attended) and connectedDevice targets local peripherals.
 
-Prepare a short screen-recording (open a session → background the app →
-notification visible → return, session alive → close session → notification
-gone) — the review commonly asks for a video demonstrating the service.
+The console form (App content → Foreground service permissions) asks for a task
+selection, a video, and a description. Answers of record:
+
+- **Task:** Other.
+- **Description** (why it must start immediately / can't be paused or restarted):
+
+> Pear is an interactive SSH client. When the user opens a session to their
+> server, the foreground service starts immediately and keeps that session's
+> TCP/SSH connection alive while the app is backgrounded — remote shells,
+> in-flight file transfers, and live log streams run over it.
+>
+> The task cannot be paused: pausing means the OS freezes the process and the
+> SSH connection times out server-side. It cannot be restarted, because
+> reconnecting does not restore the previous state — remote shell processes
+> are terminated by the disconnect and interrupted transfers abort, losing the
+> user's work on their servers.
+>
+> The service runs only while at least one user-opened session is active,
+> shows a persistent "sessions active" notification, and stops automatically
+> when the last session closes. No standard FGS type fits: dataSync is
+> time-limited (sessions are indefinite and user-attended), and
+> connectedDevice targets local peripherals, not remote servers.
+
+- **Video** (~60s, real device, unlisted YouTube link). Show a task with a real
+  interruption cost, mirroring the description's claims:
+  1. Prep off-camera: `fallocate -l 2G /tmp/demo.bin` on a host.
+  2. Pear → Files → download demo.bin → progress % climbing.
+  3. Home → notification shade → "SSH sessions active".
+  4. ~15s outside the app → reopen → progress advanced (task ran in background).
+  5. Optional: shell scene with `sudo apt-get upgrade` running while backgrounded.
+  6. Disconnect → notification gone.
+  Pre-flight: verify a transfer actually survives backgrounding on-device
+  before recording — that's the exact path the FGS protects.
+
+## Content rating questionnaire (IARC) — answers of record
+
+All **No**, except **Online Content = Yes**.
+
+- Ratings-relevant content in package → No (SSH tool, no such assets)
+- User content sharing (user-to-user) → No (single-user tool)
+- **Online content → Yes** — the app ships a dedicated Claude assistant UI and
+  a listing screenshot shows it; "generated AI content" is the question's own
+  example. The BYO-CLI/own-server argument doesn't flip this: IARC asks whether
+  content can be *accessed from the app*, not who hosts it, and an all-No
+  declaration would contradict the store screenshots.
+  - Follow-ups (Violence / Sexuality / Language / Controlled substances) → all
+    **No**: these cover *developer-curated catalog* content (Netflix-style) and
+    explicitly exclude user-directed content. Pear curates no catalog; AI output
+    is user-prompted and provider-moderated.
+- Age-restricted products, location sharing, digital purchases, cash/crypto
+  rewards, browser/search engine, news/educational → all No.
+
+Expected result: Everyone / PEGI 3, possibly with an "unrated online content" /
+AI interactive-element note.
+
+## Release name & notes
+
+Release name: the bare version (`0.1.0`) — console-internal, keep it matching
+the git tag. Release notes: ≤500 chars, plain text, tester-facing. v0.1.0 notes:
+
+```
+<en-US>
+First test build of Pear — an SSH workspace for your phone.
+
+• Hosts & workspaces with quick connect
+• Files: browse, edit and transfer
+• Real terminal (PTY) per host
+• Live CPU, memory and network vitals
+• Docker, Swarm & Proxmox dashboards with container logs
+
+Early build — expect rough edges, and thanks for testing! Report anything odd at github.com/dmytro-kryvyi/pear-ssh/issues
+</en-US>
+```
+
+For later releases: lead with what changed (from CHANGELOG.md), not the feature
+list — testers see these notes as the "what's new" text.
 
 ## Release checklist
 
