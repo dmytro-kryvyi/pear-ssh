@@ -17,6 +17,7 @@ import type {
   TermSize,
 } from './types';
 import type { HistoryEntry } from './history/store';
+import type { SshConfigEntry } from './hosts/ssh-config';
 import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './transfers/engine';
 import type {
   ClaudeChatEvent,
@@ -46,6 +47,11 @@ export interface PearApi {
      * by the shell). Idempotent: returns the existing local host if present.
      */
     addLocal(): Promise<HostConfig>;
+    /**
+     * Concrete Host entries parsed from ~/.ssh/config. Never rejects —
+     * a missing or unreadable config yields [].
+     */
+    sshConfigEntries(): Promise<SshConfigEntry[]>;
     /**
      * Test one endpoint for a live sshd. Never rejects — failures come back
      * in the result (untested addresses are routine, not exceptional).

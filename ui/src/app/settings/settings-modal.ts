@@ -49,6 +49,13 @@ export class SettingsModal {
     color: value.main,
   }));
 
+  /** Close on true backdrop presses only. A method call (not a boolean
+   *  expression) — a binding that evaluates to `false` makes Angular call
+   *  preventDefault(), which on mousedown blocks native input focus. */
+  onBackdrop(event: MouseEvent): void {
+    if (event.target === event.currentTarget) this.closed.emit();
+  }
+
   sectionLabel(): string {
     return SECTIONS.find((s) => s.id === this.section())!.label;
   }

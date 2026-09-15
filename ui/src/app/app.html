@@ -188,7 +188,7 @@
       @if (error()) {
         <div class="quick-add-error">{{ error() }}</div>
       }
-      <input name="target" [(ngModel)]="target" placeholder="user@host[:port]" spellcheck="false" required />
+      <input name="target" [(ngModel)]="target" placeholder="user@host[:port] or ssh alias" spellcheck="false" required />
       <div class="quick-add-row">
         <input name="hostName" [(ngModel)]="hostName" placeholder="name (optional)" spellcheck="false" />
         <input name="hostTag" [(ngModel)]="hostTag" placeholder="tag" spellcheck="false" class="tag-input" />
@@ -199,6 +199,9 @@
           <pear-icon name="terminal" [size]="13" /> Add this computer
         </button>
       }
+      <button type="button" class="btn local-add" (click)="sshImportOpen.set(true)">
+        <pear-icon name="download" [size]="13" /> Import from SSH config
+      </button>
     </form>
   </aside>
 
@@ -322,6 +325,10 @@
 
   @if (settingsOpen()) {
     <pear-settings-modal (closed)="settingsOpen.set(false)" />
+  }
+
+  @if (sshImportOpen()) {
+    <pear-ssh-import (closed)="sshImportOpen.set(false)" />
   }
 
   @if (editHost() !== null) {

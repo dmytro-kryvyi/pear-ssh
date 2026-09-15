@@ -125,6 +125,13 @@ export class HostEditor {
     }
   }
 
+  /** Close on true backdrop presses only. A method call (not a boolean
+   *  expression) — a binding that evaluates to `false` makes Angular call
+   *  preventDefault(), which on mousedown blocks native input focus. */
+  onBackdrop(event: MouseEvent): void {
+    if (event.target === event.currentTarget) this.closed.emit();
+  }
+
   readonly isNew = computed(() => this.host() === null);
   /** Local hosts and exec sub-hosts have no dialable SSH endpoint of their own. */
   readonly noEndpoints = computed(() => {

@@ -1,4 +1,4 @@
-<div class="overlay" (mousedown)="$event.target === $event.currentTarget && closed.emit()">
+<div class="overlay" (mousedown)="onBackdrop($event)">
   <div class="modal">
     <div class="head">
       <pear-icon [name]="icon" [size]="15" [style.color]="colorOf(color)" />

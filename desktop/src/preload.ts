@@ -34,6 +34,7 @@ const api: PearApi = {
       ipcRenderer.invoke('hosts:upsert', host),
     remove: (id: string) => ipcRenderer.invoke('hosts:remove', id),
     addLocal: () => ipcRenderer.invoke('hosts:addLocal'),
+    sshConfigEntries: () => ipcRenderer.invoke('hosts:sshConfigEntries'),
     probe: (endpoint: { addr: string; port: number }, timeoutMs?: number) =>
       ipcRenderer.invoke('hosts:probe', endpoint, timeoutMs),
   },

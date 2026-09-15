@@ -1,0 +1,57 @@
+<div class="overlay" (mousedown)="onBackdrop($event)">
+  <div class="modal">
+    <div class="head">
+      <pear-icon name="download" [size]="15" />
+      <div class="head-title">Import from SSH config</div>
+      <button class="head-close" (click)="closed.emit()" title="Close">
+        <pear-icon name="close" [size]="14" />
+      </button>
+    </div>
+
+    <div class="body">
+      @if (loading()) {
+        <div class="empty">Reading ~/.ssh/config…</div>
+      } @else if (!rows().length) {
+        <div class="empty">No importable Host entries found in ~/.ssh/config.</div>
+      } @else {
+        @for (row of rows(); track row.entry.alias) {
+          <div class="row" [class.blocked]="row.blocked" (click)="toggle(row)">
+            <span class="check" [class.on]="row.checked">
+              @if (row.checked) {
+                <pear-icon name="check" [size]="10" />
+              }
+            </span>
+            <div class="row-text">
+              <div class="row-alias">{{ row.entry.alias }}</div>
+              <div class="row-target">{{ target(row.entry) }}</div>
+            </div>
+            @if (row.entry.identityFile) {
+              <span class="row-key" [title]="row.entry.identityFile">
+                <pear-icon name="key" [size]="11" /> {{ keyName(row.entry) }}
+              </span>
+            }
+            @if (row.blocked) {
+              <span class="row-badge">{{ badge(row) }}</span>
+            }
+          </div>
+        }
+      }
+    </div>
+
+    <div class="foot">
+      @if (error(); as e) {
+        <span class="foot-error">{{ e }}</span>
+      }
+      <div class="foot-actions">
+        <button class="btn" (click)="closed.emit()">Cancel</button>
+        <button
+          class="btn primary"
+          [disabled]="importing() || checkedCount() === 0"
+          (click)="import()"
+        >
+          Import {{ checkedCount() }} host{{ checkedCount() === 1 ? '' : 's' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

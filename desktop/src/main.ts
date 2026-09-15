@@ -39,6 +39,7 @@ import {
   SshConnection,
   claudeInstalled,
   launchClaudePty,
+  loadSshConfigEntries,
   makeStagingDir,
   probeSsh,
   provisionClaudeWorkspace,
@@ -307,6 +308,7 @@ function registerIpc(): void {
       local: true,
     });
   });
+  ipcMain.handle('hosts:sshConfigEntries', () => loadSshConfigEntries());
   // Never rejects — routine dead-endpoint probes must not trip Electron's
   // rejected-handler logging (same rationale as the monitor envelope).
   ipcMain.handle(

@@ -55,6 +55,13 @@ export class WorkspaceEditor {
     }
   }
 
+  /** Close on true backdrop presses only. A method call (not a boolean
+   *  expression) — a binding that evaluates to `false` makes Angular call
+   *  preventDefault(), which on mousedown blocks native input focus. */
+  onBackdrop(event: MouseEvent): void {
+    if (event.target === event.currentTarget) this.closed.emit();
+  }
+
   readonly isNew = computed(() => this.group() === null);
 
   /** Persisted root hosts only — sub-hosts follow their root implicitly. */

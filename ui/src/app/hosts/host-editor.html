@@ -1,4 +1,4 @@
-<div class="overlay" (mousedown)="$event.target === $event.currentTarget && closed.emit()">
+<div class="overlay" (mousedown)="onBackdrop($event)">
   <div class="modal">
     <div class="head">
       <span class="head-dot" [style.background]="headerColor()"></span>

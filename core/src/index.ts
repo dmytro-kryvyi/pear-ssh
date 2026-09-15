@@ -66,6 +66,12 @@ export { parseGuestIp } from './orchestration/guest-ip';
 export { HostStore, sanitizeHost, type HostStorage, type SecretCipher } from './hosts/store';
 export { HostGroupStore } from './hosts/groups';
 export { autoShort, shortLabel } from './hosts/identity';
+export {
+  resolveSshHosts,
+  tokenizeSshConfig,
+  type SshConfigDirective,
+  type SshConfigEntry,
+} from './hosts/ssh-config';
 export { EphemeralHostRegistry } from './hosts/ephemeral';
 export { shq } from './shq';
 export {

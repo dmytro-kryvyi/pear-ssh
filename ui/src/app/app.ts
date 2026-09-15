@@ -7,6 +7,7 @@ import { HostCatalog } from './hosts';
 import { HostGroups } from './hosts/groups';
 import { HostEditor } from './hosts/host-editor';
 import { WorkspaceEditor } from './hosts/workspace-editor';
+import { SshImport } from './hosts/ssh-import';
 import { WorkspaceSwitcher, HOST_DRAG_TYPE } from './hosts/workspace-switcher';
 import { TerminalPane } from './terminal/terminal';
 import { TermTabs, type TermTab } from './terminal/tabs';
@@ -28,7 +29,8 @@ import { HostMeter } from './monitor/host-meter';
 import { ClaudeDock } from './claude/dock';
 import { ClaudeUiBridge } from './claude/ui-bridge';
 
-const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
+/** `user@host[:port]`, or a bare token resolved as an ~/.ssh/config alias. */
+const TARGET_RE = /^(?:(?<user>[^@\s]+)@)?(?<host>[^@:\s]+)(?::(?<port>\d+))?$/;
 
 @Component({
   selector: 'app-root',
@@ -47,6 +49,7 @@ const TARGET_RE = /^(?<user>[^@\s]+)@(?<host>[^:\s]+)(?::(?<port>\d+))?$/;
     HostEditor,
     WorkspaceEditor,
     WorkspaceSwitcher,
+    SshImport,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -67,6 +70,7 @@ export class App {
   readonly bridged = this.pear.available;
   readonly error = signal<string | null>(null);
   readonly settingsOpen = signal(false);
+  readonly sshImportOpen = signal(false);
 
   /** Host being edited in the modal ('new' = blank draft). */
   readonly editHost = signal<HostConfig | 'new' | null>(null);
@@ -284,19 +288,45 @@ export class App {
   async addHost(): Promise<void> {
     const match = TARGET_RE.exec(this.target.trim());
     if (!match?.groups) {
-      this.error.set('Quick connect expects user@host or user@host:port');
+      this.error.set('Quick connect expects user@host[:port] or an ~/.ssh/config alias');
       return;
     }
     const { user, host, port } = match.groups;
+    const entries = await this.pear.api.hosts.sshConfigEntries();
+    const entry = entries.find((e) => e.alias === host);
+    if (entry?.proxyJump) {
+      this.error.set(`'${entry.alias}' uses ProxyJump — add it manually for now`);
+      return;
+    }
+    if (!entry && !user) {
+      this.error.set(`'${host}' is not an ~/.ssh/config alias — use user@host[:port]`);
+      return;
+    }
     const tag = this.hostTag.trim();
-    const saved = await this.pear.api.hosts.upsert({
-      name: this.hostName.trim() || host,
-      host,
-      user,
-      port: port ? Number(port) : 22,
-      tags: tag ? [tag] : undefined,
-      kind: 'plain',
-    });
+    const saved = await this.pear.api.hosts.upsert(
+      entry
+        ? {
+            // Typed user/port override the config's values.
+            name: this.hostName.trim() || entry.alias,
+            host: entry.host,
+            user: user ?? entry.user ?? 'root',
+            port: port ? Number(port) : (entry.port ?? 22),
+            aliases: [entry.alias],
+            auth: entry.identityFile
+              ? { method: 'key', privateKeyPath: entry.identityFile }
+              : undefined,
+            tags: tag ? [tag] : undefined,
+            kind: 'plain',
+          }
+        : {
+            name: this.hostName.trim() || host,
+            host,
+            user: user!,
+            port: port ? Number(port) : 22,
+            tags: tag ? [tag] : undefined,
+            kind: 'plain',
+          },
+    );
     this.target = '';
     this.hostName = '';
     this.hostTag = '';
