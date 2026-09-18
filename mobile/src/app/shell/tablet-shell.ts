@@ -1,3 +1,4 @@
+import { PmServerFoot } from '../remote/server-foot';
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import type { HostConfig } from '@pear/core';
 import { ORCH_ICON, ORCH_TAB, PmWsGlyph } from '../chrome/chrome';
@@ -38,6 +39,7 @@ function initialView(): TabletView {
     PmClaudeScreen,
     PmHostEditor,
     PmWorkspaceEditor,
+    PmServerFoot,
   ],
   templateUrl: './tablet-shell.html',
   styleUrl: './tablet-shell.scss',

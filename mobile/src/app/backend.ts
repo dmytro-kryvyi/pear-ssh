@@ -23,6 +23,8 @@ export function createStubBackend(): PearApi {
       upsert: fail('hosts.upsert'),
       remove: fail('hosts.remove'),
       addLocal: fail('hosts.addLocal'),
+      // No ~/.ssh/config to read off-desktop; the API contract is "never rejects".
+      sshConfigEntries: async () => [],
       probe: async () => ({ ok: false, error: 'unreachable', detail: 'stub backend' }),
     },
     hostGroups: {

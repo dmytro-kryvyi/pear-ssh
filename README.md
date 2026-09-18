@@ -19,6 +19,17 @@ Pear is a free, open-source SSH workspace. No account, no backend, no telemetry 
 hosts, keys and settings exist only on your machine, and secrets live in your OS
 keychain.
 
+No native app for your device? [Pear server](docs/SERVER.md) runs the same engine on a
+box you control and serves Pear as an installable web app — which is how it runs on an
+iPad. Sessions live on the server, so terminals and Claude turns survive a closed tab.
+One command on a Debian/Ubuntu box (or [one on a Proxmox host](docs/SERVER.md#proxmox-from-nothing)):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dmytro-kryvyi/pear-ssh/main/server/install.sh | bash
+```
+
+Then put your own HTTPS in front — Caddy, Tailscale, Cloudflare — as [docs/SERVER.md](docs/SERVER.md#putting-it-on-the-network) shows.
+
 ## Features
 
 - **Workspaces, not a flat list** — group hosts into colour-coded workspaces; a host can
@@ -51,6 +62,7 @@ Grab the latest build from **[Releases](https://github.com/dmytro-kryvyi/pear-ss
 | Windows 10/11 | ✅ | .exe (x64) |
 | macOS | 🔨 build from source | needs someone with a Mac |
 | Android | 🚧 in development | see [docs/ANDROID.md](docs/ANDROID.md) |
+| iPad / iPhone / any browser | ✅ self-hosted | [Pear server](docs/SERVER.md) — a web app you add to the home screen |
 
 ## Build from source
 
@@ -71,6 +83,7 @@ npm run dist:linux     # package AppImage/.deb (electron-builder)
 npm run dist:win       # package Windows .exe
 npm test -w core       # core test suite
 npm run mobile:sync    # build web app + sync Capacitor (Android)
+npm run server         # build both UIs + pear-server, then start it (docs/SERVER.md)
 ```
 
 ## Architecture
@@ -82,7 +95,7 @@ transport-owned; renderers never touch SSH or secrets directly.**
 core/       @pear/core — SSH sessions, SFTP, exec, host inventory, monitoring,
             orchestration probes, transfers, Claude MCP server. Typed API
             (core/src/api.ts) consumed by every frontend. ssh2 + node-pty.
-desktop/    Electron main process: window, IPC bridge over the core API,
+desktop/    Electron main process: window, IPC bridge over core's PearService,
             OS-keychain secrets via safeStorage (desktop/src/secrets.ts).
             The renderer only ever sees a "has a secret" flag — never material.
 ui/         Angular renderer (zoneless, signals): workspaces, file panes,
@@ -91,6 +104,9 @@ ui/         Angular renderer (zoneless, signals): workspaces, file panes,
 mobile/     Capacitor Android app reusing @pear/core's SessionManager behind
             a native SSH transport; the Kotlin engine lives in
             mobile/android/ssh-engine (sshj). Roadmap: docs/ANDROID.md.
+server/     pear-server: the same core behind a WebSocket, for browsers. Serves the
+            ui build at / and the mobile build at /m/ as one installable PWA; owns
+            SSH sessions and terminals so they outlive the page. docs/SERVER.md.
 site/       Static landing page (standalone, not a workspace) → Cloudflare Pages.
 ```
 

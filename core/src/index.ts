@@ -24,7 +24,44 @@ export {
   type TransferStatus,
 } from './transfers/engine';
 export { SessionManager, type TerminalHandle } from './ssh/sessions';
+export {
+  PASSTHROUGH_POLICY,
+  TerminalHub,
+  type TermHubEvents,
+  type TermInfo,
+  type TermOps,
+  type TermPolicy,
+  type TermRead,
+} from './ssh/term-hub';
+export {
+  PearDisconnectedError,
+  createRemoteBackend,
+  type RemoteBackend,
+  type RemoteBackendOpts,
+  type RemoteControl,
+  type RemoteHello,
+  type RemoteState,
+  type RemoteUpdate,
+  type WebSocketLike,
+} from './remote/client';
+export {
+  CHANNELS,
+  buildApiClient,
+  channelsOf,
+  type ApiClientTransport,
+  type ChannelKind,
+  type ChannelRow,
+  type ChannelTable,
+} from './rpc/channels';
 export { kindOf, modeString } from './ssh/mode';
+export {
+  HostKeyError,
+  KnownHosts,
+  type HostKeyErrorCode,
+  type HostKeyGate,
+  type HostKeyPrompt,
+  type KnownHostsStorage,
+} from './ssh/known-hosts';
 export {
   SubHostTransport,
   parseStatListing,
@@ -93,6 +130,7 @@ export { uuid } from './uuid';
 export {
   coalesceChatEvents,
   type ClaudeChatEvent,
+  type ClaudeChatState,
   type ClaudeFileDiff,
   type ClaudeFocus,
   type ClaudePermissionAnswer,

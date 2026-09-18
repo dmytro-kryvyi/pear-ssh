@@ -4,6 +4,7 @@ import type {
   ClaudeFileDiff,
   ClaudeQuestion,
   ClaudeSessionMeta,
+  RemoteControl,
 } from '@pear/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
@@ -74,12 +75,33 @@ export class ClaudeChatStore {
     if (this.started || !this.pear.available) return;
     this.started = true;
     this.pear.api.claude.onEvent((event) => this.apply(event));
+    const remote = (this.pear.api as { remote?: RemoteControl }).remote;
     const savedModel = this.settings.claudeModel();
-    if (savedModel) {
+    // Under Electron the runtime was born with this window, so pushing the
+    // saved model is harmless. A server's runtime may be mid-turn — and
+    // setModel interrupts — so there the server's state wins instead.
+    if (savedModel && !remote) {
       this.model.set(savedModel);
       this.pear.api.claude.chatSetModel(savedModel);
     }
     void this.loadSessions();
+    // Every time the link to a server comes (back) up, redraw the
+    // conversation from its copy: it kept going while we were away.
+    remote?.onState((state) => {
+      if (state === 'open') void this.resync();
+    });
+    if (remote?.state() === 'open') void this.resync();
+  }
+
+  private async resync(): Promise<void> {
+    const state = await this.pear.api.claude.chatState?.().catch(() => undefined);
+    if (!state) return;
+    this.reset();
+    this.activeSessionId.set(state.sessionId);
+    for (const event of state.events) this.apply(event);
+    this.busy.set(state.busy);
+    this.autoApprove.set(state.autoApprove);
+    if (state.model) this.model.set(state.model);
   }
 
   private id(): string {

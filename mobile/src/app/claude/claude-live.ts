@@ -1,5 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
-import type { ClaudeChatEvent, ClaudeQuestion, PearApi } from '@pear/core';
+import type { ClaudeChatEvent, ClaudeQuestion, PearApi, RemoteControl } from '@pear/core';
 import { PEAR_BACKEND } from '../backend';
 import type { MobileClaudeConfig } from '../native/backend';
 import type { ClaudeMsg } from './claude-demo';
@@ -24,7 +24,11 @@ function relTime(ms: number): string {
  */
 @Injectable({ providedIn: 'root' })
 export class ClaudeLive implements ClaudeStore {
-  private readonly backend = inject(PEAR_BACKEND) as PearApi & MobileClaudeConfig;
+  private readonly backend = inject(PEAR_BACKEND) as PearApi &
+    Partial<MobileClaudeConfig> & { remote?: unknown };
+  /** pear-server runs the CLI itself, like desktop: there is no Claude host to
+   *  pick, and the model is the server's state, shared with other devices. */
+  private readonly onServer = this.backend.remote !== undefined;
 
   readonly messages = signal<ClaudeMsg[]>([]);
   readonly tokens = signal(0);
@@ -32,13 +36,16 @@ export class ClaudeLive implements ClaudeStore {
   readonly autoApprove = signal(false);
   readonly sessionId = signal<string | null>(null);
   readonly sessions = signal<ClaudeSessionRow[]>([]);
-  readonly hostPick = {
-    current: signal<string | null>(null),
-    set: (id: string | null): void => {
-      this.hostPick.current.set(id);
-      void this.backend.setClaudeHost(id);
-    },
-  };
+  private readonly claudeHost = signal<string | null>(null);
+  readonly hostPick = this.backend.setClaudeHost
+    ? {
+        current: this.claudeHost,
+        set: (id: string | null): void => {
+          this.claudeHost.set(id);
+          void this.backend.setClaudeHost?.(id);
+        },
+      }
+    : undefined;
   readonly modelPick = {
     current: signal<string | null>(localStorage.getItem(MODEL_KEY)),
     set: (model: string | null): void => {
@@ -57,10 +64,31 @@ export class ClaudeLive implements ClaudeStore {
 
   constructor() {
     this.backend.claude.onEvent((e) => this.apply(e));
-    void this.backend.getClaudeHost().then((id) => this.hostPick.current.set(id));
+    void this.backend.getClaudeHost?.().then((id) => this.claudeHost.set(id));
     // Re-apply the persisted model choice (the backend default is the CLI's).
+    // Never against a server: setModel interrupts a running turn, and a page
+    // that iOS just reloaded would abort the reply it came back to read.
     const model = this.modelPick.current();
-    if (model) this.backend.claude.chatSetModel(model);
+    if (model && !this.onServer) this.backend.claude.chatSetModel(model);
+    this.refreshSessions();
+    // Against a server the conversation lives on without us. Every time the
+    // link comes (back) up, redraw it from the server's copy: the reply that
+    // kept streaming while the iPad slept, cards still waiting for an answer.
+    const remote = this.backend.remote as RemoteControl | undefined;
+    remote?.onState((state) => {
+      if (state === 'open') void this.resync();
+    });
+    if (remote?.state() === 'open') void this.resync();
+  }
+
+  private async resync(): Promise<void> {
+    const state = await this.backend.claude.chatState?.().catch(() => undefined);
+    if (!state) return;
+    this.sessionId.set(state.sessionId);
+    this.replay(state.events);
+    this.busy.set(state.busy);
+    this.autoApprove.set(state.autoApprove);
+    if (state.model) this.modelPick.current.set(state.model);
     this.refreshSessions();
   }
 

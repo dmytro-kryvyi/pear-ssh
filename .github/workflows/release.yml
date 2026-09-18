@@ -83,3 +83,51 @@ jobs:
             release/*.deb
             release/*.exe
           if-no-files-found: error
+
+  # The prebuilt pear-server bundle (both UIs + server, ~5 MB) that
+  # server/install.sh downloads. Same stable asset name on every release, so
+  # …/releases/latest/download/pear-server.tar.gz always works.
+  server-bundle:
+    name: Server bundle
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build and pack
+        env:
+          PEAR_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          export PEAR_VERSION="${PEAR_VERSION#v}"
+          npm run pack:server
+
+      # The installer is the thing users actually run: prove the bundle
+      # installs and answers before publishing it.
+      - name: Install it for real
+        run: |
+          sudo bash server/install.sh --bundle release/pear-server.tar.gz --auth none
+          curl -fs http://127.0.0.1:7327/healthz
+          curl -fs http://127.0.0.1:7327/m/ | grep -q boot.js
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pear-server-bundle
+          path: release/pear-server.tar.gz
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes ""
+          gh release upload "$GITHUB_REF_NAME" release/pear-server.tar.gz --clobber
+

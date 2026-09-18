@@ -13,6 +13,7 @@
 }
 
 .divider {
+  touch-action: none; /* a finger drag must resize, not pan */
   width: 6px;
   cursor: col-resize;
   flex-shrink: 0;

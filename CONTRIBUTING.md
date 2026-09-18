@@ -24,6 +24,7 @@ npm run dev      # watch mode
 | `ui/` | Angular renderer | `npm test -w ui` |
 | `mobile/` | Capacitor Android app | `npm test -w mobile` (vitest) |
 | `mobile/android/ssh-engine/` | Kotlin SSH engine (sshj) | `./gradlew test` (spawns a real scratch sshd) |
+| `server/` | pear-server: HTTP + WebSocket adapter over core's `PearService`, auth, PWA shell | `npm test -w server` (real server, in-process sshd; build core + server first) |
 | `site/` | Landing page (standalone, not a workspace) | — |
 
 End-to-end verification without a GUI harness follows the throwaway-sshd pattern: spin a
@@ -35,6 +36,11 @@ exports (see `core`'s tests for examples).
 - **Secrets never cross the bridge.** The renderer sees a "has a secret" flag, never
   plaintext or ciphertext. Anything that would move secret material into `ui/` will be
   rejected.
+- **One service, thin adapters.** Behaviour behind `PearApi` lives in core's
+  `PearService`; Electron (`desktop/src/main.ts`) and pear-server only translate a
+  transport into `service.invoke/send`. A new API member needs a row in
+  `core/src/rpc/channels.ts` (it will not compile without one), a handler in the
+  service, and a line in the hand-written Electron preload.
 - **`core/` stays UI-agnostic.** No Electron, DOM, or Angular imports there.
 - Match the surrounding code style; `prettier` config is at the repo root.
 - Comments explain *constraints*, not what the next line does.

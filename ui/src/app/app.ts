@@ -28,6 +28,7 @@ import { MonitorStore } from './monitor/store';
 import { HostMeter } from './monitor/host-meter';
 import { ClaudeDock } from './claude/dock';
 import { ClaudeUiBridge } from './claude/ui-bridge';
+import { RemoteLink } from './remote/link';
 
 /** `user@host[:port]`, or a bare token resolved as an ~/.ssh/config alias. */
 const TARGET_RE = /^(?:(?<user>[^@\s]+)@)?(?<host>[^@:\s]+)(?::(?<port>\d+))?$/;
@@ -66,6 +67,7 @@ export class App {
   readonly ops = inject(FileOps);
   readonly actions = inject(HostActions);
   readonly hostGroups = inject(HostGroups);
+  readonly link = inject(RemoteLink);
 
   readonly bridged = this.pear.available;
   readonly error = signal<string | null>(null);
@@ -558,12 +560,14 @@ export class App {
       this.termHeight.set(Math.max(120, Math.min(window.innerHeight - 220, next)));
     };
     const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       document.body.style.cursor = '';
     };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
     document.body.style.cursor = 'ns-resize';
   }
 
@@ -576,12 +580,14 @@ export class App {
       this.settings.claudeWidth.set(Math.max(320, Math.min(620, next)));
     };
     const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       document.body.style.cursor = '';
     };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
     document.body.style.cursor = 'ew-resize';
   }
 }

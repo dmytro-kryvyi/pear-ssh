@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pear — sign in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#1b1e24">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="/login.css">
+</head>
+<body>
+  <form id="form" autocomplete="on">
+    <img src="/favicon.svg" width="56" height="56" alt="">
+    <h1>Pear</h1>
+    <!-- Lets password managers file the credential under a name. -->
+    <input type="text" name="username" value="pear" autocomplete="username" hidden>
+    <input id="password" type="password" name="password" placeholder="Password"
+           autocomplete="current-password" autocapitalize="off" autocorrect="off" required autofocus>
+    <button type="submit">Sign in</button>
+    <p id="error" role="alert"></p>
+  </form>
+  <script src="/login.js"></script>
+</body>
+</html>

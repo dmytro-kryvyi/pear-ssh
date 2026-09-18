@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, readFileSync, promises as fsp } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
 import type { DirListing, FileEntry, HostConfig, TermSize } from '../types';
 import type {
@@ -15,6 +17,7 @@ import type {
 import { kindOf, modeString } from '../ssh/mode';
 import { sha256Command, parseSha256 } from '../ssh/hash';
 import { shq } from '../shq';
+import type { HostKeyError, KnownHosts } from '../ssh/known-hosts';
 
 /** Pass-through stream that reports cumulative bytes to a callback. */
 export function byteCounter(onBytes: (bytes: number) => void): Transform {
@@ -129,13 +132,32 @@ class Ssh2ShellChannel implements ShellChannel {
   }
 
   onData(cb: (chunk: string) => void): void {
-    this.channel.on('data', (d: Buffer) => cb(d.toString('utf8')));
-    this.channel.stderr.on('data', (d: Buffer) => cb(d.toString('utf8')));
+    // Stateful decoders: a multi-byte character can straddle two packets, and
+    // decoding each packet alone turns both halves into U+FFFD for good.
+    const out = new StringDecoder('utf8');
+    const err = new StringDecoder('utf8');
+    const emit = (text: string): void => {
+      if (text) cb(text);
+    };
+    this.channel.on('data', (d: Buffer) => emit(out.write(d)));
+    this.channel.stderr.on('data', (d: Buffer) => emit(err.write(d)));
   }
 
   onClose(cb: () => void): void {
     this.channel.on('close', cb);
   }
+}
+
+/** `SHA256:<unpadded base64>` — what `ssh-keygen -lf` and OpenSSH prompts print. */
+export function fingerprintOf(key: Buffer): string {
+  return 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
+}
+
+/** The algorithm name leading every SSH public key blob (uint32 length + bytes). */
+function keyTypeOf(key: Buffer): string {
+  if (key.length < 4) return 'unknown';
+  const len = key.readUInt32BE(0);
+  return len > 0 && len <= 64 && key.length >= 4 + len ? key.toString('ascii', 4, 4 + len) : 'unknown';
 }
 
 /**
@@ -151,6 +173,8 @@ export class SshConnection implements SshTransport {
   constructor(
     readonly config: HostConfig,
     private readonly jump?: SshConnection,
+    /** Absent = accept any host key (ssh2's default; the desktop app today). */
+    private readonly knownHosts?: KnownHosts,
   ) {}
 
   async connect(): Promise<void> {
@@ -160,7 +184,10 @@ export class SshConnection implements SshTransport {
     this.jump?.onClose(() => this.dispose());
     const sock = this.jump ? await this.jump.forwardOut(cfg.host, cfg.port) : undefined;
     return new Promise((resolve, reject) => {
-      const onError = (err: Error) => reject(err);
+      // ssh2 reports a refused key as a bare "Host denied"; what the caller
+      // needs is the fingerprint, so the verifier's own error wins.
+      let keyError: HostKeyError | undefined;
+      const onError = (err: Error) => reject(keyError ?? err);
       this.client
         .once('error', onError)
         .once('ready', () => {
@@ -182,6 +209,19 @@ export class SshConnection implements SshTransport {
           username: cfg.user,
           readyTimeout: cfg.readyTimeoutMs ?? 15_000,
           keepaliveInterval: 15_000,
+          ...(this.knownHosts
+            ? {
+                hostVerifier: (key: Buffer) => {
+                  try {
+                    this.knownHosts?.verify(cfg.host, cfg.port, keyTypeOf(key), fingerprintOf(key));
+                    return true;
+                  } catch (err) {
+                    keyError = err as HostKeyError;
+                    return false;
+                  }
+                },
+              }
+            : {}),
           ...resolveAuth(cfg),
         });
       if (cfg.auth?.password) {

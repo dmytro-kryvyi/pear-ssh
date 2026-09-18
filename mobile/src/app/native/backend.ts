@@ -410,6 +410,8 @@ export function createNativeBackend(
         await hosts.remove(id);
       },
       addLocal: notYet('This device cannot be a host'),
+      // The phone has no ~/.ssh/config; the API contract is "never rejects".
+      sshConfigEntries: async () => [],
       probe: async (endpoint, timeoutMs = 4000): Promise<ProbeResult> => {
         try {
           const { ms } = await deps.plugin.probe({

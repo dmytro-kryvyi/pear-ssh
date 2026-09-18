@@ -23,3 +23,10 @@ export {
   type ChatRuntimeOpts,
 } from './claude/chat-runtime';
 export { provisionClaudeWorkspace, type ClaudeWorkspaceConfig } from './claude/workspace';
+export {
+  PearService,
+  type ClientCtx,
+  type PearServiceEnv,
+  type PearServiceFeatures,
+  type ServiceHandler,
+} from './service/pear-service';

@@ -1,6 +1,7 @@
 import {
   coalesceChatEvents,
   type ClaudeChatEvent,
+  type ClaudeChatState,
   type ClaudeSessionMeta,
 } from './events';
 import { PermissionBridge, type PermissionAnswer } from './permission-bridge';
@@ -195,6 +196,26 @@ export class ClaudeChatRuntime {
       this.record(e),
     );
     return events;
+  }
+
+  /**
+   * Read-only view for a client that just connected. Deliberately not
+   * `resume()`: that one denies pending cards and restarts the CLI — fatal to
+   * a turn that kept running while an iPad was asleep.
+   */
+  snapshot(): ClaudeChatState {
+    let busy = false;
+    for (const e of this.log) {
+      if (e.type === 'user') busy = true;
+      else if (e.type === 'turn-done') busy = false;
+    }
+    return {
+      sessionId: this.sessionId(),
+      events: coalesceChatEvents(this.log),
+      busy: busy && this.active !== null,
+      model: this.model,
+      autoApprove: this.bridge.autoApproveOn,
+    };
   }
 
   answer(requestId: string, answer: PermissionAnswer): void {

@@ -9,6 +9,7 @@ import {
   output,
   viewChild,
 } from '@angular/core';
+import type { RemoteControl } from '@pear/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { copySelection, handleClipboardKeys, pasteClipboard } from './clipboard-keys';
@@ -45,6 +46,9 @@ export const TERM_THEME = {
   brightCyan: '#8ad1cb',
   brightWhite: '#f3f4f6',
 };
+
+/** Server terminals this page already follows (opened or adopted). */
+const ADOPTED = new Set<string>();
 
 @Component({
   selector: 'pear-terminal',
@@ -112,19 +116,21 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
     const { term } = this.pear.api;
     const tab = this.tab();
     try {
-      const id = await term.open(
-        tab.hostId,
-        { cols: xterm.cols, rows: xterm.rows },
-        { password: this.password() || undefined },
-      );
+      const size = { cols: xterm.cols, rows: xterm.rows };
+      const adopted = await this.adoptSurvivor(tab, size);
+      const id =
+        adopted ?? (await term.open(tab.hostId, size, { password: this.password() || undefined }));
       this.termId = id;
+      ADOPTED.add(id);
       this.opened.emit(id);
       // Re-read from the store: `tab` was snapshotted before the open
       // round-trip, and a bindShell during it (open-terminal-here on a shell
       // still connecting) lands its cd in initialCommand — the input signal
       // may not have re-bound yet, so the snapshot would miss it.
       const live = this.termTabs.byId().get(tab.id) ?? tab;
-      if (live.initialCommand) term.write(id, `${live.initialCommand}\n`);
+      // An adopted shell is mid-life — it may be sitting in vim. Never type
+      // the tab's opening `cd` into it.
+      if (live.initialCommand && !adopted) term.write(id, `${live.initialCommand}\n`);
 
       const suggest = new InlineSuggest(xterm, {
         lookup: (prefix) => this.history.suggest(prefix, tab.hostId),
@@ -192,6 +198,32 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
     if (/[\x20-\x7e]/.test(data)) {
       this.reportedDirty = true;
       this.dirtied.emit();
+    }
+  }
+
+  /**
+   * Served by a pear-server, shells outlive the page: a reload (or an iPad
+   * evicting the tab) leaves them running there. A plain shell tab picks one
+   * back up — scrollback and all — rather than opening a second beside it.
+   * Orch tabs exist to run one command (logs, consoles) and always start fresh.
+   */
+  private async adoptSurvivor(
+    tab: TermTab,
+    size: { cols: number; rows: number },
+  ): Promise<string | undefined> {
+    const remote = (this.pear.api as { remote?: RemoteControl }).remote;
+    if (!remote || tab.row !== 'shell') return undefined;
+    try {
+      const survivor = (await remote.listTerminals())
+        .filter((t) => t.kind === 'shell' && t.hostId === tab.hostId && !t.exited)
+        .filter((t) => !ADOPTED.has(t.termId))
+        .sort((a, b) => a.createdAt - b.createdAt)[0];
+      if (!survivor) return undefined;
+      ADOPTED.add(survivor.termId); // before the await: two tabs open concurrently
+      await remote.adoptTerminal(survivor.termId, size);
+      return survivor.termId;
+    } catch {
+      return undefined;
     }
   }
 

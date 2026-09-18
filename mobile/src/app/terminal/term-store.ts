@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { PEAR_BACKEND } from '../backend';
+import { REMOTE } from '../remote/remote-state';
 
 // xterm themes need concrete colors; hex approximations of the oklch tokens
 // in styles.scss (same palette as the desktop TERM_THEME).
@@ -53,6 +54,8 @@ export interface TermHandle {
 @Injectable({ providedIn: 'root' })
 export class TermStore {
   private readonly backend = inject(PEAR_BACKEND);
+  /** Only with a pear-server behind us: shells there outlive this page. */
+  private readonly remote = inject(REMOTE, { optional: true });
   private readonly handles = new Map<string, TermHandle>();
   /** Data for termIds the UI hasn't associated yet (open() still in flight). */
   private readonly pending = new Map<string, string[]>();
@@ -132,6 +135,7 @@ export class TermStore {
     handle.status.set('opening');
     try {
       const size = { cols: handle.xterm.cols || 80, rows: handle.xterm.rows || 24 };
+      if (await this.adopt(handle, size)) return;
       const termId = await this.backend.term.open(handle.hostId, size, { cwd });
       handle.termId = termId;
       handle.status.set('open');
@@ -144,6 +148,30 @@ export class TermStore {
       handle.status.set('failed');
       const message = err instanceof Error ? err.message : String(err);
       handle.xterm.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
+    }
+  }
+
+  /**
+   * iPadOS may evict the whole page while the app is in the background. The
+   * host's shell is still running on the server — pick it back up, scrollback
+   * included, instead of starting a second one beside it.
+   */
+  private async adopt(handle: TermHandle, size: { cols: number; rows: number }): Promise<boolean> {
+    if (!this.remote) return false;
+    try {
+      const held = new Set([...this.handles.values()].map((h) => h.termId));
+      const survivor = (await this.remote.listTerminals())
+        .filter((t) => t.kind === 'shell' && t.hostId === handle.hostId && !t.exited)
+        .filter((t) => !held.has(t.termId))
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (!survivor) return false;
+      handle.termId = survivor.termId; // before adopting: its replay must find the handle
+      await this.remote.adoptTerminal(survivor.termId, size);
+      handle.status.set('open');
+      return true;
+    } catch {
+      handle.termId = null;
+      return false; // fall back to a fresh shell
     }
   }
 

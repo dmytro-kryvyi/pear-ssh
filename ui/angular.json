@@ -53,6 +53,13 @@
               }
             ],
             "styles": [
+              "@fontsource/inter/400.css",
+              "@fontsource/inter/500.css",
+              "@fontsource/inter/600.css",
+              "@fontsource/inter/700.css",
+              "@fontsource/jetbrains-mono/400.css",
+              "@fontsource/jetbrains-mono/500.css",
+              "@fontsource/jetbrains-mono/600.css",
               "@xterm/xterm/css/xterm.css",
               "monaco-editor/min/vs/editor/editor.main.css",
               "src/styles.scss"

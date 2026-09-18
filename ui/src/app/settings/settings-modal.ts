@@ -1,6 +1,7 @@
 import { Component, inject, output, signal } from '@angular/core';
 import { ACCENTS, Settings, type Accent } from '../settings';
 import { PearIcon } from '../icons/icon';
+import { RemoteLink } from '../remote/link';
 
 export type SettingsSection =
   | 'general'
@@ -39,6 +40,21 @@ const SHORTCUTS: [string, string][] = [
 export class SettingsModal {
   readonly closed = output<void>();
   readonly settings = inject(Settings);
+  readonly link = inject(RemoteLink);
+
+  passwordAuth(): boolean {
+    return this.link.remote?.hello()?.features['passwordAuth'] === true;
+  }
+
+  /** boot.js (served by pear-server) reads ?ui= and remembers it per device. */
+  switchUi(to: 'mobile' | 'auto'): void {
+    location.assign(to === 'mobile' ? '/m/?ui=mobile' : '/?ui=auto');
+  }
+
+  async signOut(): Promise<void> {
+    await fetch('/api/logout', { method: 'POST' });
+    location.assign('/login');
+  }
 
   readonly sections = SECTIONS;
   readonly shortcuts = SHORTCUTS;

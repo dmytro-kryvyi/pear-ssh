@@ -13,19 +13,9 @@ import type {
 import type { SshEventHub } from './event-hub';
 import type { PearSshPlugin, SshAuthSpec, SshConnectSpec } from './pear-ssh';
 
-/** What the TOFU sheet shows; `knownFingerprint` set = key CHANGED (danger). */
-export interface HostKeyPrompt {
-  host: string;
-  port: number;
-  keyType: string;
-  fingerprint: string;
-  knownFingerprint?: string;
-}
-
-/** UI hook that answers host-key prompts. Resolve true to trust. */
-export interface HostKeyGate {
-  confirm(prompt: HostKeyPrompt): Promise<boolean>;
-}
+// The prompt types moved to core when pear-server gained the same TOFU flow.
+import type { HostKeyGate, HostKeyPrompt } from '@pear/core';
+export type { HostKeyGate, HostKeyPrompt };
 
 export interface TransportDeps {
   plugin: PearSshPlugin;

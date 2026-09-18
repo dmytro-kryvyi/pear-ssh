@@ -454,3 +454,47 @@ test('openTerminal writes the bootstrap line into the new shell', async () => {
 
   assert.deepEqual(transport.channels[0].written, ["cd '/srv'; uptime\n"]);
 });
+
+test('concurrent first calls to one host share a single dial', async () => {
+  let dials = 0;
+  const transports: { disposed: boolean }[] = [];
+  const sessions = new SessionManager(
+    { onTermData: () => {}, onTermExit: () => {}, onHostDisconnected: () => {} },
+    () => {
+      dials++;
+      const t = { disposed: false };
+      transports.push(t);
+      let connected = false;
+      return {
+        connect: async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          connected = true;
+        },
+        get isConnected() {
+          return connected;
+        },
+        onClose: () => {},
+        dispose: () => {
+          t.disposed = true;
+          connected = false;
+        },
+        exec: async () => ({ stdout: '', stderr: '', code: 0 }),
+      } as never;
+    },
+  );
+  const host = { id: 'h', name: 'h', host: 'h', port: 22, user: 'u', kind: 'plain' } as never;
+  const [a, b, c] = await Promise.all([
+    sessions.connection(host),
+    sessions.connection(host),
+    sessions.connection(host),
+  ]);
+  assert.equal(dials, 1);
+  assert.equal(a, b);
+  assert.equal(b, c);
+  // Different credentials are a different attempt, not a passenger.
+  sessions.disposeAll();
+  const typed = { ...(host as object), auth: { method: 'password', password: 'typed' } } as never;
+  await Promise.all([sessions.connection(host), sessions.connection(typed)]);
+  assert.equal(dials, 3);
+  sessions.disposeAll();
+});

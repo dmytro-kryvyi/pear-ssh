@@ -17,10 +17,12 @@ import type {
   TermSize,
 } from './types';
 import type { HistoryEntry } from './history/store';
+import type { HostKeyPrompt } from './ssh/known-hosts';
 import type { SshConfigEntry } from './hosts/ssh-config';
 import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './transfers/engine';
 import type {
   ClaudeChatEvent,
+  ClaudeChatState,
   ClaudeFocus,
   ClaudePermissionAnswer,
   ClaudeSessionMeta,
@@ -236,6 +238,12 @@ export interface PearApi {
     chatSessions(): Promise<ClaudeSessionMeta[]>;
     /** Load a past session (returns its transcript) and continue it. */
     chatResume(sessionId: string): Promise<ClaudeChatEvent[]>;
+    /**
+     * The live conversation, read-only — for a client that (re)connects while
+     * it is in progress. Optional: only embedders whose UI can come and go
+     * independently of the runtime (pear-server) need it.
+     */
+    chatState?(): Promise<ClaudeChatState>;
     /** Drop the active conversation; the next send starts fresh. */
     chatNew(): Promise<void>;
     /** Mirror the focused workspace location so the MCP tools can mark the
@@ -246,6 +254,17 @@ export interface PearApi {
      *  reveal_in_app); the handler must always call uiRespond with the id. */
     onUiRequest(cb: (request: ClaudeUiRequest) => void): () => void;
     uiRespond(response: ClaudeUiResponse): void;
+  };
+  /**
+   * Trust-on-first-use host keys, for embedders that verify them. A connect
+   * to a host whose key is not on file rejects with code UNKNOWN_HOST_KEY or
+   * HOST_KEY_CHANGED and the prompt as `data`; the UI asks, calls trust, and
+   * retries. Absent where keys are not verified (desktop) or where the
+   * transport owns the dance itself (Android).
+   */
+  hostKeys?: {
+    trust(prompt: HostKeyPrompt): Promise<void>;
+    forget(host: string, port: number): Promise<void>;
   };
   onHostDisconnected(cb: (hostId: string) => void): () => void;
 }

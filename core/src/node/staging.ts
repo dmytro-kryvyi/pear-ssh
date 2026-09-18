@@ -15,7 +15,15 @@ export async function removeStaging(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });
 }
 
-/** Delete staging left behind by a previous crash; call once at startup. */
+/** Anything younger may belong to a Pear that is running right now. */
+const STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Delete staging left behind by a previous crash; call once at startup.
+ * Only *old* directories: the temp dir is shared, and another Pear on this
+ * machine (the desktop app beside a pear-server, two servers) may be in the
+ * middle of a transfer in one of them.
+ */
 export async function sweepStaging(): Promise<void> {
   let names: string[];
   try {
@@ -23,9 +31,18 @@ export async function sweepStaging(): Promise<void> {
   } catch {
     return;
   }
+  const now = Date.now();
   await Promise.all(
     names
       .filter((n) => n.startsWith(PREFIX))
-      .map((n) => fs.rm(join(tmpdir(), n), { recursive: true, force: true }).catch(() => {})),
+      .map(async (n) => {
+        const dir = join(tmpdir(), n);
+        try {
+          if (now - (await fs.stat(dir)).mtimeMs < STALE_MS) return;
+          await fs.rm(dir, { recursive: true, force: true });
+        } catch {
+          /* gone already, or not ours to remove */
+        }
+      }),
   );
 }

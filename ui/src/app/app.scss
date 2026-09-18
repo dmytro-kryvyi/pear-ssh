@@ -424,6 +424,7 @@
 }
 
 .claude-resizer {
+  touch-action: none; /* a finger drag must resize, not pan */
   width: 5px;
   margin: 0 -2px;
   cursor: ew-resize;
@@ -444,6 +445,7 @@
 }
 
 .resizer {
+  touch-action: none; /* a finger drag must resize, not pan */
   height: 5px;
   margin: -2px 0;
   cursor: ns-resize;
@@ -557,3 +559,31 @@
 }
 .term-body pear-terminal { flex: 1; min-height: 0; }
 .term-body pear-terminal.hidden { display: none; }
+
+.link-down {
+  position: fixed;
+  z-index: 2000;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 12px;
+  font: 500 12px var(--ui);
+  text-align: center;
+  color: var(--bg-0);
+  background: var(--warn);
+}
+
+/* A quiet dot on the gear: the Pear server knows of a newer release. */
+.brand-settings.has-update {
+  position: relative;
+}
+.brand-settings.has-update::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}

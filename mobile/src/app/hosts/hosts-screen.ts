@@ -2,13 +2,14 @@ import { Component, computed, inject, output, signal } from '@angular/core';
 import type { HostConfig } from '@pear/core';
 import { ORCH_ICON, PmHeader, PmHostDot, PmIconBtn, PmWsGlyph } from '../chrome/chrome';
 import { PmIcon } from '../icons/icon';
+import { PmServerFoot } from '../remote/server-foot';
 import { PearSession } from '../state/session';
 import { PmHostRow } from './host-row';
 
 /** Hosts screen — workspace strip, recents, searchable host list. */
 @Component({
   selector: 'pm-hosts-screen',
-  imports: [PmHeader, PmIconBtn, PmIcon, PmHostDot, PmWsGlyph, PmHostRow],
+  imports: [PmHeader, PmIconBtn, PmIcon, PmHostDot, PmWsGlyph, PmHostRow, PmServerFoot],
   templateUrl: './hosts-screen.html',
   styleUrl: './hosts-screen.scss',
 })

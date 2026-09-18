@@ -1,0 +1,23 @@
+# systemd unit for pear-server (user service).
+#   mkdir -p ~/.config/systemd/user && cp server/pear-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now pear-server
+#   loginctl enable-linger "$USER"        # keep it (and your terminals) running after logout
+#
+# A *user* service on purpose: Pear's Claude integration runs the `claude` CLI
+# as you, with your login — and a server-side shell should be yours, not root's.
+
+[Unit]
+Description=Pear server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Adjust to where the repository lives; build first with: npm ci && npm run build:web
+WorkingDirectory=%h/pear-ssh
+ExecStart=/usr/bin/env node server/dist/cli.js --public-url https://CHANGE-ME.your-tailnet.ts.net
+Restart=on-failure
+RestartSec=2
+# Restarting the server ends every terminal it holds. Don't do it casually.
+
+[Install]
+WantedBy=default.target

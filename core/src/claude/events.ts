@@ -121,3 +121,19 @@ export function coalesceChatEvents(events: ClaudeChatEvent[]): ClaudeChatEvent[]
   }
   return out;
 }
+
+/**
+ * The live conversation as the runtime holds it right now — what a client
+ * that just (re)connected needs to draw the chat without disturbing it.
+ * Unlike chatResume, asking for this changes nothing: the turn keeps running
+ * and pending permission cards stay pending.
+ */
+export interface ClaudeChatState {
+  sessionId: string | null;
+  /** Coalesced transcript, in the same shape chatResume returns. */
+  events: ClaudeChatEvent[];
+  /** A turn is in progress (a user message with no turn-done after it). */
+  busy: boolean;
+  model: string | null;
+  autoApprove: boolean;
+}

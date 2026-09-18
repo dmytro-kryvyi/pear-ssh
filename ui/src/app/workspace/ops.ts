@@ -1,3 +1,4 @@
+import type { WebFiles } from '../remote/connect';
 import { Injectable, inject, signal } from '@angular/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
@@ -212,6 +213,19 @@ export class FileOps {
   /** Files dropped from the OS onto a directory. */
   async uploadDropped(hostId: string, dir: string, files: FileList): Promise<void> {
     await this.guard(async () => {
+      // In a browser a dropped File has no path to hand to the transfer
+      // engine — its bytes go to the server instead.
+      const web = this.pear.api as Partial<WebFiles>;
+      if (web.uploadFiles) {
+        await web.uploadFiles(
+          hostId,
+          dir,
+          Array.from(files),
+          this.settings.conflict(),
+          this.settings.verifyChecksums(),
+        );
+        return;
+      }
       // One job per source directory (nearly always exactly one).
       const byDir = new Map<string, string[]>();
       for (const file of Array.from(files)) {

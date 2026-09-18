@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/.angular
+release
+.git
+mobile/android
+site
+docs
+design

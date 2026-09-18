@@ -14,7 +14,8 @@
     "core",
     "desktop",
     "ui",
-    "mobile"
+    "mobile",
+    "server"
   ],
   "dependencies": {
     "@pear/core": "*",
@@ -23,6 +24,10 @@
   "scripts": {
     "build": "npm run build -w core && npm run build -w desktop && npm run build -w ui",
     "build:mobile": "npm run build -w core && npm run build -w mobile",
+    "build:server": "npm run build -w core && npm run build -w server",
+    "build:web": "npm run build -w core && npm run build -w ui && npm run build -w mobile && npm run build -w server",
+    "server": "npm run build:web && node server/dist/cli.js",
+    "pack:server": "npm run build:web && node scripts/pack-server.mjs",
     "mobile:sync": "npm run build:mobile && npm run sync -w mobile",
     "dev": "node scripts/dev.mjs",
     "start": "npm run build && electron desktop/dist/main.js",

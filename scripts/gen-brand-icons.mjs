@@ -1,13 +1,13 @@
 // Regenerate every raster brand asset from the master pear (build/icon.svg):
-// desktop icon.png/.ico, the ui favicon, and the Android adaptive launcher
-// mipmaps. Run after any change to the master:
+// desktop icon.png/.ico, the ui favicon, the Android adaptive launcher
+// mipmaps, and pear-server's PWA icons. Run after any change to the master:
 //
 //   node scripts/gen-brand-icons.mjs
 //
 // Deps (sharp, png-to-ico) are resolved from site/node_modules — the landing
 // site owns the image toolchain, so run `npm install` in site/ first.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire, } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +86,29 @@ async function main() {
     await writeFile(path.join(dir, 'ic_launcher_foreground.png'), await foreground(FG[density]));
   }
   console.log('✓ android ic_launcher / _round / _foreground (5 densities)');
+
+  // pear-server's PWA icons. iOS and maskable launchers crop the tile to their
+  // own shape, and transparent corners turn black there — so those two get
+  // the master with its rounded rect squared off (rx=0): same art, full bleed.
+  const bleed = Buffer.from(String(master).replace(/rx="114"/, 'rx="0"'));
+  const pwaDir = path.join(ROOT, 'server/public/icons');
+  await mkdir(pwaDir, { recursive: true });
+  await writeFile(path.join(pwaDir, 'icon-192.png'), await png(master, 192));
+  await writeFile(path.join(pwaDir, 'icon-512.png'), await png(master, 512));
+  await writeFile(path.join(pwaDir, 'apple-touch-icon.png'), await png(bleed, 180));
+  // Maskable: the pear must sit inside the central 80% "safe zone".
+  const BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+    <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B3038"/><stop offset="1" stop-color="#1A1D23"/>
+    </linearGradient></defs><rect width="512" height="512" fill="url(#bg)"/></svg>`;
+  await writeFile(
+    path.join(pwaDir, 'icon-maskable-512.png'),
+    await sharp(Buffer.from(BG_SVG))
+      .composite([{ input: await foreground(512) }]) // pear at 60% — inside the zone
+      .png()
+      .toBuffer(),
+  );
+  console.log('✓ server/public/icons (192, 512, maskable, apple-touch)');
   console.log('  (site favicons regenerate via site/build.mjs)');
 }
 

@@ -1,3 +1,4 @@
+import { HostKeyError } from './known-hosts';
 import type { HostConfig, HostFacets, OrchAction, TermSize } from '../types';
 import type { ShellChannel, SshTransport, SshTransportFactory, TransferOpts } from './transport';
 import { SubHostTransport } from './subhost';
@@ -33,6 +34,9 @@ interface TerminalSession {
 export class SessionManager {
   private connections = new Map<string, SshTransport>();
   private terminals = new Map<string, TerminalSession>();
+  private dialing = new Map<string, Promise<SshTransport>>();
+  /** Bumped by disposeAll so dials that were in flight across it don't leak. */
+  private epoch = 0;
 
   constructor(
     private readonly events: {
@@ -48,8 +52,23 @@ export class SessionManager {
   async connection(config: HostConfig, depth = 0): Promise<SshTransport> {
     const existing = this.connections.get(config.id);
     if (existing?.isConnected) return existing;
+    // A UI connecting to a host fires several calls at once (files, orch,
+    // vitals). Without this each would dial its own connection — multiplying
+    // auth attempts, and leaking every connection but the last one stored.
+    // Keyed by credentials too: a retry with a freshly typed password must
+    // not ride along on a dial that is already failing without it.
+    const key = `${config.id}\0${config.auth?.password ?? ''}`;
+    const inFlight = this.dialing.get(key);
+    if (inFlight) return inFlight;
+    const dial = this.connect(config, depth).finally(() => this.dialing.delete(key));
+    this.dialing.set(key, dial);
+    return dial;
+  }
+
+  private async connect(config: HostConfig, depth: number): Promise<SshTransport> {
     if (depth > 4) throw new Error('Host chain too deep or cyclic');
 
+    const epoch = this.epoch;
     let conn: SshTransport;
     if (config.parentId && config.target) {
       const parentCfg = this.resolveHost?.(config.parentId);
@@ -73,6 +92,12 @@ export class SessionManager {
       conn = await this.dialEndpoints(config, jump);
     } else {
       conn = await this.dialEndpoints(config);
+    }
+    if (epoch !== this.epoch) {
+      // disposeAll ran while we were dialing: nobody will ever dispose this
+      // connection, so it must not outlive the call.
+      conn.dispose();
+      throw new Error('Connection cancelled: sessions were shut down');
     }
     conn.onClose(() => {
       this.connections.delete(config.id);
@@ -115,6 +140,9 @@ export class SessionManager {
         return conn;
       } catch (err) {
         conn.dispose();
+        // The endpoint answered — it just isn't (yet) trusted. That is a
+        // question for the user, not a reason to try the next address.
+        if (err instanceof HostKeyError) throw err;
         lastError = err;
         const label = ep.label ? `${ep.label} (${ep.addr}:${ep.port})` : `${ep.addr}:${ep.port}`;
         failures.push(`${label} — ${err instanceof Error ? err.message : String(err)}`);
@@ -262,6 +290,7 @@ export class SessionManager {
   }
 
   disposeAll(): void {
+    this.epoch++;
     for (const conn of this.connections.values()) conn.dispose();
     this.connections.clear();
     this.terminals.clear();

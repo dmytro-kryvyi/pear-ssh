@@ -2,7 +2,7 @@
   @for (p of ws.panes(); track p.id; let i = $index; let last = $last) {
     <pear-pane [pane]="p" [focused]="p.id === ws.focusedPaneId()" />
     @if (!last) {
-      <div class="divider" (mousedown)="startDivider(i, $event)">
+      <div class="divider" (pointerdown)="startDivider(i, $event)">
         <div class="divider-line"></div>
       </div>
     }

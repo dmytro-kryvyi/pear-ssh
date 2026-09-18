@@ -145,6 +145,8 @@ export function createMockBackend(): PearApi {
         for (const g of groups) g.hostIds = g.hostIds.filter((x) => x !== id);
       },
       addLocal: fail('hosts.addLocal'),
+      // No ~/.ssh/config to read off-desktop; the API contract is "never rejects".
+      sshConfigEntries: async () => [],
       probe: async (endpoint): Promise<ProbeResult> => {
         const far = /^(203\.|2a01|100\.)/.test(endpoint.addr);
         await sleep(420 + Math.random() * 260);

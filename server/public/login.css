@@ -1,0 +1,19 @@
+:root { color-scheme: dark; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: grid; place-items: center;
+  background: #1b1e24; color: #f1f2f4;
+  font: 15px/1.4 Inter, system-ui, -apple-system, sans-serif;
+  padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+}
+form { width: min(320px, 100%); display: grid; gap: 12px; justify-items: center; }
+h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+input, button {
+  width: 100%; box-sizing: border-box; font: inherit; color: inherit;
+  padding: 12px 14px; border-radius: 10px; border: 1px solid #3a3e47;
+}
+input { background: #14161a; outline: none; }
+input:focus { border-color: #57b8b0; }
+button { background: #57b8b0; color: #10201f; border-color: transparent; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#error { min-height: 1.4em; margin: 0; color: #e8796b; font-size: 13px; text-align: center; }

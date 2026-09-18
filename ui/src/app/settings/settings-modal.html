@@ -21,6 +21,49 @@
       <div class="scroll">
         @switch (section()) {
           @case ('general') {
+            @if (link.remote) {
+              <div class="group">
+                <div class="g-title">Pear server</div>
+                <div class="row">
+                  <div class="row-label">
+                    <div class="l-title">Version {{ link.version() ?? '—' }}</div>
+                    @if (link.update(); as up) {
+                      <div class="l-sub">
+                        <b>{{ up.latest }} is available.</b> On the server, run the installer again
+                        (terminals it is holding end with the restart) — or enable its
+                        <code>--auto-update</code>, which waits until nothing is running.
+                      </div>
+                    } @else {
+                      <div class="l-sub">Up to date, as far as the server knows.</div>
+                    }
+                  </div>
+                  @if (link.update(); as up) {
+                    <div class="seg-row">
+                      <a class="seg" [href]="up.url" target="_blank" rel="noopener noreferrer">What's new</a>
+                    </div>
+                  }
+                </div>
+                <div class="row">
+                  <div class="row-label">
+                    <div class="l-title">Interface</div>
+                    <div class="l-sub">This device gets the desktop workspace. The touch interface suits tablets and phones; the choice is remembered per device.</div>
+                  </div>
+                  <div class="seg-row">
+                    <button class="seg" (click)="switchUi('mobile')">Use touch interface</button>
+                    <button class="seg" (click)="switchUi('auto')">Auto-detect</button>
+                  </div>
+                </div>
+                @if (passwordAuth()) {
+                  <div class="row">
+                    <div class="row-label">
+                      <div class="l-title">Sign out</div>
+                      <div class="l-sub">Ends this device's login. Sessions on the server keep running.</div>
+                    </div>
+                    <div class="seg-row"><button class="seg" (click)="signOut()">Sign out</button></div>
+                  </div>
+                }
+              </div>
+            }
             <div class="group">
               <div class="g-title">Appearance</div>
               <div class="row">

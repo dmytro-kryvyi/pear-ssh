@@ -1,0 +1,65 @@
+name: Server
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      # The desktop shell is not under test here.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Server specs import @pear/core (and its scratch-sshd fixture) from core/dist.
+      - name: Build core + server
+        run: npm run build:server
+
+      - name: Core tests
+        run: npm test -w core
+
+      # Real HTTP + WebSocket server against an in-process ssh2 server: auth
+      # matrix, Origin/Host checks, terminal reattach, file IO, host keys.
+      - name: Server tests
+        run: npm test -w server
+
+      # The desktop build must keep compiling against the shared PearService.
+      - name: Desktop typecheck
+        run: npm run build -w desktop
+
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker build -f server/Dockerfile -t pear-server .
+
+      - name: Smoke test
+        run: |
+          docker run -d --name pear -p 127.0.0.1:7327:7327 -e PEAR_PASSWORD=ci-smoke pear-server
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:7327/healthz && break; sleep 1; done
+          curl -fs http://127.0.0.1:7327/healthz
+          # Unauthenticated: the app redirects to the login page…
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept: text/html' http://127.0.0.1:7327/)" = 302
+          # …and both UI builds made it into the image.
+          curl -fs http://127.0.0.1:7327/login > /dev/null
+          docker logs pear

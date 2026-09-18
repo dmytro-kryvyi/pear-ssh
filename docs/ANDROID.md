@@ -389,6 +389,12 @@ produces an installable signed APK; a Claude reply survives screen-off.
 
 ## Explicitly deferred
 
+- ~~Standalone Pear server / `RemoteServerBackend`~~ — **done (Sep 2026)**, see
+  [SERVER.md](SERVER.md): `server/` re-exposes `PearApi` over a WebSocket
+  (`core/src/remote/client.ts` is the client; `mobile/src/app/remote/` wires it in as
+  the third `PEAR_BACKEND`, chosen when a pear-server served the page). It is what
+  makes the iPad work. Still deferred from the original sketch: E2E-encrypted
+  host-list *sync* between native apps, and push. The original note follows.
 - **Standalone Pear server / `RemoteServerBackend`** — headless
   `core/src/node` behind a WebSocket re-exposing `PearApi`; adds host-list
   sync (E2E-encrypted; server stores ciphertext only), push, and a Claude
@@ -396,7 +402,9 @@ produces an installable signed APK; a Claude reply survives screen-off.
   IPC-shaped — but no WS bridge exists today and none is needed for v1.
 - Subhost descent (exec-tunnel into containers/VMs) — M5's nested-client
   machinery is the prerequisite; UI comes later.
-- iOS (Capacitor keeps the door open; plugin would target swift-nio-ssh).
+- Native iOS (Capacitor keeps the door open; plugin would target swift-nio-ssh).
+  iPad/iPhone are served today by the PWA on pear-server instead — no Mac, no
+  App Store.
 - Token/API Claude mode.
 
 ## Risks
