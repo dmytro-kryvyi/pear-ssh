@@ -61,12 +61,16 @@ export class PmServerFoot {
   protected readonly remote = inject(REMOTE, { optional: true });
   protected readonly update = signal<RemoteUpdate | null>(null);
 
+  /** From the server's greeting — which arrives after this first renders, so a
+   *  plain read in the template would stay false forever. */
+  protected readonly passwordAuth = signal(false);
+
   constructor() {
     this.remote?.onUpdateAvailable((u) => this.update.set(u));
-  }
-
-  protected passwordAuth(): boolean {
-    return this.remote?.hello()?.features['passwordAuth'] === true;
+    const read = (): void =>
+      this.passwordAuth.set(this.remote?.hello()?.features['passwordAuth'] === true);
+    read();
+    this.remote?.onState((state) => state === 'open' && read());
   }
 
   /** boot.js (served by pear-server) reads ?ui= and remembers it per device. */

@@ -73,6 +73,9 @@ export class PearSession {
     // call (orch, fs, term) targets a phantom host.
     if (!hosts.some((h) => h.id === this.activeHostId())) {
       this.activeHostId.set(hosts[0]?.id ?? null);
+      // …and the same goes for the path: the default is the mock's demo
+      // directory, which a real host answers with ENOENT.
+      this.path.set(hosts[0]?.cwd || '/');
     }
     if (this.activeWsId() !== null && !groups.some((g) => g.id === this.activeWsId())) {
       this.activeWsId.set(null);
