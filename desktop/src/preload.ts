@@ -119,8 +119,10 @@ const api: PearApi = {
     clear: (hostId?: string) => ipcRenderer.invoke('history:clear', hostId),
   },
   claude: {
-    open: (size: TermSize) => ipcRenderer.invoke('claude:open', size),
+    open: (size: TermSize, opts?: { login?: boolean }) =>
+      ipcRenderer.invoke('claude:open', size, opts),
     status: () => ipcRenderer.invoke('claude:status'),
+    listModels: () => ipcRenderer.invoke('claude:listModels'),
     chatSend: (text: string) => ipcRenderer.invoke('claude:chatSend', text),
     chatInterrupt: () => ipcRenderer.send('claude:chatInterrupt'),
     chatAnswer: (requestId: string, answer: ClaudePermissionAnswer) =>

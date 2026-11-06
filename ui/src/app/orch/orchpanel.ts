@@ -1,10 +1,27 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
-import type { FacetKind, HostConfig, OrchAction, SubHostTarget } from '@pear/core';
+import type {
+  ContainerInfo,
+  FacetKind,
+  HostConfig,
+  OrchAction,
+  ProxmoxGuestInfo,
+  SubHostTarget,
+  SwarmServiceInfo,
+} from '@pear/core';
 import { Pear } from '../pear';
 import { PearIcon } from '../icons/icon';
 import { OrchStore, type OrchState } from './store';
 import { FACET_KINDS, FACET_META } from './facet-meta';
 import { pctText, memPair, uptime } from './format';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService } from '../menu/context-menu';
+import {
+  containerMenu,
+  guestMenu,
+  projectMenu,
+  serviceMenu,
+  type OrchMenuDeps,
+} from './orch-menus';
 
 export interface OrchTermCommand {
   command: string;
@@ -35,6 +52,8 @@ export class OrchPanel {
 
   private readonly store = inject(OrchStore);
   private readonly pear = inject(Pear);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
 
   /** Which facet sections are expanded (all open by default — see isOpen). */
   readonly openFacets = signal<Record<string, boolean>>({});
@@ -100,6 +119,40 @@ export class OrchPanel {
   refresh(): void {
     this.actionError.set(null);
     void this.store.refresh(this.host().id);
+  }
+
+  /** The service tasks drawer, from the sidebar too. */
+  openTasks(s: SwarmServiceInfo): void {
+    this.store.openDrawer({ hostId: this.host().id, serviceName: s.name });
+  }
+
+  // ---- context menus ---------------------------------------------------
+
+  private readonly menuDeps: OrchMenuDeps = {
+    act: (key, action, title) => void this.act(key, action, title),
+    jumpInto: (key, target, name) => void this.jumpInto(key, target, name),
+    jumpIntoVm: (key, vmid, name) => void this.jumpIntoVm(key, vmid, name),
+    openTasks: (s) => this.openTasks(s),
+    copy: (text, what) => void this.clipboard.copy(text, what),
+  };
+
+  onContainerMenu(event: MouseEvent, c: ContainerInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, containerMenu(c, this.menuDeps));
+  }
+  onProjectMenu(event: MouseEvent, project: string | null, containers: ContainerInfo[]): void {
+    if (!project) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu.open(event.clientX, event.clientY, projectMenu(project, containers, this.menuDeps));
+  }
+  onServiceMenu(event: MouseEvent, s: SwarmServiceInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, serviceMenu(s, this.menuDeps));
+  }
+  onGuestMenu(event: MouseEvent, g: ProxmoxGuestInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, guestMenu(g, this.menuDeps));
   }
 
   async act(busyKey: string, action: OrchAction, title = 'stream'): Promise<void> {

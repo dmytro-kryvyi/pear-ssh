@@ -92,6 +92,34 @@
                 </div>
               </div>
 
+              <div class="group">
+                <div class="g-title">
+                  Jump host
+                  <span class="g-note">ProxyJump</span>
+                </div>
+                <div class="field">
+                  <div class="f-label">Connect via</div>
+                  <div class="f-control">
+                    <select class="text narrow" [(ngModel)]="via">
+                      <option value="">Direct (no jump)</option>
+                      @if (orphanVia(); as id) {
+                        <option [value]="id">missing host ({{ id.slice(0, 8) }}…)</option>
+                      }
+                      @for (j of jumpCandidates(); track j.id) {
+                        <option [value]="j.id">{{ j.name }}</option>
+                      }
+                    </select>
+                    <div class="f-hint">
+                      @if (via) {
+                        The endpoints above are dialed through that host's SSH connection; authentication still happens end-to-end here, so the jump never sees these credentials.
+                      } @else {
+                        Reach this host by tunnelling through another one, like OpenSSH's ProxyJump.
+                      }
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="group last">
                 <div class="g-title">Authentication</div>
                 <div class="field">

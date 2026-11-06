@@ -3,6 +3,7 @@
   (dragover)="onStripDragOver($event)"
   (drop)="onTabDrop($event, pane().tabs.length)"
   (dragleave)="dragOverIndex.set(null)"
+  (contextmenu)="onStripMenu($event)"
 >
   @for (t of pane().tabs; track t.id; let i = $index) {
     <div
@@ -16,6 +17,7 @@
       (dragend)="onTabDragEnd()"
       (dragover)="onTabDragOver($event, i)"
       (drop)="onTabDrop($event, i)"
+      (contextmenu)="onTabMenu($event, t, i)"
     >
       <span class="tab-host-dot" [style.background]="catalog.color(t.hostId)"></span>
       <pear-icon

@@ -238,3 +238,41 @@ test('resume() finds a dead socket that still claims to be open', async () => {
   await until(() => api.remote.state() === 'open');
   assert.equal(sockets.length, 2);
 });
+
+test('a stream terminal (orch) is listed as such, so a reloaded page never adopts it', async () => {
+  const { port } = await boot();
+  const before = connect(port);
+  const host = await before.api.hosts.upsert(hostInput());
+  const logs = await before.api.term.open(host.id, SIZE, { kind: 'orch' });
+  const shell = await before.api.term.open(host.id, SIZE, { kind: 'shell' });
+  await settle();
+  before.api.remote.close();
+
+  const page = connect(port);
+  const found = await page.api.remote.listTerminals();
+  assert.deepEqual(
+    found.map((t) => [t.termId, t.kind]).sort(),
+    [[logs, 'orch'], [shell, 'shell']].sort(),
+  );
+});
+
+test('claude: the model list and the sign-in flag travel over the link intact', async () => {
+  const { port, server } = await boot();
+  const seen: unknown[][] = [];
+  server.service.override('claude:listModels', async () => [
+    { value: 'default', displayName: 'Default', resolvedModel: 'claude-opus-5[1m]' },
+    { value: 'cc-update-required-1', displayName: 'Fable 5.1 (disabled)', disabled: true },
+  ]);
+  server.service.override('claude:open', async (args) => {
+    seen.push(args);
+    return 'claude-term-1';
+  });
+  const { api } = connect(port);
+  const models = await api.claude.listModels();
+  assert.deepEqual(
+    models.map((m) => [m.value, m.disabled ?? false]),
+    [['default', false], ['cc-update-required-1', true]],
+  );
+  assert.equal(await api.claude.open(SIZE, { login: true }), 'claude-term-1');
+  assert.deepEqual(seen, [[SIZE, { login: true }]]);
+});

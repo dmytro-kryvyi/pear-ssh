@@ -73,16 +73,20 @@ export class ContextMenu {
       const el = this.panel()?.nativeElement;
       if (el && !el.contains(e.target as Node)) this.service.close();
     };
+    // Capture phase, and the keystroke stops here when it closed a menu, so
+    // a drawer or modal listening for the same Escape doesn't close too.
     const dismissKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') this.service.close();
+      if (e.key !== 'Escape' || !this.service.menu()) return;
+      this.service.close();
+      e.stopImmediatePropagation();
     };
     const dismiss = () => this.service.close();
     window.addEventListener('mousedown', dismissDown, true);
-    window.addEventListener('keydown', dismissKey);
+    window.addEventListener('keydown', dismissKey, true);
     window.addEventListener('blur', dismiss);
     inject(DestroyRef).onDestroy(() => {
       window.removeEventListener('mousedown', dismissDown, true);
-      window.removeEventListener('keydown', dismissKey);
+      window.removeEventListener('keydown', dismissKey, true);
       window.removeEventListener('blur', dismiss);
     });
   }

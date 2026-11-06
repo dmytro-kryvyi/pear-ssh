@@ -100,7 +100,8 @@ export class HostCatalog {
     return hay.some((s) => s.toLowerCase().includes(q));
   }
 
-  private descendantsOf(id: string): HostConfig[] {
+  /** Every host that rides on `id`, directly or transitively (sub-hosts and via-hosts). */
+  descendantsOf(id: string): HostConfig[] {
     const out: HostConfig[] = [];
     const queue = [id];
     const seen = new Set([id]);

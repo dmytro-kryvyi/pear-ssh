@@ -1,0 +1,95 @@
+:host {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 40;
+}
+
+.picker {
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px oklch(0.08 0.006 240 / 0.55);
+  font-family: var(--sans, inherit);
+}
+
+.pk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.pk-title { font-size: 12px; font-weight: 600; color: var(--fg-0); }
+.pk-sub { flex: 1; font-size: 10.5px; color: var(--fg-3); }
+.pk-refresh {
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  color: var(--fg-3);
+  &:hover { color: var(--fg-0); background: var(--bg-3); }
+}
+
+.pk-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--fg-0);
+
+  &:hover:not(:disabled) { background: var(--bg-3); }
+  &.selected { background: var(--claude-soft); }
+  &.selected:hover { background: var(--claude-soft); filter: brightness(1.1); }
+  &.off { cursor: default; }
+  &.off .pk-name, &.off .pk-desc { color: var(--fg-3); }
+}
+
+.pk-check {
+  width: 14px;
+  display: flex;
+  justify-content: center;
+  color: var(--claude);
+  flex-shrink: 0;
+}
+
+.pk-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pk-name { font-size: 12.5px; font-weight: 500; }
+.pk-desc {
+  font-size: 10.5px;
+  color: var(--fg-2);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pk-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  &.need { color: var(--warn); }
+}
+
+.pk-foot {
+  margin-top: 4px;
+  padding: 7px 8px 4px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  line-height: 1.4;
+  code { font-family: var(--mono); color: var(--fg-2); }
+}

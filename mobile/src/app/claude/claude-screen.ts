@@ -14,10 +14,12 @@ import { PmIcon } from '../icons/icon';
 import { PearSession } from '../state/session';
 import { CTX_MAX } from './claude-demo';
 import { CLAUDE_STORE } from './claude-store';
+import { PEAR_BACKEND } from '../backend';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** Same lineup as the desktop model menu; null = the CLI's default. */
+/** Static fallback for backends that can't list models; null = the CLI's default.
+ *  A Pear server answers listModels with its own CLI's lineup instead. */
 const MODELS: { label: string; value: string | null }[] = [
   { label: 'Default', value: null },
   { label: 'Fable 5', value: 'claude-fable-5' },
@@ -54,6 +56,7 @@ export class PmClaudeScreen {
   protected readonly tokensText = computed(() => `${(this.chat.tokens() / 1000).toFixed(1)}k / 200k`);
 
   constructor() {
+    void this.loadModels();
     effect(() => {
       this.chat.messages();
       this.chat.busy();
@@ -71,7 +74,9 @@ export class PmClaudeScreen {
     this.chat.hostPick?.set(id);
   }
 
-  protected readonly models = MODELS;
+  protected readonly models = signal(MODELS);
+  private readonly backend = inject(PEAR_BACKEND);
+
   protected pickModel(value: string | null): void {
     this.chat.modelPick?.set(value);
   }
@@ -135,5 +140,20 @@ export class PmClaudeScreen {
     if (status === 'running') return 'run';
     if (status === 'error' || status === 'denied') return 'err';
     return 'ok';
+  }
+
+  /** Prefer the backend's own list (a Pear server asks its claude CLI). */
+  private async loadModels(): Promise<void> {
+    try {
+      const list = await this.backend.claude.listModels();
+      if (!list.length) return;
+      this.models.set(
+        list
+          .filter((m) => !m.disabled)
+          .map((m) => ({ label: m.displayName, value: m.value === 'default' ? null : m.value })),
+      );
+    } catch {
+      /* static lineup stays */
+    }
   }
 }

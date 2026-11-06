@@ -70,6 +70,15 @@ function providerFor(action: OrchAction): FacetProvider {
   return provider;
 }
 
+/**
+ * The shell line an action would run, without running it — for "Copy
+ * command" affordances. Streaming actions report their terminal command.
+ */
+export function actionCommandText(action: OrchAction): string | undefined {
+  const { command, terminalCommand } = providerFor(action).buildAction(action);
+  return command ?? terminalCommand;
+}
+
 export async function performAction(exec: Exec, action: OrchAction): Promise<OrchActionResult> {
   const { command, terminalCommand } = providerFor(action).buildAction(action);
   if (command) {

@@ -43,7 +43,7 @@
       </div>
     }
     @for (group of d.groups; track group.project) {
-      <div class="section-head collapsible" [class.subgroup]="group.project" (click)="toggleGroup('docker', group.project)">
+      <div class="section-head collapsible" [class.subgroup]="group.project" (click)="toggleGroup('docker', group.project)" (contextmenu)="onProjectMenu($event, group.project, group.containers)">
         <pear-icon [name]="isGroupOpen('docker', group.project) ? 'chevronDown' : 'chevronRight'" [size]="13" class="chev" />
         @if (group.project) {
           <pear-icon name="layers" [size]="14" class="accent" />
@@ -78,7 +78,7 @@
       @if (isGroupOpen('docker', group.project)) {
       <div class="grid">
         @for (c of group.containers; track c.id) {
-          <div class="card" [class.busy]="busy() === c.id">
+          <div class="card" [class.busy]="busy() === c.id" (contextmenu)="onContainerMenu($event, c)">
             <div class="card-head">
               <span class="dot" [class.ok]="c.running" [class.off]="!c.running"></span>
               <span class="card-name">{{ c.name }}</span>
@@ -161,7 +161,7 @@
     </div>
     <div class="grid">
       @for (n of d.nodes; track n.name) {
-        <div class="card">
+        <div class="card" (contextmenu)="onNodeMenu($event, n)">
           <div class="card-head">
             <span class="dot" [class.ok]="n.ready" [class.err]="!n.ready"></span>
             <span class="card-name">{{ n.name }}</span>
@@ -181,7 +181,7 @@
     @if (degraded().length) {
       <div class="task-alerts">
         @for (s of degraded(); track s.id) {
-          <div class="task-alert">
+          <div class="task-alert" (contextmenu)="onAlertMenu($event, s)">
             <pear-icon name="warning" [size]="15" class="alert-icon" />
             <div class="alert-text">
               <div class="alert-title">{{ s.name }} — {{ s.desired - s.running }} of {{ s.desired }} tasks not running</div>
@@ -219,7 +219,7 @@
       @if (isGroupOpen('swarm', stack.stack)) {
       <div class="grid">
         @for (s of stack.services; track s.id) {
-          <div class="card" [class.busy]="busy() === s.id">
+          <div class="card" [class.busy]="busy() === s.id" (contextmenu)="onServiceMenu($event, s)">
           <div class="card-head">
             <span class="dot" [class]="serviceState(s.running, s.desired)"></span>
             <button class="card-name clickable" title="Inspect tasks (docker service ps)" (click)="openTasks(s)">{{ s.name }}</button>
@@ -315,7 +315,7 @@
       @if (isGroupOpen('proxmox', grp.type)) {
       <div class="grid">
         @for (g of grp.guests; track g.vmid) {
-          <div class="card" [class.busy]="busy() === 'g' + g.vmid">
+          <div class="card" [class.busy]="busy() === 'g' + g.vmid" (contextmenu)="onGuestMenu($event, g)">
           <div class="card-head">
             <span class="dot" [class.ok]="g.running" [class.off]="!g.running"></span>
             <pear-icon [name]="g.type === 'vm' ? 'cube' : 'cpu'" [size]="13" class="guest-icon" />

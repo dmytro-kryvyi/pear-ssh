@@ -151,6 +151,16 @@
   }
 }
 
+.hint-btn.ghost {
+  background: transparent;
+  color: var(--fg-2);
+  border: 1px solid var(--border-soft);
+
+  &:hover { background: var(--bg-2); filter: none; }
+}
+
+.hint-actions { display: flex; gap: 8px; }
+
 .claude-exited {
   position: absolute;
   inset: 0;

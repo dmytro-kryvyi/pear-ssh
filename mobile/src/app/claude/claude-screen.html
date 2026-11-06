@@ -189,7 +189,7 @@
   @if (chat.modelPick; as mp) {
     <div class="sess-title">Model</div>
     <div class="hostpick noscroll">
-      @for (m of models; track m.label) {
+      @for (m of models(); track m.label) {
         <button class="hp" [class.on]="mp.current() === m.value" (click)="pickModel(m.value)">
           {{ m.label }}
         </button>

@@ -145,3 +145,23 @@ test('bridge: edit_file permission card carries a computed diff', async () => {
   b.answer(card2.requestId, { kind: 'deny' });
   await p2;
 });
+
+test('bridge: a dismissed question resolves its card with empty choices', async () => {
+  const events: ClaudeChatEvent[] = [];
+  const b = bridge(events);
+  const p = b.request('AskUserQuestion', {
+    questions: [{ question: 'Which?', options: [{ label: 'a' }, { label: 'b' }] }],
+  });
+  await tick();
+  const q = events.find((e) => e.type === 'question') as Extract<ClaudeChatEvent, { type: 'question' }>;
+  assert.equal(q.questions[0].question, 'Which?');
+  b.denyAll();
+  const reply = JSON.parse(await p);
+  assert.equal(reply.behavior, 'deny');
+  const answered = events.find((e) => e.type === 'question-answered') as Extract<
+    ClaudeChatEvent,
+    { type: 'question-answered' }
+  >;
+  assert.equal(answered.requestId, q.requestId);
+  assert.deepEqual(answered.choices, {});
+});

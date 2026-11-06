@@ -19,6 +19,7 @@ import type {
 import type { HistoryEntry } from './history/store';
 import type { HostKeyPrompt } from './ssh/known-hosts';
 import type { SshConfigEntry } from './hosts/ssh-config';
+import type { ClaudeModelInfo } from './claude/models';
 import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './transfers/engine';
 import type {
   ClaudeChatEvent,
@@ -75,7 +76,10 @@ export interface PearApi {
     open(
       hostId: string,
       size: TermSize,
-      opts?: { password?: string; cwd?: string },
+      /** `kind` tells a Pear server what the terminal is for: only 'shell'
+       *  terminals are offered back to a reloaded page for adoption; 'orch'
+       *  streams (logs, consoles) always start fresh. */
+      opts?: { password?: string; cwd?: string; kind?: 'shell' | 'orch' },
     ): Promise<string>;
     write(termId: string, data: string): void;
     resize(termId: string, size: TermSize): void;
@@ -222,8 +226,10 @@ export interface PearApi {
      * Returns a terminal id — IO rides the regular term channels
      * (term.write/resize/close/onData/onExit), same as any other terminal.
      */
-    open(size: TermSize): Promise<string>;
+    open(size: TermSize, opts?: { login?: boolean }): Promise<string>;
     status(): Promise<ClaudeStatus>;
+    /** The CLI's own model picker list (cached by the backend). */
+    listModels(): Promise<ClaudeModelInfo[]>;
     // Chat mode: the same CLI driven over stream-json; Pear renders events.
     /** Send a user turn to the active conversation (starts one if needed). */
     chatSend(text: string): Promise<void>;

@@ -84,6 +84,8 @@ export class HostEditor {
   env: { k: string; v: string }[] = [];
   startup: string[] = [];
   endpoints: EndpointDraft[] = [];
+  /** Jump host id (ProxyJump), '' for a direct connection. */
+  via = '';
   method: AuthMethod | 'auto' = 'auto';
   keyPath = '';
   agentForward = false;
@@ -113,6 +115,7 @@ export class HostEditor {
         port: String(e.port),
         note: e.note ?? '',
       }));
+      this.via = h.via ?? '';
       this.method = h.auth?.method ?? 'auto';
       this.keyPath = h.auth?.privateKeyPath ?? '';
       this.agentForward = h.auth?.agentForward ?? false;
@@ -143,6 +146,26 @@ export class HostEditor {
     return this.host();
   }
 
+  /**
+   * Hosts this one may tunnel through: persisted real SSH hosts only (no
+   * local, no exec sub-hosts, no session-scoped jump-ins that vanish on
+   * restart), never itself or anything that already rides on it — that
+   * would loop the chain.
+   */
+  readonly jumpCandidates = computed(() => {
+    const self = this.host();
+    const below = new Set(self ? this.catalog.descendantsOf(self.id).map((h) => h.id) : []);
+    return this.catalog
+      .hosts()
+      .filter((h) => !h.local && !h.parentId && h.id !== self?.id && !below.has(h.id));
+  });
+
+  /** A saved `via` whose jump host no longer exists — shown so it can be cleared. */
+  orphanVia(): string | null {
+    const id = this.host()?.via;
+    return id && !this.catalog.byId(id) ? id : null;
+  }
+
   hasPassword(): boolean {
     return !this.passwordCleared && Boolean(this.host()?.auth?.hasPassword);
   }
@@ -161,7 +184,8 @@ export class HostEditor {
     const primary = this.endpoints[0];
     if (!primary?.addr) return '—';
     const port = primary.port && primary.port !== '22' ? `:${primary.port}` : '';
-    return `${this.user}@${primary.addr}${port}`;
+    const jump = this.via ? this.catalog.byId(this.via) : null;
+    return `${this.user}@${primary.addr}${port}${jump ? ` via ${jump.name}` : ''}`;
   }
 
   headerColor(): string {
@@ -274,6 +298,7 @@ export class HostEditor {
 
     const payload: Omit<HostConfig, 'id'> & { id?: string } = {
       ...(h ? { id: h.id, parentId: h.parentId, target: h.target, via: h.via, local: h.local } : {}),
+      ...(this.noEndpoints() ? {} : { via: this.via || undefined }),
       name: this.name.trim() || primary?.addr || 'new-host',
       host: primary?.addr ?? h?.host ?? 'localhost',
       port: primary?.port ?? h?.port ?? 22,

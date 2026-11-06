@@ -1,6 +1,6 @@
 <div class="scrim" (click)="closed.emit()"></div>
 <aside class="drawer">
-  <div class="head">
+  <div class="head" (contextmenu)="onHeadMenu($event)">
     @if (service(); as s) {
       <span class="dot" [class.ok]="s.running === s.desired && s.running > 0" [class.warn]="s.running > 0 && s.running < s.desired" [class.off]="s.running === 0"></span>
     } @else {
@@ -62,12 +62,12 @@
       <div class="empty">No tasks in this state</div>
     }
     @for (t of shown(); track t.id) {
-      <button class="row" [class.selected]="selected()?.id === t.id" [class.failed]="taskTone(t) === 'err'" (click)="selectedId.set(t.id)">
+      <button class="row" [class.selected]="selected()?.id === t.id" [class.failed]="taskTone(t) === 'err'" (click)="selectedId.set(t.id)" (contextmenu)="onRowMenu($event, t)">
         <span class="name-cell">
           <span class="dot" [class]="taskTone(t)"></span>
           <span class="cell">{{ taskLabel(t) }}</span>
         </span>
-        <span class="cell dim">{{ shortId(t.id) }}</span>
+        <span class="cell dim" [title]="t.id">{{ shortId(t.id) }}</span>
         <span class="cell dim">{{ t.node || '—' }}</span>
         <span class="cell state" [class]="taskTone(t)">{{ t.state }} <span class="since">{{ t.sinceText }}</span></span>
         <span class="cell dim" [class.err-text]="t.error">{{ t.error || '—' }}</span>
@@ -107,7 +107,7 @@
           </div>
         </div>
       }
-      <div class="log-scroll" #logScroll>
+      <div class="log-scroll" #logScroll (contextmenu)="onLogMenu($event)">
         @if (logError(); as err) {
           <div class="empty">{{ err }}</div>
         } @else if (logLoading()) {
@@ -115,8 +115,8 @@
         } @else if (!visibleLines().length) {
           <div class="empty">{{ logLines().length ? 'No lines match' : 'No output' }}</div>
         }
-        @for (l of visibleLines(); track $index) {
-          <div class="line" [class.err]="l.stream === 'err'">
+        @for (l of visibleLines(); track $index; let li = $index) {
+          <div class="line" [class.err]="l.stream === 'err'" [attr.data-line]="li">
             <span class="time">{{ clock(l.ts) }}</span>
             <span class="tag">{{ l.stream }}</span>
             <span class="text">{{ l.text }}</span>

@@ -33,13 +33,14 @@
       </div>
     } @else {
       <div class="breadcrumb">
-        <span class="crumb clickable" (click)="navigate('/')">/</span>
+        <span class="crumb clickable" (click)="navigate('/')" (contextmenu)="onCrumbMenu($event, '/')">/</span>
         @for (c of crumbs(); track c.full) {
           <span class="crumb-sep">/</span>
           <span
             class="crumb"
             [class.clickable]="!c.last"
             (click)="!c.last && navigate(c.full)"
+            (contextmenu)="onCrumbMenu($event, c.full)"
           >{{ c.name }}</span>
         }
       </div>

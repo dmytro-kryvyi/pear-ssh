@@ -85,6 +85,16 @@
   white-space: nowrap;
 }
 
+.row-via {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-3, var(--bg-2));
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 10.5px;
+}
+
 .row-key {
   margin-left: auto;
   display: flex;

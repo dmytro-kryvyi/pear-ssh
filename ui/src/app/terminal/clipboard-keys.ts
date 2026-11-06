@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/xterm';
+import { canReadClipboard, writeClipboardText } from '../clipboard';
 
 /**
  * Clipboard keys, handled before xterm turns them into PTY bytes.
@@ -47,12 +48,15 @@ export function handleClipboardKeys(xterm: Terminal, e: KeyboardEvent): boolean 
 export function copySelection(xterm: Terminal): void {
   const text = xterm.getSelection();
   if (!text) return;
-  void navigator.clipboard.writeText(text);
+  void writeClipboardText(text).catch(() => {});
   // Deselecting is the visual receipt that the copy happened.
   xterm.clearSelection();
 }
 
+/** No-op on origins where the clipboard can't be read (plain http): there
+ *  the browser's own paste keystroke still reaches xterm's paste listener. */
 export async function pasteClipboard(xterm: Terminal): Promise<void> {
+  if (!canReadClipboard()) return;
   const text = await navigator.clipboard.readText();
   // xterm.paste() normalizes newlines and honors bracketed paste mode, then
   // feeds onData — the same path keystrokes take.

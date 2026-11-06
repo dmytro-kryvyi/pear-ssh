@@ -332,6 +332,7 @@ export function createMockBackend(): PearApi {
     },
     claude: {
       open: fail('claude.open'),
+      listModels: async () => [],
       status: async () => ({ installed: false, mcpReady: false }),
       chatSend: fail('claude.chatSend'),
       chatInterrupt: noop,

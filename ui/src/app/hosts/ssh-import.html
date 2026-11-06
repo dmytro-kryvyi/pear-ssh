@@ -15,7 +15,7 @@
         <div class="empty">No importable Host entries found in ~/.ssh/config.</div>
       } @else {
         @for (row of rows(); track row.entry.alias) {
-          <div class="row" [class.blocked]="row.blocked" (click)="toggle(row)">
+          <div class="row" [class.blocked]="row.blocked" (click)="toggle(row)" (contextmenu)="onRowMenu($event, row)">
             <span class="check" [class.on]="row.checked">
               @if (row.checked) {
                 <pear-icon name="check" [size]="10" />
@@ -23,7 +23,12 @@
             </span>
             <div class="row-text">
               <div class="row-alias">{{ row.entry.alias }}</div>
-              <div class="row-target">{{ target(row.entry) }}</div>
+              <div class="row-target">
+                {{ target(row.entry) }}
+                @if (row.via; as via) {
+                  <span class="row-via" [title]="row.entry.proxyJump">{{ via }}</span>
+                }
+              </div>
             </div>
             @if (row.entry.identityFile) {
               <span class="row-key" [title]="row.entry.identityFile">
@@ -31,7 +36,7 @@
               </span>
             }
             @if (row.blocked) {
-              <span class="row-badge">{{ badge(row) }}</span>
+              <span class="row-badge">already added</span>
             }
           </div>
         }

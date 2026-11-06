@@ -47,6 +47,50 @@ All notable changes to Pear are documented here. The format follows
   other Pear running on the same machine; it now removes only stale ones.
 - Mobile build broke on the `hosts.sshConfigEntries` API member added for the desktop
   SSH-config import.
+- **Pear server parity for this batch** — copy works over plain http (no secure
+  context) via a fallback; `uuid()` no longer needs `crypto.randomUUID`, so the host
+  editor opens on LAN origins; the browser keeps its native menu on text fields;
+  terminals opened for logs/consoles are tagged `orch` so a reloaded page never
+  adopts one as its shell; the mobile UI's model list comes from the server's CLI.
+- **Claude dock: stays signed in** — the chat CLI process is retired after a
+  minute idle and resumed on the next message, so it no longer races your
+  terminal `claude` for the rotating OAuth refresh token (the cause of the
+  "logged out" loop). Auth failures now surface as a Sign in card, the dock
+  shows a "Not signed in" state (from `claude auth status`), and Sign in runs
+  the CLI's own `claude auth login` inside the pane; `/login` works in chat.
+- **Right-click menus everywhere** — swarm tasks drawer (task rows: copy full
+  id/node/image/error, logs and inspect commands; log pane: copy line, selection,
+  visible or all lines, select all), every orchestration card in the sidebar and
+  the full view (the row's actions plus copy name/id/image/ports/address/VMID and
+  the exact `docker`/`pct`/`qm` command), host rows (open, new shell, edit, copy
+  address or a ready `ssh -J …` line, close shells, remove), workspace and dock
+  tabs (close others/right, split, move, copy path or `user@host:path`, open
+  terminal here), file-list rows and breadcrumbs (copy name/path/host:path), the
+  editor tab, transfers, vitals, SSH import rows and toasts. Every text field now
+  has Cut/Copy/Paste/Select all. Copies confirm with a toast; menus and toasts
+  render above drawers and modals, and Escape closes only the menu.
+- **Claude dock: copy button on code blocks** — fenced blocks in Claude's
+  answers get a header with the language tag and a Copy control.
+- **Claude dock: right-click everywhere** — composer (Cut/Copy/Paste/Select all),
+  transcript (copy selection, code block, message as Markdown, tool output,
+  command, error), header and context bar.
+- **Claude dock: AskUserQuestion done right** — every question in a prompt is
+  answerable, multi-select and the "Other…" free-text choice are supported,
+  headers are shown, one Submit sends all answers, Dismiss replies cleanly,
+  and the duplicate tool card is gone. Dismissed and replayed cards settle
+  instead of staying live.
+- **Claude dock: model list from your CLI** — the picker asks the installed
+  `claude` for its own model list (`list_models`), so new models show up with
+  the CLI's "update to x.y.z" hint instead of a stale built-in array, in a
+  proper picker (name, blurb, resolved model, current choice ticked, same-name
+  entries disambiguated by version); the context meter uses the resolved model.
+- **ProxyJump everywhere** — `~/.ssh/config` entries with `ProxyJump` now work
+  in quick connect and in the import picker: each hop becomes (or is matched
+  to) a host of its own and the target is saved with `via` pointing at the
+  last hop; multi-hop chains, `[user@]host[:port]` literals and IPv6 brackets
+  are understood. The host editor gained a "Connect via" picker so any host
+  can be routed through another (self and dependants excluded, so chains
+  can't loop).
 
 ## [0.1.0] — 2026-08-29 — first public cut
 

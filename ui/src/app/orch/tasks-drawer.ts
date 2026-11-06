@@ -16,6 +16,9 @@ import { Pear } from '../pear';
 import { PearIcon } from '../icons/icon';
 import { HostCatalog } from '../hosts';
 import { HostActions } from '../host-actions';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService, type MenuItem } from '../menu/context-menu';
+import { copyItem, selectContents, selectionText } from '../menu/menu-items';
 import { OrchStore, type TasksDrawerCtx, type TasksState } from './store';
 
 const FAILED = new Set(['failed', 'rejected', 'orphaned']);
@@ -98,6 +101,8 @@ export class TasksDrawer {
   private readonly pear = inject(Pear);
   private readonly store = inject(OrchStore);
   private readonly actions = inject(HostActions);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
   private readonly catalog = inject(HostCatalog);
 
   readonly filters = FILTERS;
@@ -290,9 +295,70 @@ export class TasksDrawer {
 
   // ---- actions ---------------------------------------------------------
   copy(what: string, text: string): void {
-    void navigator.clipboard?.writeText(text).catch(() => {});
+    void this.clipboard.copy(text);
     this.copied.set(what);
     setTimeout(() => this.copied() === what && this.copied.set(null), 1200);
+  }
+
+  // ---- context menus ---------------------------------------------------
+
+  onHeadMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const s = this.service();
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Force rolling restart', icon: 'refresh', disabled: this.busy(), onClick: () => void this.restart() },
+      { label: 'Refresh tasks', icon: 'refresh', onClick: () => this.refreshTasks() },
+      { divider: true },
+      copyItem('Copy service name', this.ctx().serviceName, this.clipboard, 'service name'),
+      copyItem('Copy image', s?.image, this.clipboard),
+      copyItem('Copy ps command', this.psCmd(), this.clipboard, 'command'),
+    ]);
+  }
+
+  onRowMenu(event: MouseEvent, t: SwarmTaskInfo): void {
+    event.preventDefault();
+    this.selectedId.set(t.id);
+    const logs = `docker service logs --raw -t --no-trunc --tail ${LOG_TAIL} ${t.id}`;
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Follow logs in terminal', icon: 'terminal', onClick: () => this.followInTerminal() },
+      { divider: true },
+      copyItem('Copy task ID', t.id, this.clipboard, 'task ID'),
+      copyItem('Copy node', t.node, this.clipboard),
+      copyItem('Copy image', t.image, this.clipboard),
+      copyItem('Copy error', t.error, this.clipboard),
+      { divider: true },
+      copyItem('Copy logs command', logs, this.clipboard, 'command'),
+      copyItem('Copy inspect command', `docker inspect ${t.id}`, this.clipboard, 'command'),
+    ]);
+  }
+
+  /** Right-click in the log pane: the line under the pointer, the selection,
+   *  what's visible after filters, or everything. */
+  onLogMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const idx = Number((event.target as HTMLElement | null)?.closest<HTMLElement>('[data-line]')?.dataset['line']);
+    const line = Number.isInteger(idx) ? this.visibleLines()[idx] : undefined;
+    const selection = selectionText();
+    const asText = (ls: TaskLogLine[]) => ls.map((l) => `${l.ts} ${l.stream} ${l.text}`).join('\n');
+    const items: MenuItem[] = [
+      copyItem('Copy selection', selection, this.clipboard),
+      copyItem('Copy line', line ? `${line.ts} ${line.stream} ${line.text}` : '', this.clipboard),
+      copyItem('Copy line text', line?.text, this.clipboard, 'line'),
+      { divider: true },
+      copyItem(`Copy visible lines (${this.visibleLines().length})`, asText(this.visibleLines()), this.clipboard, 'visible lines'),
+      copyItem(`Copy all lines (${this.logLines().length})`, asText(this.logLines()), this.clipboard, 'all lines'),
+      { divider: true },
+      {
+        label: 'Select all',
+        shortcut: 'Ctrl+A',
+        onClick: () => {
+          const el = this.logScroll()?.nativeElement;
+          if (el) selectContents(el);
+        },
+      },
+      { label: 'Follow in terminal', icon: 'terminal', onClick: () => this.followInTerminal() },
+    ];
+    this.menu.open(event.clientX, event.clientY, items);
   }
 
   runInTerminal(command: string, title: string): void {

@@ -17,6 +17,8 @@ import { Settings } from '../settings';
 import { HostCatalog } from '../hosts';
 import { TermRouter } from '../terminal/router';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
+import { Clipboard } from '../clipboard';
+import { copyItem } from '../menu/menu-items';
 import { FsStore } from './fs-store';
 import { FileOps, joinPath, type DragSource } from './ops';
 import { Workspace, type WsPane, type WsTab } from './workspace';
@@ -46,6 +48,7 @@ export class FileList {
   readonly catalog = inject(HostCatalog);
   private readonly termRouter = inject(TermRouter);
   private readonly menu = inject(ContextMenuService);
+  private readonly clipboard = inject(Clipboard);
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameField');
 
   readonly selected = signal<string[]>([]);
@@ -252,13 +255,13 @@ export class FileList {
       {
         label: 'Copy',
         icon: 'copy',
-        shortcut: 'Ctrl C',
+        shortcut: 'Ctrl+C',
         onClick: () => this.ops.copy(t.hostId, t.path, names),
       },
       {
         label: 'Cut',
         icon: 'scissors',
-        shortcut: 'Ctrl X',
+        shortcut: 'Ctrl+X',
         onClick: () => this.ops.cut(t.hostId, t.path, names),
       },
       ...(sendTarget
@@ -271,6 +274,10 @@ export class FileList {
             } satisfies MenuItem,
           ]
         : []),
+      { divider: true },
+      copyItem(single ? 'Copy name' : `Copy ${names.length} names`, names.join('\n'), this.clipboard, single ? 'name' : 'names'),
+      copyItem(single ? 'Copy path' : `Copy ${names.length} paths`, names.map((n) => joinPath(t.path, n)).join('\n'), this.clipboard, single ? 'path' : 'paths'),
+      copyItem('Copy host:path', this.remotePath(t.hostId, full), this.clipboard, 'host:path'),
       { divider: true },
       {
         label: 'Rename',
@@ -289,6 +296,27 @@ export class FileList {
       },
     ];
     this.menu.open(event.clientX, event.clientY, items);
+  }
+
+  /** `user@host:/path` — the scp/rsync spelling of a remote path. */
+  private remotePath(hostId: string, path: string): string {
+    const h = this.catalog.byId(hostId);
+    if (!h || h.local || h.parentId) return path;
+    return `${h.user}@${h.host}:${path}`;
+  }
+
+  onCrumbMenu(event: MouseEvent, path: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const t = this.tab();
+    this.menu.open(event.clientX, event.clientY, [
+      copyItem('Copy path', path, this.clipboard),
+      copyItem('Copy host:path', this.remotePath(t.hostId, path), this.clipboard, 'host:path'),
+      { divider: true },
+      { label: 'Open here', icon: 'folderOpen', onClick: () => this.navigate(path) },
+      { label: 'Open in another pane', icon: 'split', onClick: () => this.ws.openToSide(this.pane().id, t.hostId, path, 'dir') },
+      { label: 'Open terminal here', icon: 'terminal', onClick: () => this.termRouter.openShell(t.hostId, path) },
+    ]);
   }
 
   onListMenu(event: MouseEvent): void {
@@ -311,7 +339,7 @@ export class FileList {
       {
         label: 'Paste',
         icon: 'clipboard',
-        shortcut: 'Ctrl V',
+        shortcut: 'Ctrl+V',
         disabled: !this.ws.clipboard(),
         onClick: () => void this.ops.paste(t.hostId, t.path),
       },

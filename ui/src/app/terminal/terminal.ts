@@ -119,7 +119,11 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
       const size = { cols: xterm.cols, rows: xterm.rows };
       const adopted = await this.adoptSurvivor(tab, size);
       const id =
-        adopted ?? (await term.open(tab.hostId, size, { password: this.password() || undefined }));
+        adopted ??
+        (await term.open(tab.hostId, size, {
+          password: this.password() || undefined,
+          kind: tab.row === 'orch' ? 'orch' : 'shell',
+        }));
       this.termId = id;
       ADOPTED.add(id);
       this.opened.emit(id);
@@ -188,7 +192,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
         },
       },
       { divider: true },
-      { label: 'Select All', onClick: () => xterm.selectAll() },
+      { label: 'Select all', onClick: () => xterm.selectAll() },
     ]);
   }
 
