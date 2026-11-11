@@ -83,6 +83,10 @@ export interface TransferEvents {
   onUpdate(job: TransferJobSnapshot): void;
 }
 
+function freshRate(now: number): RateTracker {
+  return { samples: [{ at: now, bytes: 0 }], etaSec: null, etaAt: now };
+}
+
 export function joinPath(dir: string, name: string): string {
   if (!name) return dir;
   return (dir === '/' ? '' : dir.replace(/\/$/, '')) + '/' + name;
@@ -129,12 +133,24 @@ interface Job {
   /** Path + host of the file currently being written, for partial cleanup. */
   partial: { hostId: string | null; path: string } | null;
   /** Throughput tracker for the current stage (see updateRate). */
-  rate: { at: number; bytes: number; ewma: number | null };
+  rate: RateTracker;
+}
+
+interface RateTracker {
+  /** (clock, bytesDone) samples covering the last RATE_WINDOW_MS. */
+  samples: { at: number; bytes: number }[];
+  /** Last smoothed ETA, so the estimate counts down instead of jumping. */
+  etaSec: number | null;
+  /** Clock of the last ETA update. */
+  etaAt: number;
 }
 
 const PROGRESS_INTERVAL_MS = 100;
-/** Weight of the newest rate sample in the smoothed throughput. */
-const RATE_ALPHA = 0.3;
+/** Throughput is the mean over this much history — one slow or bursty
+ *  second must not swing the estimate. */
+const RATE_WINDOW_MS = 20_000;
+/** The ETA eases toward the current estimate with this time constant. */
+const ETA_TAU_MS = 8_000;
 
 export class TransferEngine {
   private jobs = new Map<string, Job>();
@@ -155,7 +171,7 @@ export class TransferEngine {
       req,
       aborter: new Aborter(),
       partial: null,
-      rate: { at: 0, bytes: 0, ewma: null },
+      rate: freshRate(0),
       snapshot: {
         id,
         label: req.names.length === 1 ? req.names[0] : `${req.names.length} items`,
@@ -298,7 +314,7 @@ export class TransferEngine {
     snap.phase = 'copying';
     snap.bytesPerSec = null;
     snap.etaSec = null;
-    job.rate = { at: now, bytes: 0, ewma: null };
+    job.rate = freshRate(now);
     this.emit(job, true);
   }
 
@@ -464,21 +480,39 @@ export class TransferEngine {
   }
 
   /**
-   * Smoothed bytes/sec for the current stage, sampled at most once per
-   * PROGRESS_INTERVAL_MS so a burst of acks doesn't read as a spike, and the
-   * ETA that follows from it.
+   * Throughput for the current stage: the mean over the last RATE_WINDOW_MS
+   * (a 100 ms burst or stall barely moves it), and an ETA that eases toward
+   * the current estimate while counting down between samples — so it reads
+   * like a clock, not a slot machine.
    */
   private updateRate(job: Job, now: number): void {
     const snap = job.snapshot;
     const r = job.rate;
-    const dtSec = (now - r.at) / 1000;
-    if (dtSec < PROGRESS_INTERVAL_MS / 1000) return;
-    const inst = Math.max(0, (snap.bytesDone - r.bytes) / dtSec);
-    r.ewma = r.ewma === null ? inst : r.ewma * (1 - RATE_ALPHA) + inst * RATE_ALPHA;
-    r.at = now;
-    r.bytes = snap.bytesDone;
-    snap.bytesPerSec = Math.round(r.ewma);
+    const last = r.samples[r.samples.length - 1];
+    if (last && now - last.at < PROGRESS_INTERVAL_MS) return;
+    r.samples.push({ at: now, bytes: snap.bytesDone });
+    while (r.samples.length > 2 && now - r.samples[1].at >= RATE_WINDOW_MS) r.samples.shift();
+    const first = r.samples[0];
+    const spanSec = (now - first.at) / 1000;
+    if (spanSec <= 0) return;
+    const rate = Math.max(0, (snap.bytesDone - first.bytes) / spanSec);
+    snap.bytesPerSec = Math.round(rate);
     const remaining = snap.bytesTotal - snap.bytesDone;
-    snap.etaSec = r.ewma > 0 && remaining > 0 ? Math.ceil(remaining / r.ewma) : remaining > 0 ? null : 0;
+    if (remaining <= 0) {
+      r.etaSec = 0;
+    } else if (rate > 0) {
+      const raw = remaining / rate;
+      if (r.etaSec === null) {
+        r.etaSec = raw;
+      } else {
+        // Count down the time that passed, then ease toward the fresh estimate.
+        const dtMs = now - r.etaAt;
+        const counted = Math.max(0, r.etaSec - dtMs / 1000);
+        const alpha = 1 - Math.exp(-dtMs / ETA_TAU_MS);
+        r.etaSec = counted + (raw - counted) * alpha;
+      }
+    }
+    r.etaAt = now;
+    snap.etaSec = r.etaSec === null ? null : Math.ceil(r.etaSec);
   }
 }
