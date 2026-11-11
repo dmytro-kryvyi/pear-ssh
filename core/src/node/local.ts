@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -8,6 +9,7 @@ import type { DirListing, FileEntry, TermSize } from '../types';
 import type {
   ExecOptions,
   ExecResult,
+  PipeChannel,
   ShellChannel,
   SshTransport,
   TransferOpts,
@@ -58,6 +60,86 @@ export class PtyChannel implements ShellChannel {
 
   onClose(cb: () => void): void {
     this.pty.onExit(() => cb());
+  }
+}
+
+/** A child process with piped stdio, as the platform-neutral PipeChannel. */
+class SpawnPipeChannel implements PipeChannel {
+  private dataCbs: ((chunk: Uint8Array) => void)[] = [];
+  private stderrCbs: ((text: string) => void)[] = [];
+  private closeCbs: ((code: number | null) => void)[] = [];
+  private readonly errDecoder = new StringDecoder('utf8');
+  // Hold stdout/stderr/exit that arrive before handlers attach (a short
+  // command can close within a tick), the way Ssh2PipeChannel does.
+  private pendingData: Uint8Array[] = [];
+  private pendingErr = '';
+  private closed = false;
+  private exitCode: number | null = null;
+
+  constructor(private readonly child: ChildProcess) {
+    // A command that exits early (or never reads stdin) makes later writes
+    // fail with EPIPE; that surfaces through the exit code, not as a crash.
+    child.stdin?.on('error', () => {});
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (this.dataCbs.length) for (const cb of this.dataCbs) cb(chunk);
+      else this.pendingData.push(chunk);
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      const text = this.errDecoder.write(d);
+      if (!text) return;
+      if (this.stderrCbs.length) for (const cb of this.stderrCbs) cb(text);
+      else this.pendingErr += text;
+    });
+    child.on('close', (code) => {
+      this.closed = true;
+      this.exitCode = code;
+      for (const cb of this.closeCbs) cb(code);
+    });
+  }
+
+  write(chunk: Uint8Array): boolean {
+    return this.child.stdin?.write(chunk) ?? false;
+  }
+
+  onDrain(cb: () => void): void {
+    this.child.stdin?.on('drain', cb);
+  }
+
+  end(): void {
+    this.child.stdin?.end();
+  }
+
+  pause(): void {
+    this.child.stdout?.pause();
+  }
+
+  resume(): void {
+    this.child.stdout?.resume();
+  }
+
+  onData(cb: (chunk: Uint8Array) => void): void {
+    this.dataCbs.push(cb);
+    const held = this.pendingData;
+    this.pendingData = [];
+    for (const chunk of held) cb(chunk);
+  }
+
+  onStderr(cb: (text: string) => void): void {
+    this.stderrCbs.push(cb);
+    if (this.pendingErr) {
+      cb(this.pendingErr);
+      this.pendingErr = '';
+    }
+  }
+
+  onClose(cb: (code: number | null) => void): void {
+    this.closeCbs.push(cb);
+    if (this.closed) cb(this.exitCode);
+  }
+
+  close(): void {
+    this.child.stdin?.destroy();
+    this.child.kill('SIGKILL');
   }
 }
 
@@ -132,6 +214,18 @@ export class LocalConnection implements SshTransport {
         resolve({ code: code ?? -1, stdout, stderr });
       });
     });
+  }
+
+  /** Raw-stream exec through /bin/sh; not offered on Windows (no POSIX tar
+   *  semantics to rely on), so streamed transfers fall back to per-file. */
+  async execPipe(command: string): Promise<PipeChannel> {
+    if (process.platform === 'win32') throw new Error('execPipe is not available on Windows');
+    const child = spawn('/bin/sh', ['-c', command], { cwd: homedir(), stdio: 'pipe' });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    return new SpawnPipeChannel(child);
   }
 
   /** '~' and relative paths resolve against home, matching SFTP realpath. */

@@ -36,6 +36,29 @@ test('exec past its deadline rejects and kills the command', async () => {
   assert.ok(Date.now() - started < 5_000);
 });
 
+test('execPipe streams stdin through /bin/sh and reports the exit code', async () => {
+  const c = conn();
+  const echo = await c.execPipe('cat');
+  const chunks: Uint8Array[] = [];
+  echo.onData((d) => chunks.push(d));
+  const closed = new Promise<number | null>((r) => echo.onClose(r));
+  echo.write(new TextEncoder().encode('ping'));
+  echo.end();
+  assert.equal(await closed, 0);
+  assert.equal(Buffer.concat(chunks).toString(), 'ping');
+
+  const failing = await c.execPipe('echo oops >&2; exit 3');
+  let stderr = '';
+  failing.onStderr((t) => (stderr += t));
+  assert.equal(await new Promise<number | null>((r) => failing.onClose(r)), 3);
+  assert.equal(stderr, 'oops\n');
+
+  const hung = await c.execPipe('sleep 30');
+  const hungClosed = new Promise<number | null>((r) => hung.onClose(r));
+  hung.close();
+  assert.equal(await hungClosed, null);
+});
+
 test('listDir resolves ~ to home and decodes entry kinds', async () => {
   const c = conn();
   const home = await c.listDir('~');

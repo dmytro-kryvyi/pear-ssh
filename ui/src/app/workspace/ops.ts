@@ -253,6 +253,7 @@ export class FileOps {
         op,
         conflict: this.settings.conflict(),
         verify: this.settings.verifyChecksums(),
+        skipMacMeta: this.settings.skipMacMeta(),
       }),
     );
   }
@@ -265,6 +266,7 @@ export class FileOps {
         names,
         this.settings.conflict(),
         this.settings.verifyChecksums(),
+        this.settings.skipMacMeta(),
       ),
     );
   }
@@ -308,6 +310,7 @@ export class FileOps {
           op: 'copy',
           conflict: this.settings.conflict(),
           verify: this.settings.verifyChecksums(),
+          skipMacMeta: this.settings.skipMacMeta(),
         });
       }
     });

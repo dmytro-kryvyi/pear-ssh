@@ -38,6 +38,7 @@ import { PortForwardManager } from '../port-forward';
 import { probeSsh } from '../probe';
 import { loadSshConfigEntries } from '../ssh-config-file';
 import { makeStagingDir, removeStaging, sweepStaging } from '../staging';
+import { nodeTarIo } from '../tar-io';
 
 /** Who is calling. Absent for single-client embedders (Electron). */
 export interface ClientCtx {
@@ -195,6 +196,7 @@ export class PearService {
         },
         makeStagingDir,
         removeStaging,
+        tar: nodeTarIo,
       },
       { onUpdate: (job) => env.emit('transfer:update', job) },
     );
@@ -741,7 +743,7 @@ export class PearService {
         dest: this.normalizeEndpoint(req.dest),
       });
     });
-    on('transfers:download', ([srcHostId, srcDir, names, conflict, verify]) => {
+    on('transfers:download', ([srcHostId, srcDir, names, conflict, verify, skipMacMeta]) => {
       if (!this.env.downloadsDir) {
         throw new Error('Downloads are not available in this environment');
       }
@@ -752,6 +754,7 @@ export class PearService {
         op: 'copy',
         conflict: conflict as ConflictPolicy,
         verify: verify === true,
+        skipMacMeta: skipMacMeta !== false,
       });
     });
     on('transfers:cancel', ([id]) => transfers.cancel(asString(id)));

@@ -8,7 +8,7 @@ import {
   subExec,
   subShellCommand,
 } from './subhost';
-import type { ExecResult, ShellChannel, SshTransport } from './transport';
+import type { ExecResult, PipeChannel, ShellChannel, SshTransport } from './transport';
 import type { DirListing, SubHostTarget, TermSize } from '../types';
 
 const DOCKER: SubHostTarget = { type: 'docker', ref: 'web' };
@@ -45,7 +45,31 @@ class FakeParent implements SshTransport {
   disposed = false;
   private closeCbs: Array<() => void> = [];
 
-  constructor(private readonly answer: (cmd: string) => ExecResult = () => ok()) {}
+  pipes: string[] = [];
+  /** Optional like the real thing: a parent that cannot stream has none. */
+  execPipe?: (command: string) => Promise<PipeChannel>;
+
+  constructor(
+    private readonly answer: (cmd: string) => ExecResult = () => ok(),
+    canPipe = true,
+  ) {
+    if (canPipe) {
+      this.execPipe = async (command: string) => {
+        this.pipes.push(command);
+        return {
+          write: () => true,
+          onDrain: () => {},
+          end: () => {},
+          pause: () => {},
+          resume: () => {},
+          onData: () => {},
+          onStderr: () => {},
+          onClose: () => {},
+          close: () => {},
+        };
+      };
+    }
+  }
 
   async connect(): Promise<void> {}
   onClose(cb: () => void): void {
@@ -117,6 +141,26 @@ async function connected(parent: FakeParent, target = DOCKER): Promise<SubHostTr
 test('subExec quotes refs and nested commands safely', () => {
   const cmd = subExec({ type: 'docker', ref: "we'b" }, `cat 'a b.txt'`);
   assert.equal(cmd, `docker exec 'we'\\''b' /bin/sh -c 'cat '\\''a b.txt'\\'''`);
+});
+
+test('execPipe nests through the parent with stdin forwarded', async () => {
+  const parent = new FakeParent();
+  const sub = await connected(parent);
+  assert.ok(sub.execPipe, 'docker parent can stream');
+  await sub.execPipe!('tar -x -C /data');
+  assert.deepEqual(parent.pipes, [`docker exec -i 'web' /bin/sh -c 'tar -x -C /data'`]);
+
+  const lxc = await connected(parent, LXC);
+  await lxc.execPipe!('tar -x');
+  assert.equal(parent.pipes[1], `pct exec '101' -- /bin/sh -c 'tar -x'`);
+
+  // docker inside an LXC: each layer wraps the next.
+  const inner = new SubHostTransport(lxc, DOCKER);
+  await inner.execPipe!('cat');
+  assert.equal(parent.pipes[2], `pct exec '101' -- /bin/sh -c 'docker exec -i '\\''web'\\'' /bin/sh -c '\\''cat'\\'''`);
+
+  const noPipe = await connected(new FakeParent(() => ok(), false));
+  assert.equal(noPipe.execPipe, undefined, 'no streaming without a streaming parent');
 });
 
 test('subExec targets lxc through pct', () => {

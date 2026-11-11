@@ -27,6 +27,27 @@ export interface ShellChannel {
   onClose(cb: () => void): void;
 }
 
+/**
+ * A command with its three standard streams exposed raw: no PTY, bytes in and
+ * out untouched. Stdin is `write`/`end`; stdout arrives on `onData`, stderr
+ * decoded on `onStderr`. Backpressure in both directions: `write` returns
+ * false when the window is full (`onDrain` fires once there is room again) and
+ * `pause`/`resume` hold the remote side when the local consumer lags.
+ * `close` tears the channel down early; `onClose` reports the exit code, or
+ * null when the command died by signal or the channel was torn down.
+ */
+export interface PipeChannel {
+  write(chunk: Uint8Array): boolean;
+  onDrain(cb: () => void): void;
+  end(): void;
+  pause(): void;
+  resume(): void;
+  onData(cb: (chunk: Uint8Array) => void): void;
+  onStderr(cb: (text: string) => void): void;
+  onClose(cb: (code: number | null) => void): void;
+  close(): void;
+}
+
 export interface TransferProgress {
   bytes: number;
   total: number;
@@ -70,6 +91,12 @@ export interface SshTransport {
    */
   shellCommand(command: string, size: TermSize): Promise<ShellChannel>;
   exec(command: string, opts?: ExecOptions): Promise<ExecResult>;
+  /**
+   * Run a command with raw stdin/stdout — the carrier for streamed transfers
+   * (`tar` on the far end). Absent on transports that cannot stream, which
+   * makes callers fall back to per-file copies.
+   */
+  execPipe?(command: string): Promise<PipeChannel>;
   listDir(path: string): Promise<DirListing>;
   readFile(path: string, maxBytes?: number): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;

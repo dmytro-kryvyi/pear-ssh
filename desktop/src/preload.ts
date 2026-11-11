@@ -102,7 +102,17 @@ const api: PearApi = {
       names: string[],
       conflict: ConflictPolicy,
       verify: boolean,
-    ) => ipcRenderer.invoke('transfers:download', srcHostId, srcDir, names, conflict, verify),
+      skipMacMeta?: boolean,
+    ) =>
+      ipcRenderer.invoke(
+        'transfers:download',
+        srcHostId,
+        srcDir,
+        names,
+        conflict,
+        verify,
+        skipMacMeta,
+      ),
     cancel: (id: string) => ipcRenderer.send('transfers:cancel', id),
     list: () => ipcRenderer.invoke('transfers:list'),
     clearFinished: () => ipcRenderer.send('transfers:clearFinished'),

@@ -135,7 +135,12 @@
           }
         </div>
         <span class="cell">{{ bytesText(job) }}</span>
-        <span class="cell">{{ speedText(job) }}</span>
+        <div class="name-text">
+          <span class="cell">{{ speedText(job) }}</span>
+          @if (filesRateText(job); as files) {
+            <span class="cell dim sub">{{ files }}</span>
+          }
+        </div>
         <span class="cell">{{ etaText(job) }}</span>
         <div class="status-cell">
           <span class="cell state" [class]="'cell state ' + tone(job)">

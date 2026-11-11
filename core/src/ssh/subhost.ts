@@ -1,5 +1,12 @@
 import type { DirListing, FileEntry, SubHostTarget, TermSize } from '../types';
-import type { ExecOptions, ExecResult, ShellChannel, SshTransport, TransferOpts } from './transport';
+import type {
+  ExecOptions,
+  ExecResult,
+  PipeChannel,
+  ShellChannel,
+  SshTransport,
+  TransferOpts,
+} from './transport';
 import { kindOf, modeString } from './mode';
 import { sha256Command, parseSha256 } from './hash';
 import { shq } from '../shq';
@@ -26,6 +33,8 @@ interface SubHostAdapter {
   exec(ref: string, command: string): string;
   /** Interactive (PTY) variant of exec. */
   execPty(ref: string, command: string): string;
+  /** exec with stdin forwarded (no PTY): the carrier for streamed transfers. */
+  execPipe(ref: string, command: string): string;
   /** Interactive login shell inside the target. */
   shell(ref: string): string;
   /** Copy target:path -> staging path on the parent. */
@@ -39,6 +48,7 @@ const ADAPTERS: Record<SubHostTarget['type'], SubHostAdapter> = {
     cli: 'docker',
     label: (ref) => `Container '${ref}'`,
     exec: (ref, command) => `docker exec ${shq(ref)} /bin/sh -c ${shq(command)}`,
+    execPipe: (ref, command) => `docker exec -i ${shq(ref)} /bin/sh -c ${shq(command)}`,
     execPty: (ref, command) =>
       `docker exec -it -e TERM=xterm-256color ${shq(ref)} /bin/sh -c ${shq(command)}`,
     shell: (ref) =>
@@ -51,6 +61,8 @@ const ADAPTERS: Record<SubHostTarget['type'], SubHostAdapter> = {
     cli: 'pct',
     label: (ref) => `CT ${ref}`,
     exec: (ref, command) => `pct exec ${shq(ref)} -- /bin/sh -c ${shq(command)}`,
+    // pct exec attaches with stdin inherited, so the same shape streams.
+    execPipe: (ref, command) => `pct exec ${shq(ref)} -- /bin/sh -c ${shq(command)}`,
     execPty: (ref, command) => `pct exec ${shq(ref)} -- /bin/sh -c ${shq(command)}`,
     shell: (ref) => `pct enter ${shq(ref)}`,
     pull: (ref, path, tmp) => `pct pull ${shq(ref)} ${shq(path)} ${shq(tmp)}`,
@@ -61,6 +73,11 @@ const ADAPTERS: Record<SubHostTarget['type'], SubHostAdapter> = {
 /** Non-interactive command inside the target, to be run on the parent. */
 export function subExec(target: SubHostTarget, command: string): string {
   return ADAPTERS[target.type].exec(target.ref, command);
+}
+
+/** Stdin-forwarding command inside the target, to be run on the parent. */
+export function subExecPipe(target: SubHostTarget, command: string): string {
+  return ADAPTERS[target.type].execPipe(target.ref, command);
 }
 
 /** Interactive shell inside the target (run on the parent in a PTY). */
@@ -162,12 +179,17 @@ export class SubHostTransport implements SshTransport {
   private connected = false;
   private closedCbs: (() => void)[] = [];
   private channels = new Set<ShellChannel>();
+  /** Present only when the parent can stream — sub-hosts nest, and a
+   *  docker-in-LXC target inherits whatever its chain of parents offers. */
+  readonly execPipe?: (command: string) => Promise<PipeChannel>;
 
   constructor(
     private readonly parent: SshTransport,
     private readonly target: SubHostTarget,
   ) {
     parent.onClose(() => this.teardown());
+    const parentPipe = parent.execPipe?.bind(parent);
+    if (parentPipe) this.execPipe = (command) => parentPipe(subExecPipe(this.target, command));
   }
 
   get isConnected(): boolean {
@@ -211,8 +233,8 @@ export class SubHostTransport implements SshTransport {
     return channel;
   }
 
-  exec(command: string): Promise<ExecResult> {
-    return this.parent.exec(subExec(this.target, command));
+  exec(command: string, opts?: ExecOptions): Promise<ExecResult> {
+    return this.parent.exec(subExec(this.target, command), opts);
   }
 
   async listDir(path: string): Promise<DirListing> {

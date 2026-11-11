@@ -50,14 +50,17 @@ export class FileIo {
   private readonly downloads = new Map<string, PendingDownload>();
 
   constructor(private readonly service: PearService) {
-    service.override('transfers:download', ([srcHostId, srcDir, names, conflict, verify]) =>
-      this.startDownload(
-        String(srcHostId),
-        String(srcDir),
-        (names as unknown[]).map(String),
-        conflict as ConflictPolicy,
-        verify === true,
-      ),
+    service.override(
+      'transfers:download',
+      ([srcHostId, srcDir, names, conflict, verify, skipMacMeta]) =>
+        this.startDownload(
+          String(srcHostId),
+          String(srcDir),
+          (names as unknown[]).map(String),
+          conflict as ConflictPolicy,
+          verify === true,
+          skipMacMeta !== false,
+        ),
     );
     // The file picker lives in the browser; it POSTs to /api/upload instead.
     service.override('fs:upload', () => {
@@ -169,6 +172,7 @@ export class FileIo {
     names: string[],
     conflict: ConflictPolicy,
     verify: boolean,
+    skipMacMeta = true,
   ): Promise<string> {
     if (!names.length || names.some((n) => !safeFileName(encodeURIComponent(n)))) {
       throw new Error('Nothing to download');
@@ -183,6 +187,7 @@ export class FileIo {
         op: 'copy',
         conflict,
         verify,
+        skipMacMeta,
       })) as string;
       this.downloads.set(jobId, { staging, names, ready: false, timer: null });
       return jobId;

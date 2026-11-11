@@ -6,6 +6,7 @@ export { LocalConnection } from './local';
 export { JsonFileStorage } from './json-storage';
 export { loadSshConfigEntries } from './ssh-config-file';
 export { makeStagingDir, removeStaging, sweepStaging } from './staging';
+export { nodeTarIo } from './tar-io';
 export { PortForwardManager, type PortForwardInfo } from './port-forward';
 export {
   ClaudeExecutor,

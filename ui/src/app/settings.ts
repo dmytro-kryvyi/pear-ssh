@@ -65,6 +65,8 @@ export class Settings {
   /** Compare SHA-256 of source and dest after each streamed file; a mismatch
    *  fails the transfer and removes the corrupt partial. */
   readonly verifyChecksums = signal(false);
+  /** Leave `__MACOSX`, `.DS_Store` and `._*` inside transferred folders behind. */
+  readonly skipMacMeta = signal(true);
   readonly termPlacement = signal<TermPlacement>('shared');
 
   // Monitoring
@@ -116,6 +118,7 @@ export class Settings {
       if (typeof saved.verifyChecksums === 'boolean') {
         this.verifyChecksums.set(saved.verifyChecksums);
       }
+      if (typeof saved.skipMacMeta === 'boolean') this.skipMacMeta.set(saved.skipMacMeta);
       if (['shared', 'per-host', 'in-pane'].includes(saved.termPlacement)) {
         this.termPlacement.set(saved.termPlacement);
       }
@@ -162,6 +165,7 @@ export class Settings {
           conflict: this.conflict(),
           maxParallel: this.maxParallel(),
           verifyChecksums: this.verifyChecksums(),
+          skipMacMeta: this.skipMacMeta(),
           termPlacement: this.termPlacement(),
           liveStats: this.liveStats(),
           monitorInterval: this.monitorInterval(),

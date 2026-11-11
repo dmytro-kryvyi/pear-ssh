@@ -52,6 +52,20 @@ before(async () => {
         });
         session.on('exec', (acceptExec, _rej, info) => {
           const stream = acceptExec();
+          if (info.command === 'cat') {
+            stream.on('data', (d: Buffer) => stream.write(d));
+            stream.on('end', () => {
+              stream.exit(0);
+              stream.end();
+            });
+            return;
+          }
+          if (info.command === 'fail') {
+            stream.stderr.write('bad things\n');
+            stream.exit(3);
+            stream.end();
+            return;
+          }
           if (info.command.includes('hang')) {
             // Never exits — a wedged docker daemon, from the client's side. The
             // session closing is what frees one of sshd's MaxSessions slots.
@@ -185,6 +199,36 @@ test('a refused session channel reads as the MaxSessions limit, not an ssh2 code
     }
   } finally {
     refuseSessions = false;
+    sessions.disposeAll();
+  }
+});
+
+test('execPipe carries stdin to the command and its stdout, stderr and exit back', async () => {
+  const { sessions, host } = harness();
+  try {
+    const conn = await sessions.connection(host);
+    const echo = await conn.execPipe!('cat');
+    const chunks: Uint8Array[] = [];
+    echo.onData((c) => chunks.push(c));
+    const closed = new Promise<number | null>((r) => echo.onClose(r));
+    echo.write(new TextEncoder().encode('ping '));
+    echo.write(new TextEncoder().encode('pong'));
+    echo.end();
+    assert.equal(await closed, 0);
+    assert.equal(Buffer.concat(chunks).toString(), 'ping pong');
+
+    const failing = await conn.execPipe!('fail');
+    let stderr = '';
+    failing.onStderr((t) => (stderr += t));
+    const code = await new Promise<number | null>((r) => failing.onClose(r));
+    assert.equal(code, 3);
+    assert.equal(stderr, 'bad things\n');
+
+    const hung = await conn.execPipe!('hang');
+    const hungClosed = new Promise<number | null>((r) => hung.onClose(r));
+    hung.close();
+    assert.equal(await hungClosed, null, 'a torn-down channel has no exit status');
+  } finally {
     sessions.disposeAll();
   }
 });

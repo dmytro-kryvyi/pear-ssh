@@ -10,6 +10,7 @@ import type {
   AbortSignalLike,
   ExecOptions,
   ExecResult,
+  PipeChannel,
   ShellChannel,
   SshTransport,
   TransferOpts,
@@ -115,6 +116,86 @@ export function resolveAuth(cfg: HostConfig): Partial<ConnectConfig> {
     out.tryKeyboard = true;
   }
   return out;
+}
+
+/** Adapts an ssh2 exec channel (no PTY) to the platform-neutral PipeChannel. */
+class Ssh2PipeChannel implements PipeChannel {
+  private dataCbs: ((chunk: Uint8Array) => void)[] = [];
+  private stderrCbs: ((text: string) => void)[] = [];
+  private closeCbs: ((code: number | null) => void)[] = [];
+  private readonly errDecoder = new StringDecoder('utf8');
+  // A stderr-only command (exit, no stdout) ends and closes within a tick of
+  // the channel opening — before a caller awaiting execPipe can attach its
+  // handlers. So drain from the start (ssh2 only emits 'close' once the
+  // readable has ended, which a paused stream never does) and hold what
+  // arrives until a handler is there to take it.
+  private pendingData: Uint8Array[] = [];
+  private pendingErr = '';
+  private closed = false;
+  private exitCode: number | null = null;
+
+  constructor(private readonly channel: ClientChannel) {
+    channel.on('data', (chunk: Buffer) => {
+      if (this.dataCbs.length) for (const cb of this.dataCbs) cb(chunk);
+      else this.pendingData.push(chunk);
+    });
+    channel.stderr.on('data', (d: Buffer) => {
+      const text = this.errDecoder.write(d);
+      if (!text) return;
+      if (this.stderrCbs.length) for (const cb of this.stderrCbs) cb(text);
+      else this.pendingErr += text;
+    });
+    // ssh2: close(code) on a normal exit, close(null, signal, …) otherwise.
+    channel.on('close', (code: number | null) => {
+      this.closed = true;
+      this.exitCode = typeof code === 'number' ? code : null;
+      for (const cb of this.closeCbs) cb(this.exitCode);
+    });
+  }
+
+  write(chunk: Uint8Array): boolean {
+    return this.channel.write(chunk);
+  }
+
+  onDrain(cb: () => void): void {
+    this.channel.on('drain', cb);
+  }
+
+  end(): void {
+    this.channel.end();
+  }
+
+  pause(): void {
+    this.channel.pause();
+  }
+
+  resume(): void {
+    this.channel.resume();
+  }
+
+  onData(cb: (chunk: Uint8Array) => void): void {
+    this.dataCbs.push(cb);
+    const held = this.pendingData;
+    this.pendingData = [];
+    for (const chunk of held) cb(chunk);
+  }
+
+  onStderr(cb: (text: string) => void): void {
+    this.stderrCbs.push(cb);
+    if (this.pendingErr) {
+      cb(this.pendingErr);
+      this.pendingErr = '';
+    }
+  }
+
+  onClose(cb: (code: number | null) => void): void {
+    this.closeCbs.push(cb);
+    if (this.closed) cb(this.exitCode);
+  }
+
+  close(): void {
+    this.channel.close();
+  }
 }
 
 /** Adapts an ssh2 ClientChannel to the platform-neutral ShellChannel. */
@@ -302,6 +383,15 @@ export class SshConnection implements SshTransport {
           });
         stream.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
       });
+    });
+  }
+
+  /** Raw-stream exec: the carrier for tar-streamed transfers. */
+  execPipe(command: string): Promise<PipeChannel> {
+    return new Promise((resolve, reject) => {
+      this.client.exec(command, (err, stream) =>
+        err ? reject(this.channelError(err)) : resolve(new Ssh2PipeChannel(stream)),
+      );
     });
   }
 

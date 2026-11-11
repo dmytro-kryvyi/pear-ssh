@@ -186,6 +186,13 @@
                 <button class="toggle" [class.on]="settings.verifyChecksums()" (click)="settings.verifyChecksums.set(!settings.verifyChecksums())"><span></span></button>
               </div>
               <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Skip macOS metadata in folders</div>
+                  <div class="l-sub">__MACOSX, .DS_Store and ._* files inside transferred folders are not copied</div>
+                </div>
+                <button class="toggle" [class.on]="settings.skipMacMeta()" (click)="settings.skipMacMeta.set(!settings.skipMacMeta())"><span></span></button>
+              </div>
+              <div class="row">
                 <div class="row-label"><div class="l-title">Max parallel transfers</div></div>
                 <div class="seg-row">
                   @for (n of [1, 2, 3, 6]; track n) {

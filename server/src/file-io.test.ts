@@ -7,7 +7,9 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { request } from 'node:http';
@@ -215,6 +217,43 @@ test('download: several entries (or a folder) arrive as a tar', async () => {
   const listing = execFileSync('tar', ['-tf', out]).toString();
   assert.match(listing, /conf\/nginx\.conf/);
   assert.match(listing, /-rf/);
+});
+
+test('a folder with many files travels as one tar stream, minus macOS metadata', async () => {
+  const src = join(root, 'tarsrc', 'tree');
+  mkdirSync(join(src, 'sub', '__MACOSX'), { recursive: true });
+  for (let i = 0; i < 200; i++) writeFileSync(join(src, i % 3 ? '' : 'sub', `f${i}.txt`), `n${i}`);
+  writeFileSync(join(src, 'n'.repeat(120)), 'long');
+  writeFileSync(join(src, '.DS_Store'), 'junk');
+  writeFileSync(join(src, 'sub', '__MACOSX', '._f0.txt'), 'junk');
+  symlinkSync('f1.txt', join(src, 'link'));
+  const dest = join(root, 'remote', 'tar-dest');
+  mkdirSync(dest);
+  for (const verify of [false, true]) {
+    const jobId = (await server.service.invoke('transfers:start', [
+      {
+        src: { hostId: null, dir: join(root, 'tarsrc') },
+        dest: { hostId: host.id, dir: dest },
+        names: ['tree'],
+        op: 'copy',
+        conflict: 'rename',
+        verify,
+      },
+    ])) as string;
+    const job = await settled(jobId);
+    assert.equal(job.status, 'done', job.error);
+    const got = join(dest, verify ? 'tree (1)' : 'tree');
+    assert.equal(readFileSync(join(got, 'f1.txt'), 'utf8'), 'n1');
+    assert.equal(readFileSync(join(got, 'sub', 'f3.txt'), 'utf8'), 'n3');
+    assert.equal(readFileSync(join(got, 'n'.repeat(120)), 'utf8'), 'long');
+    assert.equal(readlinkSync(join(got, 'link')), 'f1.txt');
+    assert.equal(existsSync(join(got, '.DS_Store')), false);
+    assert.equal(existsSync(join(got, 'sub', '__MACOSX')), false);
+    assert.equal(job.fileCount, 202);
+    assert.equal(job.filesDone, 202);
+    assert.equal(job.fileIndex, 202);
+    assert.ok(typeof job.filesPerSec === 'number' || job.filesPerSec === null);
+  }
 });
 
 test('the dialog-based upload channel explains itself instead of hanging', async () => {

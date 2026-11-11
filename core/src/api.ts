@@ -159,6 +159,8 @@ export interface PearApi {
       names: string[],
       conflict: ConflictPolicy,
       verify: boolean,
+      /** Leave macOS metadata inside folders behind (default true). */
+      skipMacMeta?: boolean,
     ): Promise<string>;
     cancel(id: string): void;
     list(): Promise<TransferJobSnapshot[]>;

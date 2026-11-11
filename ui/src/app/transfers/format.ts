@@ -39,11 +39,21 @@ export function fmtDuration(job: TransferJobSnapshot): string {
   return fmtSeconds((job.finishedAt - job.startedAt) / 1000);
 }
 
-/** One mono line for the toast: `812 MiB / 2.0 GiB · 38 MiB/s · 32s`. */
+/** `16 files/s` for a running multi-file job; empty otherwise. */
+export function fmtFilesRate(job: TransferJobSnapshot): string {
+  if (job.status !== 'running' || !job.fileCount || job.fileCount <= 1) return '';
+  if (job.filesPerSec == null || job.filesPerSec <= 0) return '';
+  const n = job.filesPerSec >= 10 ? Math.round(job.filesPerSec) : job.filesPerSec.toFixed(1);
+  return `${n} files/s`;
+}
+
+/** One mono line for the toast: `812 MiB / 2.0 GiB · 38 MiB/s · 16 files/s · 32s`. */
 export function compactProgress(job: TransferJobSnapshot, units: SizeUnits): string {
   if (job.status !== 'running' || !job.bytesTotal) return '';
   const parts = [`${fmtBytes(job.bytesDone, units)} / ${fmtBytes(job.bytesTotal, units)}`];
   if (job.bytesPerSec) parts.push(fmtRate(job.bytesPerSec, units));
+  const files = fmtFilesRate(job);
+  if (files) parts.push(files);
   const eta = fmtSeconds(job.etaSec);
   if (eta) parts.push(eta);
   return parts.join(' · ');

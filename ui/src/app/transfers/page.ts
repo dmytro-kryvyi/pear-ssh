@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import type { FsOpSnapshot, TransferJobSnapshot } from '@pear/core';
 import { PearIcon } from '../icons/icon';
 import { Settings } from '../settings';
-import { fmtBytes, fmtRate, fmtSeconds } from './format';
+import { fmtBytes, fmtFilesRate, fmtRate, fmtSeconds } from './format';
 import { TransfersStore } from './store';
 
 type Filter = 'all' | 'active' | 'done' | 'failed';
@@ -103,6 +103,10 @@ export class TransfersPage {
 
   speedText(job: TransferJobSnapshot): string {
     return job.status === 'running' && job.bytesPerSec ? fmtRate(job.bytesPerSec, this.settings.sizeUnits()) : '—';
+  }
+
+  filesRateText(job: TransferJobSnapshot): string {
+    return fmtFilesRate(job);
   }
 
   etaText(job: TransferJobSnapshot): string {
