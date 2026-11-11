@@ -22,6 +22,9 @@ import { SshConnection, resolveAuth } from './connection';
 let server: Server;
 let port: number;
 let lastResize: { cols: number; rows: number } | null = null;
+/** Refuse session channels the way sshd does past MaxSessions. */
+let refuseSessions = false;
+let hungExecClosed = false;
 
 before(async () => {
   const { privateKey } = generateKeyPairSync('rsa', {
@@ -33,7 +36,8 @@ before(async () => {
   server = new Server({ hostKeys: [privateKey] }, (client) => {
     client.on('authentication', (ctx) => ctx.accept());
     client.on('ready', () => {
-      client.on('session', (accept) => {
+      client.on('session', (accept, reject) => {
+        if (refuseSessions) return reject();
         const session = accept();
         session.on('pty', (a) => a?.());
         session.on('window-change', (a, _r, info) => {
@@ -48,6 +52,12 @@ before(async () => {
         });
         session.on('exec', (acceptExec, _rej, info) => {
           const stream = acceptExec();
+          if (info.command.includes('hang')) {
+            // Never exits — a wedged docker daemon, from the client's side. The
+            // session closing is what frees one of sshd's MaxSessions slots.
+            session.on('close', () => (hungExecClosed = true));
+            return;
+          }
           stream.write(
             info.command.includes('pvesh') ? 'FACET:proxmox\n' : `ran: ${info.command}\n`,
           );
@@ -138,6 +148,45 @@ test('exec returns stdout with an exit code', async () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /ran: uname -a/);
   sessions.disposeAll();
+});
+
+test('exec past its deadline rejects and closes the channel', async () => {
+  const { sessions, host } = harness();
+  hungExecClosed = false;
+  try {
+    await assert.rejects(
+      sessions.exec(host, 'docker stats hang', { timeoutMs: 200 }),
+      (err: Error) =>
+        err.name === 'ExecTimeoutError' && /timed out after 0 s: docker stats hang/.test(err.message),
+    );
+    await settle();
+    assert.equal(hungExecClosed, true);
+    // The connection itself is fine afterwards.
+    assert.match((await sessions.exec(host, 'true')).stdout, /ran: true/);
+  } finally {
+    sessions.disposeAll();
+  }
+});
+
+test('a refused session channel reads as the MaxSessions limit, not an ssh2 code', async () => {
+  const { sessions, host } = harness();
+  await sessions.exec(host, 'true'); // connect while sessions are still allowed
+  refuseSessions = true;
+  try {
+    for (const open of [
+      () => sessions.exec(host, 'docker ps'),
+      () => sessions.openTerminal(host, SIZE),
+      () => sessions.listDir(host, '/'),
+    ]) {
+      await assert.rejects(open, (err: Error) => {
+        assert.match(err.message, /^loopback refused to open another SSH session.*MaxSessions/);
+        return true;
+      });
+    }
+  } finally {
+    refuseSessions = false;
+    sessions.disposeAll();
+  }
 });
 
 test('orchestration detection runs over the real transport', async () => {

@@ -83,6 +83,7 @@ export class OrchStore {
   }
 
   clear(hostId: string): void {
+    this.fetchAgain.delete(hostId);
     this.states.update((all) => {
       const { [hostId]: _removed, ...rest } = all;
       return rest;
@@ -160,7 +161,31 @@ export class OrchStore {
     }
   }
 
-  private async fetch(hostId: string, previous?: Orchestration): Promise<void> {
+  /**
+   * One snapshot fetch per host at a time. Each fetch is an SSH session
+   * channel for as long as `docker ps` runs, and sshd caps those per
+   * connection — a slow daemon plus a few refresh clicks used to exhaust the
+   * cap. A refresh asked for while one is running makes the next run once
+   * the current one settles, so the state after an action still lands.
+   */
+  private readonly fetching = new Map<string, Promise<void>>();
+  private readonly fetchAgain = new Set<string>();
+
+  private fetch(hostId: string, previous?: Orchestration): Promise<void> {
+    const running = this.fetching.get(hostId);
+    if (running) {
+      this.fetchAgain.add(hostId);
+      return running;
+    }
+    const run = this.fetchOnce(hostId, previous).finally(() => {
+      this.fetching.delete(hostId);
+      if (this.fetchAgain.delete(hostId)) void this.fetch(hostId, this.states()[hostId]?.data);
+    });
+    this.fetching.set(hostId, run);
+    return run;
+  }
+
+  private async fetchOnce(hostId: string, previous?: Orchestration): Promise<void> {
     try {
       const data = await this.pear.api.orch.get(hostId);
       const empty = FACET_KINDS.every((kind) => !data[kind]);

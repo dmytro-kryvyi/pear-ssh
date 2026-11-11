@@ -1,5 +1,5 @@
 import type { DirListing, FileEntry, SubHostTarget, TermSize } from '../types';
-import type { ExecResult, ShellChannel, SshTransport, TransferOpts } from './transport';
+import type { ExecOptions, ExecResult, ShellChannel, SshTransport, TransferOpts } from './transport';
 import { kindOf, modeString } from './mode';
 import { sha256Command, parseSha256 } from './hash';
 import { shq } from '../shq';

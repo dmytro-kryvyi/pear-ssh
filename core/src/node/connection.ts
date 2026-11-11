@@ -8,6 +8,7 @@ import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from
 import type { DirListing, FileEntry, HostConfig, TermSize } from '../types';
 import type {
   AbortSignalLike,
+  ExecOptions,
   ExecResult,
   ShellChannel,
   SshTransport,
@@ -16,6 +17,7 @@ import type {
 import { kindOf, modeString } from '../ssh/mode';
 import { sha256Command, parseSha256 } from '../ssh/hash';
 import { shq } from '../shq';
+import { ExecTimeoutError, describeChannelOpenError } from '../ssh/exec-errors';
 import type { HostKeyError, KnownHosts } from '../ssh/known-hosts';
 import { sftpGet, sftpPut } from './sftp-xfer';
 
@@ -236,7 +238,7 @@ export class SshConnection implements SshTransport {
   forwardOut(dstHost: string, dstPort: number): Promise<ClientChannel> {
     return new Promise((resolve, reject) => {
       this.client.forwardOut('127.0.0.1', 0, dstHost, dstPort, (err, stream) =>
-        err ? reject(err) : resolve(stream),
+        err ? reject(this.channelError(err)) : resolve(stream),
       );
     });
   }
@@ -257,7 +259,7 @@ export class SshConnection implements SshTransport {
     return new Promise((resolve, reject) => {
       this.client.shell(
         { term, cols: size.cols, rows: size.rows },
-        (err, stream) => (err ? reject(err) : resolve(new Ssh2ShellChannel(stream))),
+        (err, stream) => (err ? reject(this.channelError(err)) : resolve(new Ssh2ShellChannel(stream))),
       );
     });
   }
@@ -268,26 +270,45 @@ export class SshConnection implements SshTransport {
       this.client.exec(
         command,
         { pty: { term, cols: size.cols, rows: size.rows } },
-        (err, stream) => (err ? reject(err) : resolve(new Ssh2ShellChannel(stream))),
+        (err, stream) => (err ? reject(this.channelError(err)) : resolve(new Ssh2ShellChannel(stream))),
       );
     });
   }
 
-  /** Run a single command, collect stdout/stderr, resolve on exit. */
-  exec(command: string): Promise<ExecResult> {
+  /**
+   * Run a single command, collect stdout/stderr, resolve on exit. With a
+   * deadline, a command still running when it passes has its channel closed
+   * (sshd then signals the process) and the call rejects.
+   */
+  exec(command: string, opts?: ExecOptions): Promise<ExecResult> {
     return new Promise((resolve, reject) => {
       this.client.exec(command, (err, stream) => {
-        if (err) return reject(err);
+        if (err) return reject(this.channelError(err));
         let stdout = '';
         let stderr = '';
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        if (opts?.timeoutMs) {
+          timer = setTimeout(() => {
+            timer = undefined;
+            reject(new ExecTimeoutError(command, opts.timeoutMs ?? 0));
+            stream.close();
+          }, opts.timeoutMs);
+        }
         stream
           .on('data', (d: Buffer) => (stdout += d.toString('utf8')))
-          .on('close', (code: number | null) =>
-            resolve({ code: code ?? -1, stdout, stderr }),
-          );
+          .on('close', (code: number | null) => {
+            if (timer) clearTimeout(timer);
+            resolve({ code: code ?? -1, stdout, stderr });
+          });
         stream.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
       });
     });
+  }
+
+  /** Rephrase a refused channel (MaxSessions exhausted, …) for the user. */
+  private channelError(err: Error): Error {
+    const cfg = this.config;
+    return describeChannelOpenError(err, cfg.name || `${cfg.user}@${cfg.host}`);
   }
 
   sftp(): Promise<SFTPWrapper> {
@@ -296,7 +317,7 @@ export class SshConnection implements SshTransport {
         this.client.sftp((err, sftp) => {
           if (err) {
             this.sftpPromise = undefined;
-            reject(err);
+            reject(this.channelError(err));
           } else {
             sftp.on('close', () => (this.sftpPromise = undefined));
             resolve(sftp);

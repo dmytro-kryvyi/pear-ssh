@@ -29,6 +29,13 @@ test('exec runs through a shell and reports code/stdout/stderr', async () => {
   assert.equal(fail.code, 3);
 });
 
+test('exec past its deadline rejects and kills the command', async () => {
+  const c = conn();
+  const started = Date.now();
+  await assert.rejects(c.exec('sleep 30', { timeoutMs: 150 }), /timed out after 0 s: sleep 30/);
+  assert.ok(Date.now() - started < 5_000);
+});
+
 test('listDir resolves ~ to home and decodes entry kinds', async () => {
   const c = conn();
   const home = await c.listDir('~');

@@ -3,7 +3,13 @@ import { fileInfo, type FileInfo } from '../fs/info';
 import { applyPerms, type PermsChange } from '../fs/perms';
 import { detectArchiveTools, type ArchiveTools } from '../fs/archive';
 import type { HostConfig, HostFacets, OrchAction, TermSize } from '../types';
-import type { ShellChannel, SshTransport, SshTransportFactory, TransferOpts } from './transport';
+import type {
+  ExecOptions,
+  ShellChannel,
+  SshTransport,
+  SshTransportFactory,
+  TransferOpts,
+} from './transport';
 import { SubHostTransport } from './subhost';
 import {
   detectFacets,
@@ -34,6 +40,11 @@ interface TerminalSession {
  * construction — the embedder decides how to transport them (IPC, WebSocket)
  * and which SshTransport implementation to build them on.
  */
+/** Deadline for the commands the UI polls or probes (facets, docker ps/stats, vitals). */
+export const POLL_EXEC_TIMEOUT_MS = 30_000;
+/** Deadline for actions and file operations: a compose pull or a recursive chown can take a while. */
+export const ACTION_EXEC_TIMEOUT_MS = 10 * 60_000;
+
 export class SessionManager {
   private connections = new Map<string, SshTransport>();
   private terminals = new Map<string, TerminalSession>();
@@ -188,9 +199,9 @@ export class SessionManager {
     this.terminals.get(termId)?.channel.close();
   }
 
-  async exec(config: HostConfig, command: string) {
+  async exec(config: HostConfig, command: string, opts?: ExecOptions) {
     const conn = await this.connection(config);
-    return conn.exec(command);
+    return conn.exec(command, opts);
   }
 
   async listDir(config: HostConfig, path: string) {
@@ -248,52 +259,59 @@ export class SessionManager {
     return conn.uploadFile(localPath, remotePath, opts);
   }
 
-  private execBinder(config: HostConfig) {
-    return (command: string) => this.exec(config, command);
+  /**
+   * Every helper below runs with a deadline. Each command holds one SSH
+   * session channel while it runs, and sshd allows MaxSessions (10) per
+   * connection: a docker daemon that stops answering used to pin a channel
+   * per poll until terminals, SFTP and actions all failed with "open failed".
+   */
+  private execBinder(config: HostConfig, timeoutMs: number) {
+    return (command: string) => this.exec(config, command, { timeoutMs });
   }
 
   fileInfo(config: HostConfig, path: string, deep?: boolean): Promise<FileInfo> {
-    return fileInfo(this.execBinder(config), path, { deep });
+    const budget = deep ? ACTION_EXEC_TIMEOUT_MS : POLL_EXEC_TIMEOUT_MS;
+    return fileInfo(this.execBinder(config, budget), path, { deep });
   }
 
   setPerms(config: HostConfig, path: string, change: PermsChange): Promise<void> {
-    return applyPerms(this.execBinder(config), path, change);
+    return applyPerms(this.execBinder(config, ACTION_EXEC_TIMEOUT_MS), path, change);
   }
 
   archiveTools(config: HostConfig): Promise<ArchiveTools> {
-    return detectArchiveTools(this.execBinder(config));
+    return detectArchiveTools(this.execBinder(config, POLL_EXEC_TIMEOUT_MS));
   }
 
   detectOrchFacets(config: HostConfig): Promise<HostFacets> {
-    return detectFacets(this.execBinder(config));
+    return detectFacets(this.execBinder(config, POLL_EXEC_TIMEOUT_MS));
   }
 
   orchestration(config: HostConfig, facets: HostFacets) {
-    return fetchOrchestration(this.execBinder(config), facets);
+    return fetchOrchestration(this.execBinder(config, POLL_EXEC_TIMEOUT_MS), facets);
   }
 
   orchAction(config: HostConfig, action: OrchAction) {
-    return performAction(this.execBinder(config), action);
+    return performAction(this.execBinder(config, ACTION_EXEC_TIMEOUT_MS), action);
   }
 
   serviceTasks(config: HostConfig, service: string) {
-    return fetchServiceTasks(this.execBinder(config), service);
+    return fetchServiceTasks(this.execBinder(config, POLL_EXEC_TIMEOUT_MS), service);
   }
 
   taskLogs(config: HostConfig, taskId: string, opts?: TaskLogsOptions) {
-    return fetchTaskLogs(this.execBinder(config), taskId, opts);
+    return fetchTaskLogs(this.execBinder(config, POLL_EXEC_TIMEOUT_MS), taskId, opts);
   }
 
   vitals(config: HostConfig) {
-    return fetchVitals(this.execBinder(config));
+    return fetchVitals(this.execBinder(config, POLL_EXEC_TIMEOUT_MS));
   }
 
   dockerDf(config: HostConfig) {
-    return fetchDockerDf(this.execBinder(config));
+    return fetchDockerDf(this.execBinder(config, ACTION_EXEC_TIMEOUT_MS));
   }
 
   containerStats(config: HostConfig) {
-    return fetchStats(this.execBinder(config));
+    return fetchStats(this.execBinder(config, POLL_EXEC_TIMEOUT_MS));
   }
 
   isConnected(hostId: string): boolean {

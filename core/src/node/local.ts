@@ -5,7 +5,14 @@ import { pipeline } from 'node:stream/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { DirListing, FileEntry, TermSize } from '../types';
-import type { ExecResult, ShellChannel, SshTransport, TransferOpts } from '../ssh/transport';
+import type {
+  ExecOptions,
+  ExecResult,
+  ShellChannel,
+  SshTransport,
+  TransferOpts,
+} from '../ssh/transport';
+import { ExecTimeoutError } from '../ssh/exec-errors';
 import { kindOf, modeString } from '../ssh/mode';
 import { byteCounter, toAbortSignal } from './connection';
 import type { IPty } from '@lydell/node-pty';
@@ -100,7 +107,7 @@ export class LocalConnection implements SshTransport {
     return new PtyChannel(pty);
   }
 
-  exec(command: string): Promise<ExecResult> {
+  exec(command: string, opts?: ExecOptions): Promise<ExecResult> {
     return new Promise((resolve, reject) => {
       const posix = process.platform !== 'win32';
       const shell = posix ? '/bin/sh' : (process.env['COMSPEC'] ?? 'cmd.exe');
@@ -109,10 +116,21 @@ export class LocalConnection implements SshTransport {
       });
       let stdout = '';
       let stderr = '';
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      if (opts?.timeoutMs) {
+        timer = setTimeout(() => {
+          timer = undefined;
+          reject(new ExecTimeoutError(command, opts.timeoutMs ?? 0));
+          child.kill('SIGKILL');
+        }, opts.timeoutMs);
+      }
       child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
       child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
       child.on('error', reject);
-      child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }));
+      child.on('close', (code) => {
+        if (timer) clearTimeout(timer);
+        resolve({ code: code ?? -1, stdout, stderr });
+      });
     });
   }
 

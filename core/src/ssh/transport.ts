@@ -6,6 +6,15 @@ export interface ExecResult {
   stderr: string;
 }
 
+export interface ExecOptions {
+  /**
+   * Deadline for the command. When it passes the channel is closed and the
+   * call rejects with ExecTimeoutError — a hung command must not keep an SSH
+   * session channel (one of sshd's MaxSessions) for the life of the connection.
+   */
+  timeoutMs?: number;
+}
+
 /**
  * An interactive PTY channel. `onData` carries stdout and stderr merged —
  * a terminal renders both into the same stream anyway.
@@ -60,7 +69,7 @@ export interface SshTransport {
    * command exits.
    */
   shellCommand(command: string, size: TermSize): Promise<ShellChannel>;
-  exec(command: string): Promise<ExecResult>;
+  exec(command: string, opts?: ExecOptions): Promise<ExecResult>;
   listDir(path: string): Promise<DirListing>;
   readFile(path: string, maxBytes?: number): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;

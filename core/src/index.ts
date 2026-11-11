@@ -4,6 +4,7 @@ export * from './types';
 export type { PearApi } from './api';
 export type {
   AbortSignalLike,
+  ExecOptions,
   ExecResult,
   ShellChannel,
   SshTransport,
@@ -25,7 +26,13 @@ export {
   type TransferRequest,
   type TransferStatus,
 } from './transfers/engine';
-export { SessionManager, type TerminalHandle } from './ssh/sessions';
+export {
+  ACTION_EXEC_TIMEOUT_MS,
+  POLL_EXEC_TIMEOUT_MS,
+  SessionManager,
+  type TerminalHandle,
+} from './ssh/sessions';
+export { ExecTimeoutError, describeChannelOpenError } from './ssh/exec-errors';
 export {
   PASSTHROUGH_POLICY,
   TerminalHub,
