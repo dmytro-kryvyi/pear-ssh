@@ -1,4 +1,4 @@
-import { Component, ElementRef, inject, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, inject, viewChild } from '@angular/core';
 import { Pane } from './pane';
 import { Workspace } from './workspace';
 
@@ -8,6 +8,7 @@ import { Workspace } from './workspace';
   imports: [Pane],
   templateUrl: './pane-grid.html',
   styleUrl: './pane-grid.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PaneGrid {
   readonly ws = inject(Workspace);

@@ -1,4 +1,4 @@
-import { Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
 const W = 100;
 const H = 28;
@@ -28,6 +28,7 @@ const PAD = 1.5;
     :host { display: block; }
     svg { display: block; width: 100%; height: 100%; overflow: visible; }
   `,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Sparkline {
   readonly points = input.required<(number | null)[]>();

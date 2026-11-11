@@ -1,1 +1,7 @@
 <div #host class="term-host" (contextmenu)="onContextMenu($event)"></div>
+@if (connecting()) {
+  <div class="term-connecting" role="status" aria-live="polite">
+    <span class="pear-spinner"></span>
+    <span>Opening shell on {{ hostName() }}…</span>
+  </div>
+}

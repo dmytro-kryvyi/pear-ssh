@@ -74,7 +74,8 @@
           <input
             name="password"
             type="password"
-            [(ngModel)]="password"
+            [ngModel]="password()"
+            (ngModelChange)="password.set($event)"
             placeholder="password (optional — agent/keys tried first)"
             autocomplete="off"
           />
@@ -87,6 +88,10 @@
       }
     </div>
   } @else {
+    @if (state()?.loading && rows().length) {
+      <!-- Refreshing a listing that is already on screen: keep it, mark it. -->
+      <div class="pear-progress list-progress" role="progressbar" aria-label="Refreshing"></div>
+    }
     <div
       class="list"
       [class.loading]="state()?.loading"
@@ -97,13 +102,14 @@
       (dragleave)="onListDragLeave($event)"
       (drop)="onListDrop($event)"
     >
-      @for (e of entries(); track e.name; let idx = $index) {
+      @for (r of rows(); track r.entry.name; let idx = $index) {
+        @let e = r.entry;
         <div
           class="row"
           data-row
           [attr.data-dir]="e.kind === 'dir' ? '1' : null"
-          [class.selected]="selected().includes(e.name)"
-          [class.cut]="ws.clipboard()?.op === 'cut' && ws.clipboard()?.hostId === tab().hostId && ws.clipboard()?.dir === tab().path && ws.clipboard()?.names?.includes(e.name)"
+          [class.selected]="selectedSet().has(e.name)"
+          [class.cut]="cutSet().has(e.name)"
           [class.drop-on]="dropTarget() === e.name"
           [draggable]="renamingName() !== e.name"
           (click)="onRowClick($event, idx, e)"
@@ -140,12 +146,31 @@
               }
             }
           </div>
-          <span class="row-muted">{{ formatSize(e) }}</span>
-          <span class="row-muted">{{ formatDate(e) }}</span>
+          <span class="row-muted">{{ r.size }}</span>
+          <span class="row-muted">{{ r.date }}</span>
           <span class="row-muted">{{ e.mode }}</span>
         </div>
       } @empty {
-        @if (!state()?.loading) {
+        @if (!state() || state()?.loading) {
+          <!-- Nothing to show yet: say what is happening (first SSH contact
+               takes seconds; a plain listing is quick) and hold the shape. -->
+          <div class="fs-loading" role="status" aria-live="polite">
+            <span class="pear-spinner"></span>
+            @if (connectingHost()) {
+              Connecting to {{ host()?.name ?? 'host' }}…
+            } @else {
+              Loading {{ tab().path }}…
+            }
+          </div>
+          @for (w of skeletonRows; track $index) {
+            <div class="row skeleton" aria-hidden="true">
+              <div class="row-name"><span class="pear-skel icon"></span><span class="pear-skel" [style.width.%]="w"></span></div>
+              <span class="pear-skel" style="width: 55%"></span>
+              <span class="pear-skel" style="width: 70%"></span>
+              <span class="pear-skel" style="width: 80%"></span>
+            </div>
+          }
+        } @else {
           <div class="fs-empty">
             <pear-icon name="folderOpen" [size]="28" />
             <div>{{ filter() ? 'No matches' : 'Empty directory' }}</div>

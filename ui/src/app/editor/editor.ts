@@ -1,4 +1,5 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   OnDestroy,
@@ -22,6 +23,7 @@ import { loadMonaco, type MonacoApi } from './monaco';
   imports: [PearIcon],
   templateUrl: './editor.html',
   styleUrl: './editor.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Editor implements OnDestroy {
   readonly host = input.required<HostConfig>();

@@ -24,14 +24,14 @@
 .head-icon { color: var(--accent); display: flex; }
 .head-title { font-size: 12.5px; font-weight: 600; }
 .head-count { font-size: 11px; color: var(--fg-3); font-family: var(--mono); }
-.head-clear {
-  margin-left: auto;
+.head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.head-btn {
   color: var(--fg-3);
   display: flex;
-  padding: 3px;
+  padding: 4px;
   border-radius: 4px;
 }
-.head-clear:hover { background: var(--bg-3); color: var(--fg-0); }
+.head-btn:hover { background: var(--bg-3); color: var(--fg-0); }
 
 .queue-body {
   overflow-y: auto;
@@ -47,11 +47,14 @@
   background: var(--bg-1);
   border: 1px solid var(--border-soft);
 }
+.job.failed { border-color: oklch(0.68 0.18 25 / 0.35); }
 .job-top { display: flex; align-items: center; gap: 8px; }
 .job-icon { display: flex; flex-shrink: 0; }
 .job-icon.accent { color: var(--accent); }
 .job-icon.ok { color: var(--ok); }
 .job-icon.err { color: var(--err); }
+.job-icon.dim { color: var(--fg-3); }
+.job-spin { font-size: 11px; flex-shrink: 0; }
 .job-label {
   font-size: 12px;
   font-family: var(--mono);
@@ -101,6 +104,18 @@
 }
 .job-fill.ok { background: var(--ok); }
 .job-fill.err { background: var(--err); }
+
+.job-detail {
+  margin-top: 5px;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-detail.dim { color: var(--fg-3); }
+.job-detail.err { color: var(--err); white-space: normal; word-break: break-word; }
 
 .job-route {
   margin-top: 5px;

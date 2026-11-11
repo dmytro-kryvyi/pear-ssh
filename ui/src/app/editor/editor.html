@@ -16,7 +16,16 @@
   <div class="ed-error">{{ error() }}</div>
 }
 
-<div #editorHost class="editor-host" [class.faded]="loading()"></div>
+<div class="editor-wrap">
+  <div #editorHost class="editor-host" [class.faded]="loading()"></div>
+  @if (loading()) {
+    <!-- Covers both the first Monaco chunk load and each file read. -->
+    <div class="ed-loading" role="status" aria-live="polite">
+      <span class="pear-spinner"></span>
+      <span>Opening {{ fileName() }}…</span>
+    </div>
+  }
+</div>
 
 <div class="statusbar">
   <span>Ln {{ line() }}, Col {{ col() }}</span>

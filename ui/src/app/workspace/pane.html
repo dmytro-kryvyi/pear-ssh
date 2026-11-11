@@ -17,7 +17,9 @@
       (dragover)="onTabDragOver($event, i)"
       (drop)="onTabDrop($event, i)"
     >
-      <span class="tab-host-dot" [style.background]="catalog.color(t.hostId)"></span>
+      @if (t.hostId) {
+        <span class="tab-host-dot" [style.background]="catalog.color(t.hostId)"></span>
+      }
       <pear-icon
         [name]="tabIcon(t)"
         [size]="13"
@@ -35,11 +37,11 @@
       </button>
     </div>
   }
-  <button class="strip-btn" title="New tab" (click)="newTab()">
+  <button class="strip-btn" title="New tab" [disabled]="!hostFor()" (click)="newTab()">
     <pear-icon name="plus" [size]="13" />
   </button>
   @if (settings.termPlacement() === 'in-pane') {
-    <button class="strip-btn" title="New terminal" (click)="openTerminal()">
+    <button class="strip-btn" title="New terminal" [disabled]="!hostFor()" (click)="openTerminal()">
       <pear-icon name="terminal" [size]="13" />
     </button>
   }
@@ -61,6 +63,8 @@
       @if (catalog.byId(tab.hostId); as host) {
         <pear-editor [host]="host" [path]="tab.path" (closed)="ws.closeTab(tab.id)" />
       }
+    } @else if (tab.kind === 'transfers') {
+      <pear-transfers-page />
     } @else if (tab.kind === 'orch') {
       @if (catalog.byId(tab.hostId); as host) {
         @if (orchState(); as state) {
@@ -72,7 +76,10 @@
             (jumpedIn)="actions.jumpedIn($event)"
           />
         } @else {
-          <div class="orch-pending">Probing {{ host.name }} for orchestration…</div>
+          <div class="orch-pending" role="status" aria-live="polite">
+            <span class="pear-spinner"></span>
+            Looking for Docker, Swarm and Proxmox on {{ host.name }}…
+          </div>
         }
       }
     }

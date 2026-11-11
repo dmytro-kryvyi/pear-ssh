@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, readFileSync, promises as fsp } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
+import { readFileSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -18,6 +17,7 @@ import { kindOf, modeString } from '../ssh/mode';
 import { sha256Command, parseSha256 } from '../ssh/hash';
 import { shq } from '../shq';
 import type { HostKeyError, KnownHosts } from '../ssh/known-hosts';
+import { sftpGet, sftpPut } from './sftp-xfer';
 
 /** Pass-through stream that reports cumulative bytes to a callback. */
 export function byteCounter(onBytes: (bytes: number) => void): Transform {
@@ -427,30 +427,15 @@ export class SshConnection implements SshTransport {
     await this.mustExec(`cp -a -- ${shq(src)} ${shq(dest)}`, 'copy');
   }
 
+  // Both directions go through the pipelined transfer in sftp-xfer.ts: ssh2's
+  // own SFTP streams send one request per round trip, which is what made a
+  // multi-GB upload crawl.
   async download(remotePath: string, localPath: string, opts?: TransferOpts): Promise<void> {
-    const sftp = await this.sftp();
-    const total = (await this.stat(remotePath))?.size ?? 0;
-    const src = sftp.createReadStream(remotePath);
-    const dest = createWriteStream(localPath);
-    await pipeline(
-      src,
-      byteCounter((bytes) => opts?.onProgress?.({ bytes, total })),
-      dest,
-      { signal: toAbortSignal(opts?.signal) },
-    );
+    await sftpGet(await this.sftp(), remotePath, localPath, opts);
   }
 
   async uploadFile(localPath: string, remotePath: string, opts?: TransferOpts): Promise<void> {
-    const sftp = await this.sftp();
-    const total = (await fsp.stat(localPath)).size;
-    const src = createReadStream(localPath);
-    const dest = sftp.createWriteStream(remotePath);
-    await pipeline(
-      src,
-      byteCounter((bytes) => opts?.onProgress?.({ bytes, total })),
-      dest,
-      { signal: toAbortSignal(opts?.signal) },
-    );
+    await sftpPut(await this.sftp(), localPath, remotePath, opts);
   }
 
   async hash(path: string): Promise<string> {

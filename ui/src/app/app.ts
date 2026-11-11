@@ -1,4 +1,12 @@
-import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { FacetKind, HostConfig, HostGroup, HostKind } from '@pear/core';
 import { Pear } from './pear';
@@ -23,6 +31,7 @@ import { FACET_KINDS, FACET_META } from './orch/facet-meta';
 import { PearIcon } from './icons/icon';
 import { ContextMenu } from './menu/context-menu';
 import { TransferQueue } from './transfers/queue';
+import { TransfersStore } from './transfers/store';
 import { SettingsModal } from './settings/settings-modal';
 import { MonitorStore } from './monitor/store';
 import { HostMeter } from './monitor/host-meter';
@@ -54,6 +63,10 @@ const TARGET_RE = /^(?:(?<user>[^@\s]+)@)?(?<host>[^@:\s]+)(?::(?<port>\d+))?$/;
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
+  // Every piece of state this template reads is a signal, so OnPush is free —
+  // and it is what keeps a monitor tick or a Claude token from re-checking
+  // the whole shell (sidebar rows, file lists, panes) on every change.
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
   private readonly pear = inject(Pear);
@@ -68,6 +81,7 @@ export class App {
   readonly actions = inject(HostActions);
   readonly hostGroups = inject(HostGroups);
   readonly link = inject(RemoteLink);
+  readonly transfers = inject(TransfersStore);
 
   readonly bridged = this.pear.available;
   readonly error = signal<string | null>(null);
@@ -117,12 +131,34 @@ export class App {
     const tab = this.ws.focusedTab();
     return tab?.kind === 'orch' ? (tab.facet ?? null) : null;
   });
+  readonly transfersActive = computed(() => this.ws.focusedTab()?.kind === 'transfers');
+
+  openTransfers(): void {
+    this.ws.openTransfers();
+  }
 
   readonly orchState = computed(() => {
     const id = this.activeHostId();
     const state = id ? this.orchStore.states()[id] : undefined;
     return state && state.status !== 'detecting' && state.status !== 'none' ? state : null;
   });
+  /** Facet discovery still running for the focused host (sidebar hint). */
+  readonly orchDetecting = computed(() => {
+    const id = this.activeHostId();
+    return !!id && this.orchStore.states()[id]?.status === 'detecting';
+  });
+
+  /** Hosts whose first SSH connection is still being made. */
+  readonly connectingIds = this.fsStore.connecting;
+
+  /** Live terminals per host, for the sidebar badge — counted once per
+   *  tabs change, not once per row per change-detection pass. */
+  readonly termCounts = computed<ReadonlyMap<string, number>>(() => {
+    const counts = new Map<string, number>();
+    for (const t of this.tabs.tabs()) counts.set(t.hostId, (counts.get(t.hostId) ?? 0) + 1);
+    return counts;
+  });
+  readonly pinnedIds = this.catalog.pinnedIds;
 
   /** Bottom dock shows every host's shells at once, decoupled from the focused
    *  pane, when the user picks the per-host terminal placement. */
@@ -441,7 +477,7 @@ export class App {
   }
 
   isPinned(host: HostConfig): boolean {
-    return this.catalog.hosts().some((h) => h.id === host.id);
+    return this.pinnedIds().has(host.id);
   }
 
   async togglePin(event: MouseEvent, host: HostConfig): Promise<void> {
@@ -460,20 +496,7 @@ export class App {
    * rendered, only membership under the root.
    */
   childrenOf(id: string): HostConfig[] {
-    const out: HostConfig[] = [];
-    const seen = new Set([id]);
-    const queue = [id];
-    while (queue.length) {
-      const current = queue.shift()!;
-      for (const h of this.allHosts()) {
-        if ((h.parentId === current || h.via === current) && !seen.has(h.id)) {
-          seen.add(h.id);
-          out.push(h);
-          queue.push(h.id);
-        }
-      }
-    }
-    return out;
+    return this.catalog.childrenOf(id);
   }
 
   /** Breadcrumb segments for a sub-host chain, root first: ['pve-01', 'ct:103']. */
@@ -486,8 +509,7 @@ export class App {
       if (current.parentId && current.target) {
         const t = current.target;
         segments.unshift(`${t.type === 'lxc' ? 'ct' : 'ctr'}:${t.ref}`);
-        const parentId: string = current.parentId;
-        current = this.allHosts().find((h) => h.id === parentId) ?? null;
+        current = this.catalog.byId(current.parentId);
       } else {
         segments.unshift(current.name);
         current = null;
@@ -498,12 +520,12 @@ export class App {
 
   /** Live terminal count for the sidebar badge (signal read — reactive). */
   termCount(hostId: string): number {
-    return this.tabs.tabs().filter((t) => t.hostId === hostId).length;
+    return this.termCounts().get(hostId) ?? 0;
   }
 
   /** Jump host of a tunneled (via) host, if any. */
   viaOf(host: HostConfig): HostConfig | null {
-    return host.via ? (this.allHosts().find((h) => h.id === host.via) ?? null) : null;
+    return host.via ? this.catalog.byId(host.via) : null;
   }
 
   /** Unambiguous connection-path label — the answer to "where am I". */

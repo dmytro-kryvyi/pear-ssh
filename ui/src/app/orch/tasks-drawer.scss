@@ -1,3 +1,5 @@
+@use './table';
+
 .scrim {
   position: fixed;
   inset: 0;
@@ -125,91 +127,11 @@
   border-color: var(--accent-line);
 }
 
-/* ---- filters ---- */
-.filters {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 16px 9px;
-  flex-shrink: 0;
-}
-.seg {
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-family: var(--mono);
-  color: var(--fg-2);
-  border: 1px solid var(--border-soft);
-  background: transparent;
-}
-.seg:hover { color: var(--fg-1); }
-.seg.on { color: var(--fg-0); background: var(--bg-3); border-color: var(--border); }
-.hint { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); }
-
-/* ---- task table ---- */
-.table-wrap {
-  overflow-y: auto;
-  flex: 0 1 auto;
-  min-height: 96px;
-  padding: 0 16px 12px;
-}
+/* Filters, header and rows come from the shared table styles. */
 .thead,
 .row {
-  display: grid;
   grid-template-columns: minmax(0, 1.4fr) 100px minmax(0, 0.8fr) minmax(0, 1.35fr) minmax(0, 1.5fr);
-  gap: 10px;
-  align-items: center;
 }
-.thead {
-  padding: 0 10px 6px;
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-3);
-  position: sticky;
-  top: 0;
-  background: var(--bg-1);
-  z-index: 1;
-}
-.row {
-  padding: 7px 10px;
-  border-radius: 7px;
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
-  border-left: 2px solid transparent;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.row:hover { background: var(--bg-2); }
-.row.selected { background: var(--bg-3); border-color: var(--border); border-left-color: var(--accent); }
-.row.failed { border-left-color: var(--err); }
-.name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--fg-1);
-}
-.cell.dim { color: var(--fg-2); font-size: 11.5px; }
-.cell.state.ok { color: var(--ok); }
-.cell.state.warn { color: var(--warn); }
-.cell.state.err { color: var(--err); }
-.cell.state.off { color: var(--fg-2); }
-.since { color: var(--fg-3); }
-.err-text { color: oklch(0.78 0.14 25); }
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: var(--off);
-}
-.dot.ok { background: var(--ok); box-shadow: 0 0 0 3px oklch(0.78 0.14 150 / 0.16); }
-.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px oklch(0.78 0.14 75 / 0.16); }
-.dot.err { background: var(--err); box-shadow: 0 0 0 3px oklch(0.68 0.18 25 / 0.16); }
-.dot.off { background: var(--off); }
 
 /* ---- log pane ---- */
 .log-pane {

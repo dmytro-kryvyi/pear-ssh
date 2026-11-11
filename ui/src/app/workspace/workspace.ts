@@ -1,11 +1,12 @@
 import { Injectable, computed, signal } from '@angular/core';
 import type { FacetKind } from '@pear/core';
 
-export type TabKind = 'dir' | 'file' | 'orch' | 'term';
+export type TabKind = 'dir' | 'file' | 'orch' | 'term' | 'transfers';
 
-export interface WsTab {
+/** A tab bound to one host: files, an editor, an orchestration view, a shell. */
+export interface HostTab {
   id: string;
-  kind: TabKind;
+  kind: 'dir' | 'file' | 'orch' | 'term';
   hostId: string;
   /** Directory for dir tabs ('~' until resolved), file path for file tabs,
    *  '' for orch and term tabs (their target is a facet / a shell). */
@@ -15,6 +16,18 @@ export interface WsTab {
   /** For term tabs: the backing TermTab id in TermTabs (in-pane placement). */
   termTabId?: string;
 }
+
+/** The one app-wide Transfers view; it belongs to no host. */
+export interface TransfersTab {
+  id: string;
+  kind: 'transfers';
+  hostId: null;
+  path: '';
+}
+
+export type WsTab = HostTab | TransfersTab;
+
+export const isHostTab = (t: WsTab): t is HostTab => t.hostId !== null;
 
 export interface WsPane {
   id: string;
@@ -78,7 +91,8 @@ export class Workspace {
   readonly focusedLocation = computed<FocusedLocation | null>(() => {
     const pane = this.focusedPane();
     const tab = this.focusedTab();
-    if (!pane || !tab) return null;
+    // A host-less tab (Transfers) is nowhere: the shell keeps no active host.
+    if (!pane || !tab || !isHostTab(tab)) return null;
     return {
       hostId: tab.hostId,
       path: tab.kind === 'file' ? dirnameOf(tab.path) : tab.path,
@@ -95,7 +109,9 @@ export class Workspace {
     const out: { pane: WsPane; wsTab: WsTab; termTabId: string }[] = [];
     for (const pane of this.panes()) {
       for (const wsTab of pane.tabs) {
-        if (wsTab.termTabId) out.push({ pane, wsTab, termTabId: wsTab.termTabId });
+        if (isHostTab(wsTab) && wsTab.termTabId) {
+          out.push({ pane, wsTab, termTabId: wsTab.termTabId });
+        }
       }
     }
     return out;
@@ -106,7 +122,7 @@ export class Workspace {
     const seen: string[] = [];
     for (const pane of this.panes()) {
       for (const tab of pane.tabs) {
-        if (!seen.includes(tab.hostId)) seen.push(tab.hostId);
+        if (isHostTab(tab) && !seen.includes(tab.hostId)) seen.push(tab.hostId);
       }
     }
     return seen;
@@ -123,11 +139,28 @@ export class Workspace {
 
   /** Point a dir tab at a new directory (also how '~' resolves). */
   navigate(tabIdArg: string, path: string): void {
-    this.updateTab(tabIdArg, (t) => ({ ...t, kind: 'dir', path }));
+    this.updateTab(tabIdArg, (t) => (isHostTab(t) ? { ...t, kind: 'dir', path } : t));
   }
 
   setTabHost(tabIdArg: string, hostId: string): void {
-    this.updateTab(tabIdArg, (t) => ({ ...t, kind: 'dir', hostId, path: '~' }));
+    this.updateTab(tabIdArg, (t) =>
+      isHostTab(t) ? { ...t, kind: 'dir', hostId, path: '~' } : t,
+    );
+  }
+
+  /** Show the Transfers tab: there is one per workspace, in whichever pane
+   *  it already lives; otherwise it opens next to the focused tab (and
+   *  creates the first pane when nothing is open at all). */
+  openTransfers(): void {
+    for (const pane of this.panes()) {
+      const existing = pane.tabs.find((t) => t.kind === 'transfers');
+      if (existing) {
+        this.activateTab(pane.id, existing.id);
+        this.focusedPaneId.set(pane.id);
+        return;
+      }
+    }
+    this.insertTab(null, { id: tabId(), kind: 'transfers', hostId: null, path: '' });
   }
 
   /** Open a new dir tab; creates the first pane when the workspace is empty. */
@@ -296,12 +329,15 @@ export class Workspace {
     this.focusPane(np.id);
   }
 
-  /** Duplicate the active tab into a fresh pane on the right. */
+  /** Duplicate the active tab into a fresh pane on the right. The Transfers
+   *  tab is a singleton, so splitting on it duplicates the pane's first host
+   *  tab instead (and does nothing when there is none). */
   splitPane(paneIdArg: string): void {
     const npId = paneId();
     this.panes.update((panes) => {
       const src = panes.find((p) => p.id === paneIdArg);
-      const at = src?.tabs.find((t) => t.id === src.activeTabId) ?? src?.tabs[0];
+      const active = src?.tabs.find((t) => t.id === src.activeTabId) ?? src?.tabs[0];
+      const at = active && isHostTab(active) ? active : src?.tabs.find(isHostTab);
       if (!src || !at) return panes;
       const clone: WsTab = { ...at, id: tabId() };
       const np: WsPane = { id: npId, flex: 1, activeTabId: clone.id, tabs: [clone] };

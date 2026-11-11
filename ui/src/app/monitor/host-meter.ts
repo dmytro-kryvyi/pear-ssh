@@ -1,4 +1,4 @@
-import { Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { MonitorStore, type HostMonitorState } from './store';
 import { tone } from '../orch/format';
 
@@ -27,6 +27,7 @@ import { tone } from '../orch/format';
     .fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
     .fill.mem { background: var(--fg-3); }
   `,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class HostMeter {
   readonly hostId = input.required<string>();

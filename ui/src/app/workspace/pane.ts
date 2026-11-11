@@ -1,4 +1,4 @@
-import { Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { PearIcon } from '../icons/icon';
 import { Editor } from '../editor/editor';
 import { HostCatalog } from '../hosts';
@@ -10,7 +10,8 @@ import { FileList } from './filelist';
 import { Settings } from '../settings';
 import { TerminalPane } from '../terminal/terminal';
 import { TermTabs, type TermTab } from '../terminal/tabs';
-import { Workspace, type WsPane, type WsTab } from './workspace';
+import { TransfersPage } from '../transfers/page';
+import { Workspace, isHostTab, type HostTab, type WsPane, type WsTab } from './workspace';
 
 const TAB_MIME = 'application/x-pear-tab';
 
@@ -22,9 +23,10 @@ interface TabDragPayload {
  *  or an orchestration view. */
 @Component({
   selector: 'pear-pane',
-  imports: [PearIcon, FileList, Editor, OrchPage, TerminalPane],
+  imports: [PearIcon, FileList, Editor, OrchPage, TerminalPane, TransfersPage],
   templateUrl: './pane.html',
   styleUrl: './pane.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '[style.flex]': 'pane().flex',
     '[class.focused]': 'focused()',
@@ -51,7 +53,16 @@ export class Pane {
     return p.tabs.find((t) => t.id === p.activeTabId) ?? p.tabs[0] ?? null;
   });
 
+  /** The host a new tab or shell in this pane should target: the active
+   *  host tab's, else any host tab here, else the first host open anywhere. */
+  readonly hostFor = computed<string | null>(() => {
+    const active = this.activeTab();
+    if (active && isHostTab(active)) return active.hostId;
+    return this.pane().tabs.find(isHostTab)?.hostId ?? this.ws.openHostIds()[0] ?? null;
+  });
+
   tabLabel(tab: WsTab): string {
+    if (tab.kind === 'transfers') return 'Transfers';
     if (tab.kind === 'orch') return tab.facet ? FACET_META[tab.facet].tab : 'Orchestration';
     if (tab.kind === 'term') return this.termTabFor(tab)?.title ?? 'terminal';
     if (tab.path === '~' || tab.path === '/') return tab.path;
@@ -59,12 +70,14 @@ export class Pane {
   }
 
   tabIcon(tab: WsTab): string {
+    if (tab.kind === 'transfers') return 'swap';
     if (tab.kind === 'orch') return tab.facet ? FACET_META[tab.facet].icon : 'cube';
     if (tab.kind === 'term') return this.termTabFor(tab)?.row === 'orch' ? 'logs' : 'terminal';
     return tab.kind === 'file' ? 'fileCode' : 'folder';
   }
 
   tabTitle(tab: WsTab): string {
+    if (tab.kind === 'transfers') return 'Transfers';
     const what =
       tab.kind === 'orch'
         ? (tab.facet ?? 'orchestration')
@@ -78,16 +91,19 @@ export class Pane {
 
   /** Term tabs in this pane; rendered persistently so switching tabs never
    *  tears the shell down (that would close the backend PTY). */
-  readonly termTabs = computed(() => this.pane().tabs.filter((t) => t.kind === 'term'));
+  readonly termTabs = computed<HostTab[]>(() =>
+    this.pane().tabs.filter((t): t is HostTab => t.kind === 'term'),
+  );
 
   /** The backing shell for a term tab, looked up in TermTabs. */
   termTabFor(tab: WsTab): TermTab | null {
-    return (tab.termTabId && this.tabs.byId().get(tab.termTabId)) || null;
+    if (!isHostTab(tab) || !tab.termTabId) return null;
+    return this.tabs.byId().get(tab.termTabId) ?? null;
   }
 
   /** Open a shell inside this pane (in-pane placement). */
   openTerminal(): void {
-    const host = this.activeTab()?.hostId ?? this.ws.focusedTab()?.hostId;
+    const host = this.hostFor();
     if (!host) return;
     const termTabId = this.tabs.createShell(host);
     this.ws.openTermTab(this.pane().id, host, termTabId);
@@ -118,7 +134,7 @@ export class Pane {
   });
 
   newTab(): void {
-    const host = this.activeTab()?.hostId ?? this.ws.focusedTab()?.hostId;
+    const host = this.hostFor();
     if (host) this.ws.newTab(this.pane().id, host);
   }
 

@@ -1,4 +1,5 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   computed,
@@ -19,9 +20,16 @@ import { TermRouter } from '../terminal/router';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
 import { FsStore } from './fs-store';
 import { FileOps, joinPath, type DragSource } from './ops';
-import { Workspace, type WsPane, type WsTab } from './workspace';
+import { Workspace, type HostTab, type WsPane } from './workspace';
 
 const FILES_MIME = 'application/x-pear-files';
+
+/** A listing entry with its display strings formatted once per listing. */
+export interface FileRow {
+  entry: FileEntry;
+  size: string;
+  date: string;
+}
 
 /**
  * One directory listing inside a pane tab: navigation, multi-select, context
@@ -33,10 +41,13 @@ const FILES_MIME = 'application/x-pear-files';
   imports: [FormsModule, PearIcon],
   templateUrl: './filelist.html',
   styleUrl: './filelist.scss',
+  // Signals and inputs only, so the list re-renders when *its* data moves —
+  // not on every monitor tick or Claude token elsewhere in the app.
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FileList {
   readonly pane = input.required<WsPane>();
-  readonly tab = input.required<WsTab>();
+  readonly tab = input.required<HostTab>();
 
   private readonly pear = inject(Pear);
   readonly store = inject(FsStore);
@@ -55,8 +66,23 @@ export class FileList {
   /** Row name currently highlighted as a folder drop target. */
   readonly dropTarget = signal<string | null>(null);
   readonly dropOnList = signal(false);
-  password = '';
+  readonly password = signal('');
   readonly connecting = signal(false);
+  /** Placeholder row widths for the loading skeleton (varied, like names). */
+  readonly skeletonRows = [62, 38, 50, 44, 70, 34, 56];
+
+  /** Membership tests the rows need, as sets — O(1) per row instead of an
+   *  array scan per row per change-detection pass. */
+  readonly selectedSet = computed(() => new Set(this.selected()));
+  readonly cutSet = computed<ReadonlySet<string>>(() => {
+    const clip = this.ws.clipboard();
+    const t = this.tab();
+    return clip?.op === 'cut' && clip.hostId === t.hostId && clip.dir === t.path
+      ? new Set(clip.names)
+      : new Set();
+  });
+  /** First contact with this host still in flight (no listing ever answered). */
+  readonly connectingHost = computed(() => this.store.connecting().has(this.tab().hostId));
 
   readonly host = computed(() => this.catalog.byId(this.tab().hostId));
   readonly state = computed(() => this.store.read(this.tab().hostId, this.tab().path));
@@ -86,6 +112,18 @@ export class FileList {
       }
       return a.name.localeCompare(b.name);
     });
+  });
+
+  /** Rendered rows: size and date formatted once per listing / setting
+   *  change rather than twice per row on every change-detection pass. */
+  readonly rows = computed<FileRow[]>(() => {
+    const units = this.settings.sizeUnits();
+    const year = new Date().getFullYear();
+    return this.entries().map((entry) => ({
+      entry,
+      size: formatSize(entry, units),
+      date: formatDate(entry, year),
+    }));
   });
 
   readonly renamingName = computed(() => {
@@ -124,7 +162,7 @@ export class FileList {
     });
   }
 
-  private async loadInto(tab: WsTab, password?: string): Promise<void> {
+  private async loadInto(tab: HostTab, password?: string): Promise<void> {
     try {
       const resolved = await this.store.load(tab.hostId, tab.path, password);
       if (resolved !== tab.path) this.ws.navigate(tab.id, resolved);
@@ -136,10 +174,10 @@ export class FileList {
   async connect(): Promise<void> {
     this.connecting.set(true);
     try {
-      await this.loadInto(this.tab(), this.password || undefined);
+      await this.loadInto(this.tab(), this.password() || undefined);
     } finally {
       this.connecting.set(false);
-      this.password = '';
+      this.password.set('');
     }
   }
 
@@ -463,30 +501,39 @@ export class FileList {
     }
   }
 
-  // ---- formatting ----------------------------------------------------------
+}
 
-  formatSize(entry: FileEntry): string {
-    if (entry.kind === 'dir') return '—';
-    const base = this.settings.sizeUnits() === 'binary' ? 1024 : 1000;
-    const units =
-      this.settings.sizeUnits() === 'binary' ? ['B', 'KiB', 'MiB', 'GiB'] : ['B', 'KB', 'MB', 'GB'];
-    let size = entry.size;
-    let u = 0;
-    while (size >= base && u < units.length - 1) {
-      size /= base;
-      u++;
-    }
-    return u === 0 ? `${size} ${units[0]}` : `${size.toFixed(1)} ${units[u]}`;
-  }
+// ---- formatting --------------------------------------------------------------
 
-  formatDate(entry: FileEntry): string {
-    if (!entry.mtimeMs) return '—';
-    const d = new Date(entry.mtimeMs);
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: '2-digit',
-      ...(sameYear ? { hour: '2-digit', minute: '2-digit', hour12: false } : { year: 'numeric' }),
-    });
+const BINARY_UNITS = ['B', 'KiB', 'MiB', 'GiB'];
+const DECIMAL_UNITS = ['B', 'KB', 'MB', 'GB'];
+
+export function formatSize(entry: FileEntry, sizeUnits: 'binary' | 'decimal'): string {
+  if (entry.kind === 'dir') return '—';
+  const base = sizeUnits === 'binary' ? 1024 : 1000;
+  const units = sizeUnits === 'binary' ? BINARY_UNITS : DECIMAL_UNITS;
+  let size = entry.size;
+  let u = 0;
+  while (size >= base && u < units.length - 1) {
+    size /= base;
+    u++;
   }
+  return u === 0 ? `${size} ${units[0]}` : `${size.toFixed(1)} ${units[u]}`;
+}
+
+// Intl formatters are expensive to construct; two shared instances cover
+// every row (toLocaleDateString builds a new one per call).
+const SAME_YEAR = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+const OTHER_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+
+export function formatDate(entry: FileEntry, currentYear: number): string {
+  if (!entry.mtimeMs) return '—';
+  const d = new Date(entry.mtimeMs);
+  return (d.getFullYear() === currentYear ? SAME_YEAR : OTHER_YEAR).format(d);
 }

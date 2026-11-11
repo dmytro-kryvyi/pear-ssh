@@ -3,7 +3,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { FsStore } from './fs-store';
-import { Workspace, dirnameOf } from './workspace';
+import { Workspace, dirnameOf, type HostTab, type WsTab } from './workspace';
 
 export interface RenameState {
   hostId: string;
@@ -258,9 +258,11 @@ export class FileOps {
   ): { paneId: string; hostId: string; dir: string } | null {
     for (const pane of this.ws.panes()) {
       if (pane.id === fromPaneId) continue;
+      // Only a directory or a file has a directory to land in — not an orch
+      // view, a shell, or the Transfers tab.
+      const isDirLike = (t: WsTab): t is HostTab => t.kind === 'dir' || t.kind === 'file';
       const active = pane.tabs.find((t) => t.id === pane.activeTabId) ?? pane.tabs[0];
-      const tab =
-        active && active.kind !== 'orch' ? active : pane.tabs.find((t) => t.kind !== 'orch');
+      const tab = active && isDirLike(active) ? active : pane.tabs.find(isDirLike);
       if (!tab) continue;
       return {
         paneId: pane.id,

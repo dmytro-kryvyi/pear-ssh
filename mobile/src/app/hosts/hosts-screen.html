@@ -83,6 +83,17 @@
           (edit)="editHost($event)"
         />
       } @empty {
+        @if (!session.loaded()) {
+          @for (i of [0, 1, 2]; track i) {
+            <div class="row-skeleton" aria-hidden="true">
+              <span class="pm-skel dot"></span>
+              <div class="lines">
+                <span class="pm-skel" [style.width.%]="52 - i * 8"></span>
+                <span class="pm-skel thin" [style.width.%]="36 + i * 7"></span>
+              </div>
+            </div>
+          }
+        } @else {
         <div class="empty">
           {{ session.activeWs() ? 'No hosts in this workspace yet.' : 'No matching hosts.' }}
           @if (session.activeWs(); as ws) {
@@ -91,6 +102,7 @@
             </div>
           }
         </div>
+        }
       }
     </div>
   </div>

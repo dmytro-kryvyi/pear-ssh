@@ -1,5 +1,13 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import type { HostConfig, HostGroup, HostStatus, OrchAction, Orchestration } from '@pear/core';
+import type {
+  ContainerInfo,
+  ContainerStatsMap,
+  HostConfig,
+  HostGroup,
+  HostStatus,
+  OrchAction,
+  Orchestration,
+} from '@pear/core';
 import { PEAR_BACKEND } from '../backend';
 import { HOST_META, RECENT_IDS } from '../mock/seed';
 import { TermStore } from '../terminal/term-store';
@@ -12,6 +20,9 @@ export class PearSession {
 
   readonly hosts = signal<HostConfig[]>([]);
   readonly groups = signal<HostGroup[]>([]);
+  /** False until the first inventory load answered (screens show
+   *  placeholders rather than "no hosts" while the backend is coming up). */
+  readonly loaded = signal(false);
   private readonly meta = signal<Record<string, { status: HostStatus; lastSeen: string }>>({ ...HOST_META });
 
   readonly activeWsId = signal<string | null>('w1');
@@ -64,7 +75,13 @@ export class PearSession {
   }
 
   async reload(): Promise<void> {
-    const [hosts, groups] = await Promise.all([this.backend.hosts.list(), this.backend.hostGroups.list()]);
+    let hosts: HostConfig[];
+    let groups: HostGroup[];
+    try {
+      [hosts, groups] = await Promise.all([this.backend.hosts.list(), this.backend.hostGroups.list()]);
+    } finally {
+      this.loaded.set(true);
+    }
     this.hosts.set(hosts);
     this.groups.set(groups);
     // The active host/workspace default to mock seed ids ('h1'/'w1'); on the
@@ -112,7 +129,12 @@ export class PearSession {
     this.orchLoading.set(true);
     try {
       const o = await this.backend.orch.get(id);
-      if (seq === this.orchSeq && this.activeHostId() === id) this.orch.set(o);
+      if (seq === this.orchSeq && this.activeHostId() === id) {
+        this.orch.set(o);
+        // The snapshot skips `docker stats` (~2s of sampling) so the cards
+        // show up at once; the gauges fill in from a second call.
+        if (o.docker?.containers.some((c) => c.running)) void this.fillStats(id, seq);
+      }
     } catch {
       // Host offline or not yet reachable — leave the orch view empty rather
       // than surfacing a boot-time console error.
@@ -120,6 +142,31 @@ export class PearSession {
     } finally {
       if (seq === this.orchSeq) this.orchLoading.set(false);
     }
+  }
+
+  private async fillStats(id: string, seq: number): Promise<void> {
+    let stats: ContainerStatsMap;
+    try {
+      stats = await this.backend.monitor.stats(id);
+    } catch {
+      return; // best effort: the gauges just stay empty
+    }
+    if (seq !== this.orchSeq || this.activeHostId() !== id) return;
+    const patch = (c: ContainerInfo): ContainerInfo => {
+      const live = stats[c.id];
+      return live ? { ...c, cpu: live.cpu, mem: live.mem, maxmem: live.maxmem } : c;
+    };
+    this.orch.update((o) =>
+      o?.docker
+        ? {
+            ...o,
+            docker: {
+              containers: o.docker.containers.map(patch),
+              groups: o.docker.groups.map((g) => ({ ...g, containers: g.containers.map(patch) })),
+            },
+          }
+        : o,
+    );
   }
 
   async orchAction(action: OrchAction): Promise<void> {

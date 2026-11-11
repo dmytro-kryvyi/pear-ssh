@@ -13,7 +13,15 @@
   flex-direction: column;
   flex-shrink: 0;
   min-height: 0;
+  /* Last resort on a short window: once every section is at its minimum
+   * the sidebar itself scrolls, rather than pushing Quick connect off-screen. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
+.sidebar > .brand,
+.sidebar > .section-title,
+.sidebar > .host-search,
+.sidebar > pear-workspace-switcher { flex-shrink: 0; }
 
 .brand {
   display: flex;
@@ -84,11 +92,13 @@
   button:hover { color: var(--fg-0); }
 }
 
+/* Takes whatever the fixed sections and the (bounded) orchestration panel
+ * leave over, but never less than a few rows. */
 .host-list {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   padding-bottom: 6px;
-  min-height: 80px;
+  min-height: 128px;
 }
 .host-row {
   position: relative;
@@ -156,6 +166,22 @@
   background: var(--ok);
   box-shadow: 0 0 0 3px oklch(0.78 0.14 150 / 0.12);
 }
+/* SSH handshake in progress: the dot breathes until the host answers. */
+.host-dot.connecting {
+  background: var(--warn);
+  animation: host-dot-breathe 1.1s ease-in-out infinite;
+}
+@keyframes host-dot-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.78 0.14 75 / 0.45); }
+  50% { box-shadow: 0 0 0 4px oklch(0.78 0.14 75 / 0); }
+}
+.host-row.skeleton {
+  pointer-events: none;
+  gap: 8px;
+}
+.host-row.skeleton .host-text { display: flex; flex-direction: column; gap: 5px; }
+.host-row.skeleton .pear-skel { height: 11px; }
+.host-row.skeleton .pear-skel.thin { height: 8px; }
 .host-text { min-width: 0; flex: 1; }
 .host-name { font-size: 13px; font-weight: 500; line-height: 1.2; }
 .host-meta {
@@ -270,6 +296,19 @@
   font-size: 12px;
   font-family: var(--mono);
 }
+.orch-detecting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 10px 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-2);
+  font-size: 11.5px;
+  font-family: var(--mono);
+}
 
 .quick-add {
   border-top: 1px solid var(--border);
@@ -277,6 +316,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex-shrink: 0;
 }
 .quick-add input {
   margin: 0 10px;
@@ -405,6 +445,16 @@
 .view-tab pear-icon { color: var(--fg-3); }
 .view-tab pear-icon.accent { color: var(--accent); }
 .view-tab.active { color: var(--fg-0); border-bottom-color: var(--accent); }
+.view-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
 
 // Claude's warm accent, deliberately distinct from the app accent.
 .ask-claude {

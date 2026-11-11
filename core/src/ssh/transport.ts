@@ -33,9 +33,14 @@ export interface AbortSignalLike {
   removeEventListener(type: 'abort', listener: () => void): void;
 }
 
+/** Sub-steps a transport may report while carrying one file: the byte
+ *  stream itself, or an opaque container push/pull it cannot meter. */
+export type TransferLegPhase = 'copying' | 'pushing' | 'pulling';
+
 export interface TransferOpts {
   onProgress?: (p: TransferProgress) => void;
   signal?: AbortSignalLike;
+  onPhase?: (phase: TransferLegPhase) => void;
 }
 
 /**

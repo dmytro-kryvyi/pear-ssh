@@ -8,6 +8,7 @@ export type {
   ShellChannel,
   SshTransport,
   SshTransportFactory,
+  TransferLegPhase,
   TransferOpts,
   TransferProgress,
 } from './ssh/transport';
@@ -20,6 +21,7 @@ export {
   type TransferEvents,
   type TransferJobSnapshot,
   type TransferOp,
+  type TransferPhase,
   type TransferRequest,
   type TransferStatus,
 } from './transfers/engine';

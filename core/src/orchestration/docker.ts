@@ -53,11 +53,15 @@ export async function fetchStats(
   return stats;
 }
 
+/**
+ * The container snapshot: one `docker ps` round-trip. Live cpu/mem are NOT
+ * part of it — `docker stats --no-stream` samples twice a second apart, so it
+ * costs ~2s on every host, which used to hold the whole panel back on each
+ * connect and refresh. Callers that want the numbers fetch {@link fetchStats}
+ * afterwards and patch them in; until then cpu/mem are null.
+ */
 async function fetchDocker(exec: Exec): Promise<DockerFacet> {
-  const [psOut, stats] = await Promise.all([
-    exec(`${BIN} ps -a --format '{{json .}}'`).then((r) => must(r, `${BIN} ps`)),
-    fetchStats(exec),
-  ]);
+  const psOut = must(await exec(`${BIN} ps -a --format '{{json .}}'`), `${BIN} ps`);
   const containers: ContainerInfo[] = [];
   for (const row of jsonLines<DockerPsRow>(psOut)) {
     const labels = parseLabels(row.Labels);
@@ -66,7 +70,6 @@ async function fetchDocker(exec: Exec): Promise<DockerFacet> {
     if (labels['com.docker.swarm.service.id'] || labels['com.docker.swarm.service.name']) {
       continue;
     }
-    const live = stats.get(row.ID);
     containers.push({
       id: row.ID,
       name: row.Names.split(',')[0],
@@ -75,9 +78,9 @@ async function fetchDocker(exec: Exec): Promise<DockerFacet> {
       status: row.Status,
       ports: row.Ports || '—',
       project: labels['com.docker.compose.project'] ?? null,
-      cpu: live?.cpu ?? null,
-      mem: live?.mem ?? null,
-      maxmem: live?.maxmem ?? null,
+      cpu: null,
+      mem: null,
+      maxmem: null,
     });
   }
   return { containers, groups: groupByProject(containers) };
@@ -123,7 +126,9 @@ function buildAction(action: DockerAction): { command?: string; terminalCommand?
 
 export const dockerProvider: FacetProvider<'docker'> = {
   kind: 'docker',
-  probe: `${BIN} info >/dev/null 2>&1 && echo ${probeMarker('docker')}`,
+  // `docker version` is one cheap daemon ping; `docker info` walks every
+  // container, plugin and security option and gets slower with each of them.
+  probe: `${BIN} version --format '{{.Server.Version}}' >/dev/null 2>&1 && echo ${probeMarker('docker')}`,
   actionTypes: ['container', 'compose', 'engine'],
   fetch: fetchDocker,
   buildAction,

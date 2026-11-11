@@ -1,14 +1,18 @@
 import {
   AfterViewInit,
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   OnDestroy,
+  computed,
   effect,
   inject,
   input,
   output,
+  signal,
   viewChild,
 } from '@angular/core';
+import { HostCatalog } from '../hosts';
 import type { RemoteControl } from '@pear/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -50,10 +54,16 @@ export const TERM_THEME = {
 /** Server terminals this page already follows (opened or adopted). */
 const ADOPTED = new Set<string>();
 
+/** Pane dividers and the dock resizer fire a resize per pointer move; the
+ *  shell only needs the final geometry (each one is a SIGWINCH and a prompt
+ *  redraw on the host). The local refit still follows every frame. */
+const REMOTE_RESIZE_DEBOUNCE_MS = 80;
+
 @Component({
   selector: 'pear-terminal',
   templateUrl: './terminal.html',
   styleUrl: './terminal.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TerminalPane implements AfterViewInit, OnDestroy {
   readonly tab = input.required<TermTab>();
@@ -72,12 +82,19 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
   private readonly settings = inject(Settings);
   private readonly menu = inject(ContextMenuService);
   private readonly registry = inject(TermRegistry);
+  private readonly catalog = inject(HostCatalog);
+
+  /** Shown over the empty xterm until the shell channel is open. */
+  readonly connecting = signal(true);
+  readonly hostName = computed(() => this.catalog.byId(this.tab().hostId)?.name ?? 'host');
 
   private xterm?: Terminal;
   private fit?: FitAddon;
   private suggest?: InlineSuggest;
   private termId?: string;
   private resizeObserver?: ResizeObserver;
+  private refitFrame: number | null = null;
+  private remoteResizeTimer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribes: Array<() => void> = [];
   private reportedDirty = false;
 
@@ -122,6 +139,7 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
         adopted ?? (await term.open(tab.hostId, size, { password: this.password() || undefined }));
       this.termId = id;
       ADOPTED.add(id);
+      this.connecting.set(false);
       this.opened.emit(id);
       // Re-read from the store: `tab` was snapshotted before the open
       // round-trip, and a bindShell during it (open-terminal-here on a shell
@@ -158,12 +176,22 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
         suggest.handleInput(data);
       });
 
-      this.resizeObserver = new ResizeObserver(() => this.refit());
+      this.resizeObserver = new ResizeObserver(() => this.scheduleRefit());
       this.resizeObserver.observe(this.hostEl().nativeElement);
       if (this.active()) xterm.focus();
     } catch (err) {
+      this.connecting.set(false);
       this.failed.emit(cleanIpcError(err));
     }
+  }
+
+  /** Coalesce a burst of ResizeObserver callbacks into one fit per frame. */
+  private scheduleRefit(): void {
+    if (this.refitFrame !== null) return;
+    this.refitFrame = requestAnimationFrame(() => {
+      this.refitFrame = null;
+      this.refit();
+    });
   }
 
   onContextMenu(event: MouseEvent): void {
@@ -230,15 +258,23 @@ export class TerminalPane implements AfterViewInit, OnDestroy {
   private refit(): void {
     const el = this.hostEl().nativeElement;
     if (!this.fit || !this.xterm || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+    const before = { cols: this.xterm.cols, rows: this.xterm.rows };
     this.fit.fit();
-    if (this.termId) {
-      this.pear.api.term.resize(this.termId, { cols: this.xterm.cols, rows: this.xterm.rows });
-    }
+    if (this.xterm.cols === before.cols && this.xterm.rows === before.rows) return;
+    if (this.remoteResizeTimer) clearTimeout(this.remoteResizeTimer);
+    this.remoteResizeTimer = setTimeout(() => {
+      this.remoteResizeTimer = null;
+      if (this.termId && this.xterm) {
+        this.pear.api.term.resize(this.termId, { cols: this.xterm.cols, rows: this.xterm.rows });
+      }
+    }, REMOTE_RESIZE_DEBOUNCE_MS);
   }
 
   ngOnDestroy(): void {
     this.registry.unregister(this.tab().id);
     this.resizeObserver?.disconnect();
+    if (this.refitFrame !== null) cancelAnimationFrame(this.refitFrame);
+    if (this.remoteResizeTimer) clearTimeout(this.remoteResizeTimer);
     for (const unsub of this.unsubscribes) unsub();
     if (this.termId) this.pear.api.term.close(this.termId);
     this.xterm?.dispose();

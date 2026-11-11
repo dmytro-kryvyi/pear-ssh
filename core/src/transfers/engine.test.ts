@@ -24,6 +24,12 @@ class MemTransport implements SshTransport {
   gate: Promise<void> | null = null;
   /** When set, hash() returns a bogus digest — simulates a corrupt read. */
   corruptHash = false;
+  /** When set, hash() waits on it first — a slow checksum of a big file. */
+  hashGate: Promise<void> | null = null;
+  /** Progress callbacks per file (1 = one shot at the end). */
+  chunks = 1;
+  /** Announce a container push after the byte stream, like SubHostTransport. */
+  pushPhase = false;
   fs = new Map<string, Node>();
 
   constructor(
@@ -136,6 +142,10 @@ class MemTransport implements SshTransport {
   }
 
   async hash(path: string): Promise<string> {
+    if (this.hashGate) {
+      await this.hashGate;
+      this.hashGate = null;
+    }
     if (this.corruptHash) return 'corrupt';
     const node = this.fs.get(path);
     if (node?.kind !== 'file') throw new Error(`${path}: not a file`);
@@ -159,7 +169,12 @@ class MemTransport implements SshTransport {
     const node = from.fs.get(fromPath);
     if (node?.kind !== 'file') throw new Error(`${fromPath}: not a file`);
     to.fs.set(toPath, { kind: 'file', data: node.data });
-    opts?.onProgress?.({ bytes: node.data.length, total: node.data.length });
+    const total = node.data.length;
+    const chunks = Math.max(1, this.chunks);
+    for (let k = 1; k <= chunks; k++) {
+      opts?.onProgress?.({ bytes: Math.round((total * k) / chunks), total });
+    }
+    if (to.pushPhase) opts?.onPhase?.('pushing');
   }
 
   dispose(): void {}
@@ -167,11 +182,14 @@ class MemTransport implements SshTransport {
 
 // ---- Harness ---------------------------------------------------------------
 
-function harness(seed: {
-  a?: Record<string, string | null>;
-  b?: Record<string, string | null>;
-  local?: Record<string, string | null>;
-}) {
+function harness(
+  seed: {
+    a?: Record<string, string | null>;
+    b?: Record<string, string | null>;
+    local?: Record<string, string | null>;
+  },
+  clock?: () => number,
+) {
   let localRef: MemTransport;
   const relay = () => localRef;
   const local = new MemTransport(relay, seed.local ?? {});
@@ -203,7 +221,11 @@ function harness(seed: {
 
   const updates: TransferJobSnapshot[] = [];
   let time = 0;
-  const engine = new TransferEngine(env, { onUpdate: (j) => updates.push(j) }, () => (time += 200));
+  const engine = new TransferEngine(
+    env,
+    { onUpdate: (j) => updates.push(j) },
+    clock ?? (() => (time += 200)),
+  );
   const finished = (id: string) =>
     new Promise<TransferJobSnapshot>((resolve) => {
       const check = () => {
@@ -432,6 +454,94 @@ test('progress updates are throttled but stage flips always emit', async () => {
   const stages = h.updates.filter((u) => u.id === id).map((u) => u.stage);
   assert.ok(stages.includes(0));
   assert.ok(stages.includes(1));
+});
+
+test('snapshots carry phases, timestamps and file counts', async () => {
+  const h = harness({ a: { '/src/f.txt': 'hello', '/src/g.txt': 'world' } });
+  const id = h.engine.start(req({ names: ['f.txt', 'g.txt'], dest: { hostId: null, dir: '/dl' } }));
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  const mine = h.updates.filter((u) => u.id === id);
+  const phases = mine.map((u) => u.phase);
+  assert.ok(phases.indexOf('listing') >= 0 && phases.indexOf('listing') < phases.indexOf('copying'));
+  assert.equal(last.fileCount, 2);
+  assert.equal(last.fileIndex, 2);
+  assert.ok(typeof last.startedAt === 'number');
+  assert.ok(last.finishedAt! >= last.startedAt!);
+  assert.equal(last.bytesPerSec, null);
+  assert.equal(last.etaSec, null);
+});
+
+test('throughput and ETA are reported mid-stream', async () => {
+  const h = harness({ a: { '/src/big.bin': 'x'.repeat(4000) } });
+  h.a.chunks = 4; // four progress callbacks; the clock moves 200 ms per emit
+  const id = h.engine.start(req({ names: ['big.bin'], dest: { hostId: null, dir: '/dl' } }));
+  await h.finished(id);
+
+  const mid = h.updates.filter(
+    (u) => u.id === id && u.status === 'running' && u.bytesDone > 0 && u.bytesDone < u.bytesTotal,
+  );
+  assert.ok(mid.length > 0, 'no mid-stream update');
+  assert.ok(mid.some((u) => (u.bytesPerSec ?? 0) > 0), 'no throughput reported');
+  assert.ok(mid.some((u) => typeof u.etaSec === 'number' && u.etaSec >= 0), 'no ETA reported');
+});
+
+test("each file's completion is emitted even inside the throttle window", async () => {
+  // A frozen clock makes every throttled emit drop; the per-file 100% must
+  // still reach the UI.
+  const h = harness({ a: { '/src/f.txt': 'hello', '/src/g.txt': 'wonderful' } }, () => 0);
+  const id = h.engine.start(req({ names: ['f.txt', 'g.txt'], dest: { hostId: null, dir: '/dl' } }));
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  const firstDone = h.updates.find((u) => u.id === id && u.fileIndex === 1 && u.bytesDone === 5);
+  assert.ok(firstDone, 'first file never reported complete');
+});
+
+test('cancel on a running job says cancelRequested before canceled', async () => {
+  const h = harness({ a: { '/src/f.txt': 'hello' }, b: { '/dst': null } });
+  let release!: () => void;
+  h.a.gate = new Promise<void>((r) => (release = r));
+  const id = h.engine.start(req({}));
+  await new Promise((r) => setTimeout(r, 20));
+  h.engine.cancel(id);
+  release();
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'canceled');
+  const mine = h.updates.filter((u) => u.id === id);
+  const requestedAt = mine.findIndex((u) => u.cancelRequested && u.status === 'running');
+  const canceledAt = mine.findIndex((u) => u.status === 'canceled');
+  assert.ok(requestedAt >= 0, 'cancelRequested never emitted');
+  assert.ok(requestedAt < canceledAt);
+});
+
+test('cancel during verify ends canceled and removes the unverified file', async () => {
+  const h = harness({ a: { '/src/f.txt': 'hello' } });
+  let release!: () => void;
+  h.a.hashGate = new Promise<void>((r) => (release = r));
+  const id = h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, verify: true }));
+  // wait for the verifying phase
+  while (!h.updates.some((u) => u.id === id && u.phase === 'verifying')) {
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  h.engine.cancel(id);
+  release();
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'canceled');
+  assert.equal(h.local.fs.has('/dl/f.txt'), false, 'unverified file left behind');
+});
+
+test('a container push surfaces as its own phase', async () => {
+  const h = harness({ local: { '/up/f.txt': 'hello' }, b: { '/dst': null } });
+  h.b.pushPhase = true;
+  const id = h.engine.start(req({ src: { hostId: null, dir: '/up' } }));
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  assert.ok(h.updates.some((u) => u.id === id && u.phase === 'pushing'));
 });
 
 test('joinPath handles root and trailing slashes', () => {

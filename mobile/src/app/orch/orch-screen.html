@@ -8,6 +8,19 @@
 </pm-header>
 
 <div class="scroll noscroll">
+  @if (session.orchLoading() && !session.orch()) {
+    <!-- First look at this host: nothing to show until the probe answers. -->
+    <div class="orch-loading" role="status" aria-live="polite">
+      <span class="pm-spinner"></span>
+      <div>
+        <div class="ol-title">Looking for Docker, Swarm and Proxmox…</div>
+        <div class="ol-sub">{{ session.host()?.name ?? 'host' }}</div>
+      </div>
+    </div>
+  } @else {
+  @if (session.orchLoading()) {
+    <div class="orch-refreshing" role="status"><span class="pm-spinner"></span> Refreshing…</div>
+  }
   @switch (facet()) {
     <!-- ============ DOCKER ============ -->
     @case ('docker') {
@@ -215,5 +228,6 @@
         </div>
       }
     }
+  }
   }
 </div>

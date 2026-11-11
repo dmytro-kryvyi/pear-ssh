@@ -1,14 +1,22 @@
+/* A flexible sidebar section: grows to its content up to half the sidebar,
+ * and gives way (down to its headers) before the host list does. */
 :host {
-  display: block;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 120px; /* header plus a row or two; below that the sidebar scrolls instead */
+  max-height: 50%;
+  overflow: hidden;
 }
 
 .panel {
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  flex: 0 1 auto;
   min-height: 0;
 }
+.panel-header { flex-shrink: 0; }
 
 .svc-row {
   display: flex;
@@ -93,6 +101,8 @@
 
 .panel-scroll {
   overflow-y: auto;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 340px;
   padding-bottom: 10px;
 }

@@ -62,6 +62,7 @@
           <span
             class="host-dot"
             [class.online]="connectedIds().has(h.id)"
+            [class.connecting]="connectingIds().has(h.id)"
           ></span>
           <div class="host-text">
             <div class="host-name">
@@ -110,7 +111,7 @@
             [class.active]="c.id === activeHostId()"
             (click)="openHost(c)"
           >
-            <span class="host-dot" [class.online]="connectedIds().has(c.id)"></span>
+            <span class="host-dot" [class.online]="connectedIds().has(c.id)" [class.connecting]="connectingIds().has(c.id)"></span>
             <pear-icon
               [name]="c.target ? (c.target.type === 'lxc' ? 'cpu' : 'docker') : 'cube'"
               [size]="11"
@@ -149,6 +150,19 @@
           </div>
         }
       } @empty {
+        @if (!catalog.loaded()) {
+          <!-- Inventory still loading (or the PWA still connecting): hold the
+               space with placeholder rows instead of flashing "no hosts". -->
+          @for (i of [0, 1, 2]; track i) {
+            <div class="host-row skeleton" aria-hidden="true">
+              <span class="host-dot"></span>
+              <div class="host-text">
+                <div class="pear-skel" [style.width.%]="58 - i * 9"></div>
+                <div class="pear-skel thin" [style.width.%]="40 + i * 6"></div>
+              </div>
+            </div>
+          }
+        } @else {
         <div class="host-empty">
           @if (catalog.query()) {
             No matching hosts.
@@ -158,6 +172,7 @@
             No hosts yet — add one below.
           }
         </div>
+        }
       }
     </div>
 
@@ -188,6 +203,11 @@
     @if (selected(); as host) {
       @if (orchState(); as state) {
         <pear-orchpanel [host]="host" [state]="state" (termCommand)="actions.orchCommand(host.id, $event)" (expand)="openFacet($event)" (jumpedIn)="actions.jumpedIn($event)" />
+      } @else if (orchDetecting()) {
+        <div class="orch-detecting" role="status">
+          <span class="pear-spinner"></span>
+          Looking for Docker, Swarm, Proxmox on {{ host.name }}…
+        </div>
       }
     }
 
@@ -221,8 +241,8 @@
       </div>
     } @else {
       <div class="view-tabs">
-        <button class="view-tab" [class.active]="!activeFacet()" (click)="openFiles()">
-          <pear-icon name="folder" [size]="14" [class.accent]="!activeFacet()" /> Files
+        <button class="view-tab" [class.active]="!activeFacet() && !transfersActive()" (click)="openFiles()">
+          <pear-icon name="folder" [size]="14" [class.accent]="!activeFacet() && !transfersActive()" /> Files
         </button>
         @for (facet of availableFacets(); track facet) {
           <button class="view-tab" [class.active]="activeFacet() === facet" (click)="openFacet(facet)">
@@ -230,6 +250,12 @@
             {{ facetMeta[facet].tab }}
           </button>
         }
+        <button class="view-tab" [class.active]="transfersActive()" (click)="openTransfers()" title="Transfers">
+          <pear-icon name="swap" [size]="14" [class.accent]="transfersActive()" /> Transfers
+          @if (transfers.activeCount(); as n) {
+            <span class="view-badge">{{ n }}</span>
+          }
+        </button>
         @if (!settings.claudeVisible()) {
           <button class="ask-claude" (click)="settings.claudeVisible.set(true)" title="Open Claude Code">
             <pear-icon name="sparkle" [size]="13" /> Ask Claude

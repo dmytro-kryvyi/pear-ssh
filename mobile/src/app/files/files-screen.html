@@ -73,10 +73,26 @@
       }
     </button>
   } @empty {
-    <div class="empty">
-      <pm-icon name="folderOpen" [size]="34" />
-      <div>{{ error() || 'Empty directory' }}</div>
-    </div>
+    @if (loading() && !error()) {
+      <div class="pm-loading-line" role="status" aria-live="polite">
+        <span class="pm-spinner"></span>
+        Loading {{ session.path() }}…
+      </div>
+      @for (w of skeletonRows; track $index) {
+        <div class="entry skeleton" aria-hidden="true">
+          <span class="pm-skel ic"></span>
+          <div class="body">
+            <span class="pm-skel" [style.width.%]="w"></span>
+            <span class="pm-skel thin" [style.width.%]="w / 2"></span>
+          </div>
+        </div>
+      }
+    } @else {
+      <div class="empty">
+        <pm-icon name="folderOpen" [size]="34" />
+        <div>{{ error() || 'Empty directory' }}</div>
+      </div>
+    }
   }
   @if (sorted().length) {
     <div class="count">{{ dirCount() }} dirs · {{ fileCount() }} files</div>

@@ -1,4 +1,4 @@
-import { Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { HostConfig, MountUsage } from '@pear/core';
 import { PearIcon } from '../icons/icon';
 import { Settings } from '../settings';
@@ -18,6 +18,7 @@ const MAX_MOUNTS = 5;
   imports: [PearIcon, Sparkline],
   templateUrl: './vitals-band.html',
   styleUrl: './vitals-band.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class VitalsBand {
   readonly host = input.required<HostConfig>();

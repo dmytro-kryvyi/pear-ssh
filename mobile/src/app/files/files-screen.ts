@@ -22,6 +22,9 @@ export class PmFilesScreen {
 
   protected readonly entries = signal<FileEntry[]>([]);
   protected readonly error = signal('');
+  /** A listing is in flight for the current host + path. */
+  protected readonly loading = signal(false);
+  protected readonly skeletonRows = [58, 40, 66, 34, 50, 44];
   /** Transfer jobs still worth showing (running, or terminal until dismissed). */
   protected readonly jobs = signal<TransferJobSnapshot[]>([]);
 
@@ -59,19 +62,24 @@ export class PmFilesScreen {
   }
 
   private async load(hostId: string, path: string): Promise<void> {
+    const current = (): boolean =>
+      this.session.activeHostId() === hostId && this.session.path() === path;
+    this.loading.set(true);
     try {
       const listing = await this.backend.fs.list(hostId, path);
-      if (this.session.activeHostId() === hostId && this.session.path() === path) {
+      if (current()) {
         this.entries.set(listing.entries);
         this.error.set('');
       }
     } catch (err) {
       // Same staleness guard as the success path — a slow failure from a
       // directory the user already left must not clobber the current view.
-      if (this.session.activeHostId() === hostId && this.session.path() === path) {
+      if (current()) {
         this.entries.set([]);
         this.error.set(err instanceof Error ? err.message : String(err));
       }
+    } finally {
+      if (current()) this.loading.set(false);
     }
   }
 

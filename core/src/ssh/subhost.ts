@@ -301,11 +301,16 @@ export class SubHostTransport implements SshTransport {
 
   /**
    * Byte progress covers only the parent→Pear SFTP leg (the network-dominant
-   * one); the container-side docker cp / pct pull is a single opaque step.
+   * one); the container-side docker cp / pct pull is a single opaque step,
+   * announced through onPhase so the UI can say what it is waiting for. The
+   * push/pull exec cannot be interrupted once started — a cancel that lands
+   * during it takes effect when the step returns.
    */
   async download(remotePath: string, localPath: string, opts?: TransferOpts): Promise<void> {
     await this.staged(async (tmp) => {
+      opts?.onPhase?.('pulling');
       await this.pull(remotePath, tmp);
+      opts?.onPhase?.('copying');
       await this.parent.download(tmp, localPath, opts);
     });
   }
@@ -313,6 +318,8 @@ export class SubHostTransport implements SshTransport {
   async uploadFile(localPath: string, remotePath: string, opts?: TransferOpts): Promise<void> {
     await this.staged(async (tmp) => {
       await this.parent.uploadFile(localPath, tmp, opts);
+      if (opts?.signal?.aborted) throw new Error('canceled');
+      opts?.onPhase?.('pushing');
       await this.push(tmp, remotePath);
     });
   }

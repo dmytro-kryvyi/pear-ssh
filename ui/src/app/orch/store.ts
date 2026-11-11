@@ -126,6 +126,19 @@ export class OrchStore {
     });
   }
 
+  /** One best-effort `docker stats` pass after a snapshot; a failure just
+   *  leaves the gauges empty, the way a missing stats row always has. */
+  private readonly statsInflight = new Set<string>();
+  private fillStats(hostId: string): void {
+    if (this.statsInflight.has(hostId)) return;
+    this.statsInflight.add(hostId);
+    this.pear.api.monitor
+      .stats(hostId)
+      .then((stats) => this.applyStats(hostId, stats))
+      .catch(() => {})
+      .finally(() => this.statsInflight.delete(hostId));
+  }
+
   // ---- docker system df (lazy: slow on busy hosts, never on the tick) ------
 
   readonly dockerDf = signal<Readonly<Record<string, DockerDfState>>>({});
@@ -153,6 +166,9 @@ export class OrchStore {
       const empty = FACET_KINDS.every((kind) => !data[kind]);
       this.set(hostId, empty ? { status: 'none' } : { status: 'ready', data });
       if (data.swarm) this.fillDegraded(hostId, data.swarm);
+      // The snapshot deliberately skips `docker stats` (it samples for ~2s);
+      // the container list is on screen already, the gauges fill in after.
+      if (data.docker?.containers.some((c) => c.running)) this.fillStats(hostId);
     } catch (err) {
       // Keep the last good data visible next to the error, if there was any
       this.set(hostId, { status: 'error', error: cleanIpcError(err), data: previous });

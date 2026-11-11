@@ -1,4 +1,4 @@
-import type { AbortSignalLike, SshTransport } from '../ssh/transport';
+import type { AbortSignalLike, SshTransport, TransferOpts } from '../ssh/transport';
 import { uuid } from '../uuid';
 
 // Moves files between hosts without ever holding content in memory: same-host
@@ -28,6 +28,15 @@ export interface TransferRequest {
   verify: boolean;
 }
 
+/** What a running job is doing right now, finer than its stage. */
+export type TransferPhase =
+  | 'listing'
+  | 'copying'
+  | 'verifying'
+  | 'pushing'
+  | 'pulling'
+  | 'finalizing';
+
 export interface TransferJobSnapshot {
   id: string;
   label: string;
@@ -44,6 +53,22 @@ export interface TransferJobSnapshot {
   currentName: string | null;
   status: TransferStatus;
   error?: string;
+  // Everything below is optional on the wire (older clients ignore it) but
+  // always filled in by the engine.
+  phase?: TransferPhase;
+  /** 1-based index of the file in flight within the current stage. */
+  fileIndex?: number;
+  fileCount?: number;
+  /** Clock values from the engine's `now()` (ms). */
+  startedAt?: number;
+  stageStartedAt?: number;
+  finishedAt?: number;
+  /** Smoothed throughput of the current stage; null until measurable. */
+  bytesPerSec?: number | null;
+  /** Seconds left in the current stage at the current rate; null if unknown. */
+  etaSec?: number | null;
+  /** cancel() was called on a running job; `canceled` follows once it stops. */
+  cancelRequested?: boolean;
 }
 
 export interface TransferEnv {
@@ -103,9 +128,13 @@ interface Job {
   aborter: Aborter;
   /** Path + host of the file currently being written, for partial cleanup. */
   partial: { hostId: string | null; path: string } | null;
+  /** Throughput tracker for the current stage (see updateRate). */
+  rate: { at: number; bytes: number; ewma: number | null };
 }
 
 const PROGRESS_INTERVAL_MS = 100;
+/** Weight of the newest rate sample in the smoothed throughput. */
+const RATE_ALPHA = 0.3;
 
 export class TransferEngine {
   private jobs = new Map<string, Job>();
@@ -126,6 +155,7 @@ export class TransferEngine {
       req,
       aborter: new Aborter(),
       partial: null,
+      rate: { at: 0, bytes: 0, ewma: null },
       snapshot: {
         id,
         label: req.names.length === 1 ? req.names[0] : `${req.names.length} items`,
@@ -156,7 +186,13 @@ export class TransferEngine {
       this.emit(job, true);
       return;
     }
-    if (job.snapshot.status === 'running') job.aborter.abort();
+    if (job.snapshot.status === 'running') {
+      // Say so at once: the stop itself lands when the in-flight requests
+      // drain (or a verify hash returns), and the UI should not look stuck.
+      job.snapshot.cancelRequested = true;
+      this.emit(job, true);
+      job.aborter.abort();
+    }
   }
 
   list(): TransferJobSnapshot[] {
@@ -193,6 +229,8 @@ export class TransferEngine {
   private async run(job: Job): Promise<void> {
     const snap = job.snapshot;
     snap.status = 'running';
+    snap.startedAt = snap.stageStartedAt = this.now();
+    snap.phase = 'listing';
     this.emit(job, true);
     let staging: string | null = null;
     try {
@@ -200,7 +238,8 @@ export class TransferEngine {
       const dest = await this.env.connection(job.req.dest.hostId);
       const manifest = await this.buildManifest(job, src, dest);
       snap.bytesTotal = manifest.files.reduce((a, f) => a + f.size, 0);
-      this.emit(job, true);
+      snap.fileCount = manifest.files.length;
+      this.startStage(job, 0);
 
       if (snap.stages === 2) {
         staging = await this.env.makeStagingDir();
@@ -209,9 +248,7 @@ export class TransferEngine {
           from: src, fromDir: job.req.src.dir, fromKey: 'srcRel',
           to: relay, toDir: staging, toHostId: null, mode: 'download',
         });
-        snap.stage = 1;
-        snap.bytesDone = 0;
-        this.emit(job, true);
+        this.startStage(job, 1);
         await this.copyStage(job, manifest, {
           from: relay, fromDir: staging, fromKey: 'destRel',
           to: dest, toDir: job.req.dest.dir, toHostId: job.req.dest.hostId, mode: 'upload',
@@ -224,7 +261,9 @@ export class TransferEngine {
         });
       }
 
-      if (job.req.op === 'move') {
+      if (job.req.op === 'move' && manifest.moveRoots.length) {
+        snap.phase = 'finalizing';
+        this.emit(job, true);
         for (const name of manifest.moveRoots) {
           await src.remove(joinPath(job.req.src.dir, name), true);
         }
@@ -242,8 +281,25 @@ export class TransferEngine {
       }
     } finally {
       if (staging) await this.env.removeStaging(staging).catch(() => {});
+      snap.finishedAt = this.now();
+      snap.bytesPerSec = null;
+      snap.etaSec = null;
       this.emit(job, true);
     }
+  }
+
+  /** A copy stage begins: fresh byte counter, clock and throughput tracker. */
+  private startStage(job: Job, stage: 0 | 1): void {
+    const snap = job.snapshot;
+    const now = this.now();
+    snap.stage = stage;
+    snap.bytesDone = 0;
+    snap.stageStartedAt = now;
+    snap.phase = 'copying';
+    snap.bytesPerSec = null;
+    snap.etaSec = null;
+    job.rate = { at: now, bytes: 0, ewma: null };
+    this.emit(job, true);
   }
 
   /**
@@ -270,37 +326,52 @@ export class TransferEngine {
       await leg.to.mkdir(joinPath(leg.toDir, dir)).catch(() => {});
     }
     let doneBytes = 0;
-    for (const file of manifest.files) {
+    for (let i = 0; i < manifest.files.length; i++) {
+      const file = manifest.files[i];
       this.checkCanceled(job);
       const fromPath = joinPath(leg.fromDir, file[leg.fromKey]);
       const toPath = joinPath(leg.toDir, file.destRel);
       snap.currentName = file.destRel;
+      snap.fileIndex = i + 1;
+      snap.phase = 'copying';
       job.partial = { hostId: leg.toHostId, path: toPath };
-      const opts = {
+      const opts: TransferOpts = {
         signal: job.aborter,
-        onProgress: (p: { bytes: number }) => {
+        onProgress: (p) => {
           snap.bytesDone = doneBytes + Math.min(p.bytes, file.size);
           this.emit(job);
+        },
+        onPhase: (phase) => {
+          snap.phase = phase;
+          this.emit(job, true);
         },
       };
       if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
       else await leg.to.uploadFile(fromPath, toPath, opts);
       if (job.req.verify) {
+        // Hashing re-reads the whole file on both ends; it cannot be
+        // interrupted, but a cancel that lands during it still wins.
+        this.checkCanceled(job);
+        snap.phase = 'verifying';
+        this.emit(job, true);
         const [srcHash, destHash] = await Promise.all([
           leg.from.hash(fromPath),
           leg.to.hash(toPath),
         ]);
+        this.checkCanceled(job);
         if (srcHash !== destHash) {
           // Drop the corrupt file before failing the job.
           await this.removePartial(job);
           job.partial = null;
           throw new Error(`checksum mismatch: ${file.destRel}`);
         }
+        snap.phase = 'copying';
       }
       doneBytes += file.size;
       snap.bytesDone = doneBytes;
       job.partial = null;
-      this.emit(job);
+      // Forced: a throttled emit here could swallow this file's 100%.
+      this.emit(job, true);
     }
   }
 
@@ -388,6 +459,26 @@ export class TransferEngine {
     const now = this.now();
     if (!force && now - (this.lastEmit.get(id) ?? 0) < PROGRESS_INTERVAL_MS) return;
     this.lastEmit.set(id, now);
+    if (job.snapshot.status === 'running') this.updateRate(job, now);
     this.events.onUpdate({ ...job.snapshot });
+  }
+
+  /**
+   * Smoothed bytes/sec for the current stage, sampled at most once per
+   * PROGRESS_INTERVAL_MS so a burst of acks doesn't read as a spike, and the
+   * ETA that follows from it.
+   */
+  private updateRate(job: Job, now: number): void {
+    const snap = job.snapshot;
+    const r = job.rate;
+    const dtSec = (now - r.at) / 1000;
+    if (dtSec < PROGRESS_INTERVAL_MS / 1000) return;
+    const inst = Math.max(0, (snap.bytesDone - r.bytes) / dtSec);
+    r.ewma = r.ewma === null ? inst : r.ewma * (1 - RATE_ALPHA) + inst * RATE_ALPHA;
+    r.at = now;
+    r.bytes = snap.bytesDone;
+    snap.bytesPerSec = Math.round(r.ewma);
+    const remaining = snap.bytesTotal - snap.bytesDone;
+    snap.etaSec = r.ewma > 0 && remaining > 0 ? Math.ceil(remaining / r.ewma) : remaining > 0 ? null : 0;
   }
 }

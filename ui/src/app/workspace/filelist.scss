@@ -110,6 +110,20 @@
 
 .list { overflow-y: auto; flex: 1; min-height: 0; }
 .list.loading { opacity: 0.55; }
+.list-progress { flex-shrink: 0; margin-top: -1px; }
+
+.fs-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px 6px;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  font-family: var(--mono);
+}
+.row.skeleton { pointer-events: none; }
+.row.skeleton .pear-skel { height: 9px; }
+.row.skeleton .pear-skel.icon { width: 14px; height: 12px; flex-shrink: 0; }
 .list.drop-ring { box-shadow: inset 0 0 0 2px var(--accent-line); }
 
 .row {

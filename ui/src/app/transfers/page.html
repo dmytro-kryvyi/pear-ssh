@@ -1,0 +1,125 @@
+<div class="head">
+  <div class="head-icon"><pear-icon name="swap" [size]="17" /></div>
+  <div class="head-text">
+    <div class="head-title">Transfers</div>
+    <div class="head-sub">
+      {{ store.activeCount() ? store.activeCount() + ' active' : 'nothing running' }} ·
+      {{ store.list().length }} this session
+    </div>
+  </div>
+  <div class="head-actions">
+    <span class="parallel" title="Max parallel transfers">
+      <span class="parallel-label">parallel</span>
+      @for (n of parallelChoices; track n) {
+        <button class="seg" [class.on]="settings.maxParallel() === n" (click)="settings.maxParallel.set(n)">{{ n }}</button>
+      }
+    </span>
+    @if (store.activeCount()) {
+      <button class="head-btn danger" (click)="store.cancelAll()">
+        <pear-icon name="stop" [size]="12" /> Cancel all
+      </button>
+    }
+    <button class="head-btn" [disabled]="!store.hasFinished()" (click)="store.clearFinished()">
+      <pear-icon name="trash" [size]="12" /> Clear finished
+    </button>
+  </div>
+</div>
+
+<div class="filters">
+  @for (f of filters; track f.key) {
+    <button class="seg" [class.on]="filter() === f.key" (click)="filter.set(f.key)">
+      {{ f.label }} <span class="seg-n">{{ count(f.key) }}</span>
+    </button>
+  }
+  <span class="hint">drag files between panes, or Upload from the toolbar</span>
+</div>
+
+<div class="table-wrap">
+  @if (shown().length) {
+    <div class="thead">
+      <span>Item</span>
+      <span>Route</span>
+      <span>Progress</span>
+      <span>Size</span>
+      <span>Speed</span>
+      <span>ETA</span>
+      <span>Status</span>
+      <span></span>
+    </div>
+    @for (job of shown(); track job.id) {
+      <div class="row" [class.failed]="job.status === 'error'" [class.active]="job.status === 'running'">
+        <div class="name-cell">
+          <pear-icon [name]="icon(job)" [size]="13" class="dir-icon" [class.dim]="job.status !== 'running'" />
+          <div class="name-text">
+            <div class="cell" [title]="job.label">{{ job.label }}</div>
+            @if (job.status === 'running' && job.currentName && job.currentName !== job.label) {
+              <div class="cell dim sub" [title]="job.currentName">{{ job.currentName }}</div>
+            } @else if (filesText(job); as files) {
+              <div class="cell dim sub">{{ files }}</div>
+            }
+          </div>
+        </div>
+        <div class="cell dim route" [title]="store.fromName(job) + ' → ' + store.toName(job)">
+          <span>{{ store.fromName(job) }}</span>
+          <pear-icon name="forward" [size]="10" />
+          <span>{{ store.toName(job) }}</span>
+        </div>
+        <div class="progress">
+          <div class="bar">
+            <div
+              class="fill"
+              [class.ok]="job.status === 'done'"
+              [class.err]="job.status === 'error' || job.status === 'canceled'"
+              [style.width.%]="pct(job)"
+            ></div>
+          </div>
+          <span class="pct">{{ pct(job) }}%</span>
+          @if (job.stages === 2) {
+            <span class="stage-dots" title="Relayed through this machine">
+              <span class="sd" [class.on]="job.stage >= 0 && job.status !== 'queued'"></span>
+              <span class="sd" [class.on]="job.stage >= 1 || job.status === 'done'"></span>
+            </span>
+          }
+        </div>
+        <span class="cell">{{ bytesText(job) }}</span>
+        <span class="cell">{{ speedText(job) }}</span>
+        <span class="cell">{{ etaText(job) }}</span>
+        <div class="status-cell">
+          <span class="cell state" [class]="'cell state ' + tone(job)">
+            @if (store.isCancelling(job)) {
+              <span class="pear-spinner"></span>
+            } @else {
+              <span class="dot" [class]="'dot ' + tone(job)"></span>
+            }
+            {{ store.statusText(job) }}
+          </span>
+          @if (job.status === 'error' && job.error) {
+            <div class="err-text sub" [title]="job.error">{{ job.error }}</div>
+          }
+        </div>
+        <span class="row-action">
+          @if (job.status === 'running' || job.status === 'queued') {
+            <button class="icon-btn" title="Cancel" [disabled]="store.isCancelling(job)" (click)="store.cancel(job.id)">
+              <pear-icon name="stop" [size]="12" />
+            </button>
+          } @else {
+            <button class="icon-btn plain" title="Remove from list" (click)="store.remove(job.id)">
+              <pear-icon name="close" [size]="12" />
+            </button>
+          }
+        </span>
+      </div>
+    }
+  } @else {
+    <div class="empty">
+      <pear-icon name="swap" [size]="26" />
+      <div>
+        @if (store.list().length) {
+          No {{ filter() }} transfers.
+        } @else {
+          No transfers yet — drag files between panes, drop them from your desktop, or use Upload in a folder's toolbar.
+        }
+      </div>
+    </div>
+  }
+</div>

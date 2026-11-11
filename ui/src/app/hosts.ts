@@ -34,8 +34,49 @@ export class HostCatalog {
 
   /** Sidebar search: matches names, addresses, aliases, tags and users. */
   readonly query = signal('');
+  /** False until the first inventory load answered — the sidebar shows
+   *  placeholder rows rather than "no hosts" while the bridge is still
+   *  connecting (the PWA queues calls until its WebSocket is up). */
+  readonly loaded = signal(false);
 
   readonly all = computed(() => [...this.hosts(), ...this.subHosts()]);
+  /** id → host; every byId() in a template row goes through this instead of
+   *  a linear scan per row per change-detection pass. */
+  private readonly index = computed(() => new Map(this.all().map((h) => [h.id, h])));
+  /** Persisted (pinned) host ids — sub-hosts not in here are session-only. */
+  readonly pinnedIds = computed<ReadonlySet<string>>(() => new Set(this.hosts().map((h) => h.id)));
+  /**
+   * Children per parent (exec sub-hosts and tunneled via-hosts alike),
+   * transitively flattened under each root in parent-first order — one pass
+   * over the inventory, shared by every sidebar row.
+   */
+  readonly descendants = computed<ReadonlyMap<string, HostConfig[]>>(() => {
+    const direct = new Map<string, HostConfig[]>();
+    for (const h of this.all()) {
+      for (const link of [h.parentId, h.via]) {
+        if (!link) continue;
+        const list = direct.get(link);
+        if (list) list.push(h);
+        else direct.set(link, [h]);
+      }
+    }
+    const out = new Map<string, HostConfig[]>();
+    for (const root of this.all()) {
+      const flat: HostConfig[] = [];
+      const seen = new Set([root.id]);
+      const queue = [root.id];
+      while (queue.length) {
+        for (const h of direct.get(queue.shift()!) ?? []) {
+          if (seen.has(h.id)) continue;
+          seen.add(h.id);
+          flat.push(h);
+          queue.push(h.id);
+        }
+      }
+      out.set(root.id, flat);
+    }
+    return out;
+  });
   /**
    * Top-level sidebar rows. A tunneled (via) host nests under its jump host
    * like an exec sub-host does — unless the jump host is gone (orphan), in
@@ -65,7 +106,12 @@ export class HostCatalog {
   });
 
   byId(id: string | null): HostConfig | null {
-    return id ? (this.all().find((h) => h.id === id) ?? null) : null;
+    return id ? (this.index().get(id) ?? null) : null;
+  }
+
+  /** Transitive sub-hosts of a root, parent-first (see `descendants`). */
+  childrenOf(id: string): HostConfig[] {
+    return this.descendants().get(id) ?? [];
   }
 
   nameOf(id: string | null): string {
@@ -101,25 +147,22 @@ export class HostCatalog {
   }
 
   private descendantsOf(id: string): HostConfig[] {
-    const out: HostConfig[] = [];
-    const queue = [id];
-    const seen = new Set([id]);
-    while (queue.length) {
-      const current = queue.shift()!;
-      for (const h of this.all()) {
-        if ((h.parentId === current || h.via === current) && !seen.has(h.id)) {
-          seen.add(h.id);
-          out.push(h);
-          queue.push(h.id);
-        }
-      }
-    }
-    return out;
+    return this.childrenOf(id);
   }
 
+  /** Reload the inventory. The three calls are independent, so they go out
+   *  together — one round-trip, not three, which matters over a WebSocket. */
   async refresh(): Promise<void> {
-    this.hosts.set(await this.pear.api.hosts.list());
-    this.subHosts.set(await this.pear.api.subhosts.list());
-    await this.groups.refresh();
+    try {
+      const [hosts, subHosts] = await Promise.all([
+        this.pear.api.hosts.list(),
+        this.pear.api.subhosts.list(),
+        this.groups.refresh(),
+      ]);
+      this.hosts.set(hosts);
+      this.subHosts.set(subHosts);
+    } finally {
+      this.loaded.set(true);
+    }
   }
 }

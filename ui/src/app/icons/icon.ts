@@ -1,4 +1,4 @@
-import { Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 // Inner SVG markup per icon, 16x16 viewBox — ported from design/src/icons.jsx.
@@ -86,6 +86,9 @@ const ICONS: Record<string, string> = {
   selector: 'pear-icon',
   templateUrl: './icon.html',
   styleUrl: './icon.scss',
+  // Hundreds of these sit in a long file list; none should be re-checked
+  // unless its own inputs change.
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PearIcon {
   readonly name = input.required<string>();

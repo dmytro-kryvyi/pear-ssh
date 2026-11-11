@@ -1,35 +1,51 @@
-@if (store.list().length) {
-  <div class="queue">
+@if (store.toastVisible()) {
+  <div class="queue" role="status">
     <div class="queue-head">
       <pear-icon name="swap" [size]="14" class="head-icon" />
       <span class="head-title">Transfers</span>
       <span class="head-count">
         {{ store.activeCount() ? store.activeCount() + ' active' : 'idle' }}
       </span>
-      <button class="head-clear" title="Clear finished" (click)="store.clearFinished()">
-        <pear-icon name="close" [size]="13" />
-      </button>
+      <span class="head-actions">
+        <button class="head-btn" title="Open the Transfers tab" (click)="openTab()">
+          <pear-icon name="expand" [size]="12" />
+        </button>
+        @if (store.hasFinished()) {
+          <button class="head-btn" title="Clear finished" (click)="store.clearFinished()">
+            <pear-icon name="trash" [size]="12" />
+          </button>
+        }
+        <button class="head-btn" title="Hide (reappears on the next transfer)" (click)="store.dismissToast()">
+          <pear-icon name="close" [size]="13" />
+        </button>
+      </span>
     </div>
     <div class="queue-body">
-      @for (job of store.list().slice().reverse(); track job.id) {
-        <div class="job">
+      @for (job of store.toastList(); track job.id) {
+        <div class="job" [class.failed]="job.status === 'error'">
           <div class="job-top">
             @if (job.status === 'done') {
               <pear-icon name="check" [size]="13" class="job-icon ok" />
             } @else if (job.status === 'error') {
-              <pear-icon name="close" [size]="13" class="job-icon err" />
-            } @else if (job.dest.hostId === null) {
+              <pear-icon name="warning" [size]="13" class="job-icon err" />
+            } @else if (job.status === 'canceled') {
+              <pear-icon name="close" [size]="13" class="job-icon dim" />
+            } @else if (store.direction(job) === 'download') {
               <pear-icon name="download" [size]="13" class="job-icon accent" />
-            } @else if (job.src.hostId === null) {
+            } @else if (store.direction(job) === 'upload') {
               <pear-icon name="upload" [size]="13" class="job-icon accent" />
             } @else {
               <pear-icon name="swap" [size]="13" class="job-icon accent" />
             }
             <span class="job-label" [title]="job.label">{{ job.label }}</span>
             @if (job.status === 'running' || job.status === 'queued') {
-              <button class="job-cancel" title="Cancel" (click)="store.cancel(job.id)">
-                <pear-icon name="close" [size]="11" />
-              </button>
+              @if (store.isCancelling(job)) {
+                <span class="pear-spinner job-spin" title="Cancelling…"></span>
+              } @else {
+                <button class="job-cancel" title="Cancel" (click)="store.cancel(job.id)">
+                  <pear-icon name="stop" [size]="11" />
+                </button>
+              }
             }
             <span class="job-pct" [class.ok]="job.status === 'done'" [class.err]="job.status === 'error' || job.status === 'canceled'">
               @if (job.status === 'done') {
@@ -44,7 +60,7 @@
             </span>
           </div>
           <div class="job-stage">
-            <span class="stage-text" [title]="job.error ?? ''">{{ store.stageLabel(job) }}</span>
+            <span class="stage-text" [title]="job.error ?? ''">{{ store.statusText(job) }}</span>
             @if (job.stages === 2 && job.status === 'running') {
               <span class="stage-dots">
                 <span class="dot on"></span>
@@ -60,6 +76,14 @@
               [style.width.%]="store.progress(job) * 100"
             ></div>
           </div>
+          @if (store.detailText(job); as detail) {
+            <div class="job-detail" [class.err]="job.status === 'error'" [title]="detail">{{ detail }}</div>
+          }
+          @if (job.status === 'running' && job.currentName && job.currentName !== job.label) {
+            <div class="job-detail dim" [title]="job.currentName">
+              {{ job.fileIndex && job.fileCount ? job.fileIndex + '/' + job.fileCount + ' · ' : '' }}{{ job.currentName }}
+            </div>
+          }
           <div class="job-route">
             <span>{{ store.fromName(job) }}</span>
             <pear-icon name="forward" [size]="10" />

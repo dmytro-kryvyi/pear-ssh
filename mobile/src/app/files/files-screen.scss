@@ -70,6 +70,13 @@
   .dir-ic { color: var(--accent); }
   .file-ic { color: var(--fg-2); }
   .fwd { color: var(--fg-3); }
+
+  &.skeleton {
+    pointer-events: none;
+    .ic { width: 20px; height: 18px; border-radius: 4px; }
+    .body { display: flex; flex-direction: column; gap: 7px; }
+    .thin { height: 8px; }
+  }
 }
 
 .body { min-width: 0; flex: 1; }
