@@ -130,8 +130,8 @@ interface Job {
   snapshot: TransferJobSnapshot;
   req: TransferRequest;
   aborter: Aborter;
-  /** Path + host of the file currently being written, for partial cleanup. */
-  partial: { hostId: string | null; path: string } | null;
+  /** Files currently being written (path → host), for partial cleanup. */
+  partials: Map<string, string | null>;
   /** Throughput tracker for the current stage (see updateRate). */
   rate: RateTracker;
 }
@@ -146,6 +146,16 @@ interface RateTracker {
 }
 
 const PROGRESS_INTERVAL_MS = 100;
+/**
+ * Files up to this size are carried several at a time: each one costs a few
+ * network round trips (open, write, close) however small it is, so a tree of
+ * tiny assets over a slow link would otherwise crawl at one file per RTT.
+ * Larger files run alone — they already keep a window of requests in flight,
+ * and running several would multiply the memory held in that window.
+ */
+const SMALL_FILE_BYTES = 4 * 1024 * 1024;
+const FILE_CONCURRENCY = 8;
+const DIR_CONCURRENCY = 8;
 /** Throughput is the mean over this much history — one slow or bursty
  *  second must not swing the estimate. */
 const RATE_WINDOW_MS = 20_000;
@@ -170,7 +180,7 @@ export class TransferEngine {
     const job: Job = {
       req,
       aborter: new Aborter(),
-      partial: null,
+      partials: new Map(),
       rate: freshRate(0),
       snapshot: {
         id,
@@ -294,6 +304,8 @@ export class TransferEngine {
       } else {
         snap.status = 'error';
         snap.error = err instanceof Error ? err.message : String(err);
+        // Siblings that were in flight when one file failed are half-written.
+        await this.removePartial(job);
       }
     } finally {
       if (staging) await this.env.removeStaging(staging).catch(() => {});
@@ -321,7 +333,9 @@ export class TransferEngine {
   /**
    * Carry every manifest file across one leg. One side of a leg is always the
    * Pear machine, so each file is a single `download` (remote source) or
-   * `uploadFile` (remote dest) driven by the remote side's transport.
+   * `uploadFile` (remote dest) driven by the remote side's transport. Small
+   * files go FILE_CONCURRENCY at a time; a big one waits for the pool to
+   * drain and then runs by itself.
    */
   private async copyStage(
     job: Job,
@@ -337,57 +351,132 @@ export class TransferEngine {
     },
   ): Promise<void> {
     const snap = job.snapshot;
-    for (const dir of manifest.dirs) {
-      this.checkCanceled(job);
-      await leg.to.mkdir(joinPath(leg.toDir, dir)).catch(() => {});
-    }
-    let doneBytes = 0;
-    for (let i = 0; i < manifest.files.length; i++) {
-      const file = manifest.files[i];
-      this.checkCanceled(job);
+    await this.makeDirs(job, leg.to, leg.toDir, manifest.dirs);
+
+    // The first failure stops everything else in flight; a user cancel does
+    // the same through the job's own aborter.
+    const stop = new Aborter();
+    const onCancel = (): void => stop.abort();
+    job.aborter.addEventListener('abort', onCancel);
+    let failure: unknown = null;
+    const fail = (err: unknown): void => {
+      failure ??= err;
+      stop.abort();
+    };
+
+    let completedBytes = 0;
+    let completedCount = 0;
+    const inflight = new Map<ManifestFile, number>();
+    const refresh = (): void => {
+      let sum = completedBytes;
+      for (const bytes of inflight.values()) sum += bytes;
+      snap.bytesDone = sum;
+    };
+
+    const carry = async (file: ManifestFile): Promise<void> => {
       const fromPath = joinPath(leg.fromDir, file[leg.fromKey]);
       const toPath = joinPath(leg.toDir, file.destRel);
+      inflight.set(file, 0);
+      job.partials.set(toPath, leg.toHostId);
       snap.currentName = file.destRel;
-      snap.fileIndex = i + 1;
+      snap.fileIndex = Math.min(completedCount + 1, manifest.files.length);
       snap.phase = 'copying';
-      job.partial = { hostId: leg.toHostId, path: toPath };
-      const opts: TransferOpts = {
-        signal: job.aborter,
-        onProgress: (p) => {
-          snap.bytesDone = doneBytes + Math.min(p.bytes, file.size);
-          this.emit(job);
-        },
-        onPhase: (phase) => {
-          snap.phase = phase;
+      try {
+        const opts: TransferOpts = {
+          signal: stop,
+          onProgress: (p) => {
+            inflight.set(file, Math.min(p.bytes, file.size));
+            refresh();
+            this.emit(job);
+          },
+          onPhase: (phase) => {
+            snap.phase = phase;
+            this.emit(job, true);
+          },
+        };
+        if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
+        else await leg.to.uploadFile(fromPath, toPath, opts);
+        if (job.req.verify) {
+          // Hashing re-reads the whole file on both ends; it cannot be
+          // interrupted, but a cancel that lands during it still wins.
+          this.checkCanceled(job);
+          snap.phase = 'verifying';
           this.emit(job, true);
-        },
-      };
-      if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
-      else await leg.to.uploadFile(fromPath, toPath, opts);
-      if (job.req.verify) {
-        // Hashing re-reads the whole file on both ends; it cannot be
-        // interrupted, but a cancel that lands during it still wins.
-        this.checkCanceled(job);
-        snap.phase = 'verifying';
-        this.emit(job, true);
-        const [srcHash, destHash] = await Promise.all([
-          leg.from.hash(fromPath),
-          leg.to.hash(toPath),
-        ]);
-        this.checkCanceled(job);
-        if (srcHash !== destHash) {
-          // Drop the corrupt file before failing the job.
-          await this.removePartial(job);
-          job.partial = null;
-          throw new Error(`checksum mismatch: ${file.destRel}`);
+          const [srcHash, destHash] = await Promise.all([
+            leg.from.hash(fromPath),
+            leg.to.hash(toPath),
+          ]);
+          this.checkCanceled(job);
+          if (srcHash !== destHash) {
+            // Drop the corrupt file before failing the job.
+            await this.removeAt(leg.toHostId, toPath);
+            job.partials.delete(toPath);
+            throw new Error(`checksum mismatch: ${file.destRel}`);
+          }
+          snap.phase = 'copying';
         }
-        snap.phase = 'copying';
+        job.partials.delete(toPath);
+        inflight.delete(file);
+        completedBytes += file.size;
+        completedCount++;
+        snap.fileIndex = Math.min(completedCount + 1, manifest.files.length);
+        refresh();
+        // Forced: a throttled emit here could swallow this file's 100%.
+        this.emit(job, true);
+      } catch (err) {
+        inflight.delete(file);
+        throw err;
       }
-      doneBytes += file.size;
-      snap.bytesDone = doneBytes;
-      job.partial = null;
-      // Forced: a throttled emit here could swallow this file's 100%.
-      this.emit(job, true);
+    };
+
+    const active = new Set<Promise<void>>();
+    const launch = (file: ManifestFile): Promise<void> => {
+      const p: Promise<void> = carry(file)
+        .catch(fail)
+        .finally(() => active.delete(p));
+      active.add(p);
+      return p;
+    };
+    try {
+      for (const file of manifest.files) {
+        if (failure) break;
+        this.checkCanceled(job);
+        if (file.size > SMALL_FILE_BYTES) {
+          await Promise.all(active);
+          if (failure) break;
+          await launch(file);
+        } else {
+          while (active.size >= FILE_CONCURRENCY) await Promise.race(active);
+          launch(file);
+        }
+      }
+    } catch (err) {
+      fail(err);
+    } finally {
+      await Promise.all(active);
+      job.aborter.removeEventListener('abort', onCancel);
+    }
+    if (failure) throw failure;
+  }
+
+  /** Create the manifest's directories, parents before children, several
+   *  per round trip. Existing directories are fine. */
+  private async makeDirs(job: Job, to: SshTransport, toDir: string, dirs: string[]): Promise<void> {
+    const byDepth = new Map<number, string[]>();
+    for (const dir of dirs) {
+      const depth = dir.split('/').length;
+      const list = byDepth.get(depth);
+      if (list) list.push(dir);
+      else byDepth.set(depth, [dir]);
+    }
+    for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+      const batch = byDepth.get(depth)!;
+      for (let i = 0; i < batch.length; i += DIR_CONCURRENCY) {
+        this.checkCanceled(job);
+        await Promise.all(
+          batch.slice(i, i + DIR_CONCURRENCY).map((dir) => to.mkdir(joinPath(toDir, dir)).catch(() => {})),
+        );
+      }
     }
   }
 
@@ -396,12 +485,18 @@ export class TransferEngine {
   }
 
   private async removePartial(job: Job): Promise<void> {
-    if (!job.partial) return;
+    const partials = [...job.partials];
+    job.partials.clear();
+    await Promise.all(partials.map(([path, hostId]) => this.removeAt(hostId, path)));
+  }
+
+  /** Best-effort removal of a half-written file. */
+  private async removeAt(hostId: string | null, path: string): Promise<void> {
     try {
-      const t = await this.env.connection(job.partial.hostId);
-      await t.remove(job.partial.path);
+      const t = await this.env.connection(hostId);
+      await t.remove(path);
     } catch {
-      // best-effort cleanup of a half-written file
+      // the file may never have been created
     }
   }
 

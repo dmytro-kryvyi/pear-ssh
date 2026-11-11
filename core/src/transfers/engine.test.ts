@@ -30,6 +30,15 @@ class MemTransport implements SshTransport {
   chunks = 1;
   /** Announce a container push after the byte stream, like SubHostTransport. */
   pushPhase = false;
+  /** Per-transfer delay, to let several files overlap. */
+  delayMs = 0;
+  /** Concurrency observed on this side (download/uploadFile calls in flight). */
+  activeNow = 0;
+  maxActive = 0;
+  /** A file above the small-file limit was in flight alongside another. */
+  bigOverlap = false;
+  /** Destination path whose transfer fails with 'boom'. */
+  failOn: string | null = null;
   fs = new Map<string, Node>();
 
   constructor(
@@ -159,16 +168,29 @@ class MemTransport implements SshTransport {
     toPath: string,
     opts?: TransferOpts,
   ): Promise<void> {
-    if (this.gate) {
-      // Simulate an in-flight stream: a partial file exists at the dest.
-      to.fs.set(toPath, { kind: 'file', data: '<partial>' });
-      await this.gate;
-      this.gate = null;
-    }
-    if (opts?.signal?.aborted) throw new Error('aborted');
     const node = from.fs.get(fromPath);
-    if (node?.kind !== 'file') throw new Error(`${fromPath}: not a file`);
-    to.fs.set(toPath, { kind: 'file', data: node.data });
+    this.activeNow++;
+    this.maxActive = Math.max(this.maxActive, this.activeNow);
+    if (node?.kind === 'file' && node.data.length > 4 * 1024 * 1024 && this.activeNow > 1) {
+      this.bigOverlap = true;
+    }
+    try {
+      if (this.gate || this.delayMs) {
+        // Simulate an in-flight stream: a partial file exists at the dest.
+        to.fs.set(toPath, { kind: 'file', data: '<partial>' });
+        if (this.gate) {
+          await this.gate;
+          this.gate = null;
+        }
+        if (this.delayMs) await new Promise((r) => setTimeout(r, this.delayMs));
+      }
+      if (opts?.signal?.aborted) throw new Error('aborted');
+      if (toPath === this.failOn) throw new Error('boom');
+      if (node?.kind !== 'file') throw new Error(`${fromPath}: not a file`);
+      to.fs.set(toPath, { kind: 'file', data: node.data });
+    } finally {
+      this.activeNow--;
+    }
     const total = node.data.length;
     const chunks = Math.max(1, this.chunks);
     for (let k = 1; k <= chunks; k++) {
@@ -491,12 +513,21 @@ test("each file's completion is emitted even inside the throttle window", async 
   // A frozen clock makes every throttled emit drop; the per-file 100% must
   // still reach the UI.
   const h = harness({ a: { '/src/f.txt': 'hello', '/src/g.txt': 'wonderful' } }, () => 0);
+  h.a.delayMs = 5; // files overlap but land one after the other
   const id = h.engine.start(req({ names: ['f.txt', 'g.txt'], dest: { hostId: null, dir: '/dl' } }));
   const last = await h.finished(id);
 
   assert.equal(last.status, 'done');
-  const firstDone = h.updates.find((u) => u.id === id && u.fileIndex === 1 && u.bytesDone === 5);
-  assert.ok(firstDone, 'first file never reported complete');
+  // Whichever file lands first, its completion (5 or 9 bytes) must be seen
+  // before the total of 14.
+  const firstDone = h.updates.find(
+    (u) => u.id === id && u.status === 'running' && (u.bytesDone === 5 || u.bytesDone === 9),
+  );
+  assert.ok(
+    firstDone,
+    'first file never reported complete: ' +
+      JSON.stringify(h.updates.filter((u) => u.id === id).map((u) => [u.status, u.bytesDone, u.phase])),
+  );
 });
 
 test('cancel on a running job says cancelRequested before canceled', async () => {
@@ -542,6 +573,78 @@ test('a container push surfaces as its own phase', async () => {
 
   assert.equal(last.status, 'done');
   assert.ok(h.updates.some((u) => u.id === id && u.phase === 'pushing'));
+});
+
+test('small files are carried several at a time', async () => {
+  const seed: Record<string, string> = {};
+  for (let i = 0; i < 12; i++) seed[`/up/f${i}.txt`] = `file ${i}`;
+  const h = harness({ local: seed, b: { '/dst': null } });
+  h.b.delayMs = 15;
+  const id = h.engine.start(
+    req({ src: { hostId: null, dir: '/up' }, names: Object.keys(seed).map((p) => p.slice(4)) }),
+  );
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  assert.ok(h.b.maxActive > 1, `no overlap (max ${h.b.maxActive})`);
+  assert.ok(h.b.maxActive <= 8);
+  for (let i = 0; i < 12; i++) assert.equal(h.b.fs.get(`/dst/f${i}.txt`)?.kind, 'file');
+  assert.equal(last.bytesDone, last.bytesTotal);
+});
+
+test('a big file runs by itself', async () => {
+  const big = 'x'.repeat(5 * 1024 * 1024);
+  const h = harness({
+    local: { '/up/a.txt': 'a', '/up/big.bin': big, '/up/b.txt': 'b', '/up/c.txt': 'c' },
+    b: { '/dst': null },
+  });
+  h.b.delayMs = 10;
+  const id = h.engine.start(
+    req({ src: { hostId: null, dir: '/up' }, names: ['a.txt', 'big.bin', 'b.txt', 'c.txt'] }),
+  );
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'done');
+  assert.equal(h.b.bigOverlap, false, 'big file overlapped another transfer');
+  assert.equal(h.b.fs.get('/dst/big.bin')?.kind, 'file');
+});
+
+test('one failing file stops the rest and the job reports the error', async () => {
+  const seed: Record<string, string> = {};
+  for (let i = 0; i < 10; i++) seed[`/up/f${i}.txt`] = `file ${i}`;
+  const h = harness({ local: seed, b: { '/dst': null } });
+  h.b.delayMs = 10;
+  h.b.failOn = '/dst/f3.txt';
+  const id = h.engine.start(
+    req({ src: { hostId: null, dir: '/up' }, names: Object.keys(seed).map((p) => p.slice(4)) }),
+  );
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'error');
+  assert.match(last.error!, /boom/);
+  // Nothing half-written is left behind, whichever files were in flight.
+  for (let i = 0; i < 10; i++) {
+    const node = h.b.fs.get(`/dst/f${i}.txt`);
+    assert.ok(!(node?.kind === 'file' && node.data === '<partial>'), `f${i} partial left`);
+  }
+});
+
+test('cancel removes every file that was in flight', async () => {
+  const h = harness({
+    local: { '/up/f1.txt': '1', '/up/f2.txt': '2', '/up/f3.txt': '3' },
+    b: { '/dst': null },
+  });
+  h.b.delayMs = 80;
+  const id = h.engine.start(
+    req({ src: { hostId: null, dir: '/up' }, names: ['f1.txt', 'f2.txt', 'f3.txt'] }),
+  );
+  await new Promise((r) => setTimeout(r, 25));
+  assert.ok(h.b.activeNow > 1, 'files were not in flight together');
+  h.engine.cancel(id);
+  const last = await h.finished(id);
+
+  assert.equal(last.status, 'canceled');
+  for (const n of ['f1', 'f2', 'f3']) assert.equal(h.b.fs.has(`/dst/${n}.txt`), false, `${n} partial left`);
 });
 
 test('joinPath handles root and trailing slashes', () => {
