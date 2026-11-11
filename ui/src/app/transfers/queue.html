@@ -21,6 +21,52 @@
       </span>
     </div>
     <div class="queue-body">
+      @for (op of store.toastOps(); track op.id) {
+        <div class="job" [class.failed]="op.status === 'error'">
+          <div class="job-top">
+            @if (op.status === 'done') {
+              <pear-icon name="check" [size]="13" class="job-icon ok" />
+            } @else if (op.status === 'error') {
+              <pear-icon name="warning" [size]="13" class="job-icon err" />
+            } @else if (op.status === 'canceled') {
+              <pear-icon name="close" [size]="13" class="job-icon dim" />
+            } @else {
+              <pear-icon name="archive" [size]="13" class="job-icon accent" />
+            }
+            <span class="job-label" [title]="op.label">{{ op.label }}</span>
+            @if (op.status === 'running') {
+              @if (store.isCancellingOp(op)) {
+                <span class="pear-spinner job-spin" title="Cancelling…"></span>
+              } @else {
+                <button class="job-cancel" title="Cancel" (click)="store.cancelOp(op.id)">
+                  <pear-icon name="stop" [size]="11" />
+                </button>
+              }
+            }
+            <span class="job-pct" [class.ok]="op.status === 'done'" [class.err]="op.status === 'error' || op.status === 'canceled'">
+              @if (op.status === 'running') { {{ store.opElapsed(op) }} } @else { {{ store.opStatusText(op) }} }
+            </span>
+          </div>
+          <div class="job-stage">
+            <span class="stage-text" [title]="op.error ?? ''">{{ store.opStatusText(op) }}</span>
+          </div>
+          <div class="job-bar">
+            <div
+              class="job-fill"
+              [class.indeterminate]="op.status === 'running'"
+              [class.ok]="op.status === 'done'"
+              [class.err]="op.status === 'error' || op.status === 'canceled'"
+              [style.width.%]="op.status === 'running' ? null : 100"
+            ></div>
+          </div>
+          @if (store.opDetail(op); as detail) {
+            <div class="job-detail" [class.err]="op.status === 'error'" [title]="op.output ?? detail">{{ detail }}</div>
+          }
+          <div class="job-route">
+            <span>{{ store.opHost(op) }}</span>
+          </div>
+        </div>
+      }
       @for (job of store.toastList(); track job.id) {
         <div class="job" [class.failed]="job.status === 'error'">
           <div class="job-top">

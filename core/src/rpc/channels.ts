@@ -61,6 +61,17 @@ export const CHANNELS = {
     remove: ['invoke', 'fs:remove'],
     rename: ['invoke', 'fs:rename'],
     copy: ['invoke', 'fs:copy'],
+    info: ['invoke', 'fs:info'],
+    setPerms: ['invoke', 'fs:setPerms'],
+  },
+  ops: {
+    tools: ['invoke', 'ops:tools'],
+    extract: ['invoke', 'ops:extract'],
+    compress: ['invoke', 'ops:compress'],
+    cancel: ['send', 'ops:cancel'],
+    list: ['invoke', 'ops:list'],
+    clearFinished: ['send', 'ops:clearFinished'],
+    onUpdate: ['event', 'fsop:update'],
   },
   transfers: {
     start: ['invoke', 'transfers:start'],

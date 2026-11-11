@@ -383,4 +383,12 @@
       (editHost)="onGroupEditHost($event)"
     />
   }
+
+  @if (ops.properties(); as props) {
+    <pear-properties [target]="props" (closed)="ops.properties.set(null)" />
+  }
+
+  @if (ops.compressDialog(); as req) {
+    <pear-compress-dialog [req]="req" (closed)="ops.compressDialog.set(null)" />
+  }
 </div>

@@ -1,4 +1,7 @@
 import { HostKeyError } from './known-hosts';
+import { fileInfo, type FileInfo } from '../fs/info';
+import { applyPerms, type PermsChange } from '../fs/perms';
+import { detectArchiveTools, type ArchiveTools } from '../fs/archive';
 import type { HostConfig, HostFacets, OrchAction, TermSize } from '../types';
 import type { ShellChannel, SshTransport, SshTransportFactory, TransferOpts } from './transport';
 import { SubHostTransport } from './subhost';
@@ -247,6 +250,18 @@ export class SessionManager {
 
   private execBinder(config: HostConfig) {
     return (command: string) => this.exec(config, command);
+  }
+
+  fileInfo(config: HostConfig, path: string, deep?: boolean): Promise<FileInfo> {
+    return fileInfo(this.execBinder(config), path, { deep });
+  }
+
+  setPerms(config: HostConfig, path: string, change: PermsChange): Promise<void> {
+    return applyPerms(this.execBinder(config), path, change);
+  }
+
+  archiveTools(config: HostConfig): Promise<ArchiveTools> {
+    return detectArchiveTools(this.execBinder(config));
   }
 
   detectOrchFacets(config: HostConfig): Promise<HostFacets> {

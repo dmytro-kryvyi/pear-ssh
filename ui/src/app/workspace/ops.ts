@@ -1,5 +1,6 @@
 import type { WebFiles } from '../remote/connect';
 import { Injectable, inject, signal } from '@angular/core';
+import { archiveKind, archiveStem, type ArchiveFormat, type ArchiveTools } from '@pear/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { FsStore } from './fs-store';
@@ -40,6 +41,13 @@ export class FileOps {
   readonly renaming = signal<RenameState | null>(null);
   /** Last operation failure, surfaced as a dismissable toast. */
   readonly lastError = signal<string | null>(null);
+  /** The Properties modal's subject, when open. */
+  readonly properties = signal<{ hostId: string; path: string } | null>(null);
+  /** The Compress dialog's subject, when open. */
+  readonly compressDialog = signal<{ hostId: string; dir: string; names: string[] } | null>(null);
+  /** Archive tools per host; null until the probe answers. */
+  private readonly tools = signal<Record<string, ArchiveTools>>({});
+  private readonly toolsPending = new Map<string, Promise<ArchiveTools>>();
 
   private async guard<T>(work: () => Promise<T>): Promise<T | undefined> {
     try {
@@ -48,6 +56,63 @@ export class FileOps {
       this.lastError.set(err instanceof Error ? err.message : String(err));
       return undefined;
     }
+  }
+
+  // ---- properties & archives -------------------------------------------------
+
+  /** Cached probe of a host's archive tools; kicks the fetch off and returns
+   *  null until it lands, so a menu built meanwhile shows items enabled. */
+  toolsFor(hostId: string): ArchiveTools | null {
+    const known = this.tools()[hostId];
+    if (known) return known;
+    void this.loadTools(hostId);
+    return null;
+  }
+
+  loadTools(hostId: string): Promise<ArchiveTools> {
+    const known = this.tools()[hostId];
+    if (known) return Promise.resolve(known);
+    let pending = this.toolsPending.get(hostId);
+    if (!pending) {
+      pending = this.pear.api.ops
+        .tools(hostId)
+        .then((tools) => {
+          this.tools.update((all) => ({ ...all, [hostId]: tools }));
+          return tools;
+        })
+        .finally(() => this.toolsPending.delete(hostId));
+      this.toolsPending.set(hostId, pending);
+    }
+    return pending;
+  }
+
+  openProperties(hostId: string, path: string): void {
+    this.properties.set({ hostId, path });
+  }
+
+  /** Unpack an archive next to itself ('here') or into a fresh "stem/" folder. */
+  async extract(hostId: string, dir: string, name: string, into: 'here' | 'subdir'): Promise<void> {
+    await this.guard(async () => {
+      let dest = dir;
+      if (into === 'subdir') {
+        const kind = archiveKind(name);
+        const stem = kind ? archiveStem(name, kind) : name;
+        dest = joinPath(dir, await this.uniqueName(hostId, dir, stem || name));
+      }
+      await this.pear.api.ops.extract(hostId, joinPath(dir, name), dest);
+    });
+  }
+
+  async compress(
+    hostId: string,
+    dir: string,
+    names: string[],
+    archiveName: string,
+    format: ArchiveFormat,
+  ): Promise<void> {
+    await this.guard(async () => {
+      await this.pear.api.ops.compress(hostId, dir, names, archiveName, format);
+    });
   }
 
   /** First free "name", "name (1)", ... in a directory, probed via stat. */

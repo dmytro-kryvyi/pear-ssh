@@ -1,0 +1,209 @@
+<div class="overlay" (mousedown)="onBackdrop($event)">
+  <div class="modal">
+    <div class="head">
+      @let i = info();
+      <pear-icon
+        class="head-icon"
+        [name]="i?.kind === 'dir' ? 'folder' : i?.kind === 'link' ? 'link' : 'file'"
+        [size]="15"
+      />
+      <div class="head-text">
+        <div class="head-title">{{ i?.name || target().path }}</div>
+        <div class="head-sub">{{ hostName() }} · {{ target().path }}</div>
+      </div>
+      <button class="head-close" (click)="closed.emit()" title="Close">
+        <pear-icon name="close" [size]="14" />
+      </button>
+    </div>
+
+    <div class="scroll">
+      @if (loading()) {
+        <div class="loading"><span class="pear-spinner"></span> Reading…</div>
+      } @else if (error(); as err) {
+        <div class="err-text big">{{ err }}</div>
+      } @else if (i) {
+        <div class="group">
+          <div class="g-title">General</div>
+          <div class="field">
+            <div class="f-label">Kind</div>
+            <div class="f-control">
+              {{ kindText() }}
+              @if (i.linkTarget) {
+                <span class="dim"> → </span><span class="mono-inline">{{ i.linkTarget }}</span>
+              }
+            </div>
+          </div>
+          <div class="field">
+            <div class="f-label">Size</div>
+            <div class="f-control size-row">
+              @if (i.kind === 'dir' && !i.dir) {
+                @if (computing()) {
+                  <span class="pear-spinner"></span> <span class="dim">Measuring…</span>
+                } @else {
+                  <span class="dim">{{ sizeText() }} (entry)</span>
+                  <button class="btn small" (click)="load(true)">Compute total</button>
+                }
+              } @else {
+                <span>{{ sizeText() }}</span>
+                @if (dirSummary(); as sum) {
+                  <span class="dim"> · {{ sum }}</span>
+                }
+              }
+            </div>
+          </div>
+          <div class="field">
+            <div class="f-label">Location</div>
+            <div class="f-control mono">{{ location() }}</div>
+          </div>
+          <div class="field">
+            <div class="f-label">Owner</div>
+            <div class="f-control">
+              {{ i.owner || '—' }} <span class="dim">(uid {{ i.uid }})</span> &nbsp;·&nbsp;
+              {{ i.group || '—' }} <span class="dim">(gid {{ i.gid }})</span>
+            </div>
+          </div>
+          <div class="field">
+            <div class="f-label">Modified</div>
+            <div class="f-control">{{ fmtTime(i.mtimeMs) }}</div>
+          </div>
+          <div class="field">
+            <div class="f-label">Accessed</div>
+            <div class="f-control">{{ fmtTime(i.atimeMs) }}</div>
+          </div>
+          <div class="field">
+            <div class="f-label">Changed</div>
+            <div class="f-control">{{ fmtTime(i.ctimeMs) }} <span class="dim">(inode)</span></div>
+          </div>
+          <div class="field">
+            <div class="f-label">Mode</div>
+            <div class="f-control mono">
+              {{ i.modeText }} <span class="dim">· {{ octalText(i) }}</span>
+              @if (i.nlink > 1) {
+                <span class="dim">· {{ i.nlink }} links</span>
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="group last">
+          <div class="g-title">
+            Permissions <span class="g-note">{{ previewText() }}</span>
+          </div>
+          <div class="perm-grid">
+            <div class="pg-head"></div>
+            @for (c of cols; track c.bit) {
+              <div class="pg-head">{{ c.label }}</div>
+            }
+            @for (r of rows; track r.shift) {
+              <div class="pg-row">{{ r.label }}</div>
+              @for (c of cols; track c.bit) {
+                <button
+                  class="check pg-cell"
+                  [class.on]="has(maskOf(r.shift, c.bit))"
+                  (click)="toggle(maskOf(r.shift, c.bit))"
+                  [title]="r.label + ' ' + c.label.toLowerCase()"
+                >
+                  <span class="check-box">
+                    @if (has(maskOf(r.shift, c.bit))) {
+                      <pear-icon name="check" [size]="10" />
+                    }
+                  </span>
+                </button>
+              }
+            }
+          </div>
+          <div class="special-row">
+            @for (s of special; track s.mask) {
+              <button class="check" [class.on]="has(s.mask)" (click)="toggle(s.mask)">
+                <span class="check-box">
+                  @if (has(s.mask)) {
+                    <pear-icon name="check" [size]="10" />
+                  }
+                </span>
+                {{ s.label }}
+              </button>
+            }
+            <label class="octal-field">
+              <span class="dim">octal</span>
+              <input
+                class="text mono"
+                [class.invalid]="!octalValid()"
+                [ngModel]="octal()"
+                (ngModelChange)="onOctal($event)"
+                maxlength="4"
+                spellcheck="false"
+              />
+            </label>
+          </div>
+          <div class="field">
+            <div class="f-label">Owner</div>
+            <div class="f-control edit owner-row">
+              <input
+                class="text"
+                [ngModel]="owner()"
+                (ngModelChange)="owner.set($event)"
+                placeholder="user"
+                spellcheck="false"
+              />
+              <span class="dim">:</span>
+              <input
+                class="text"
+                [ngModel]="group()"
+                (ngModelChange)="group.set($event)"
+                placeholder="group"
+                spellcheck="false"
+              />
+            </div>
+          </div>
+          @if (i.kind === 'dir') {
+            <div class="field">
+              <div class="f-label"></div>
+              <div class="f-control edit">
+                <button
+                  class="check"
+                  [class.on]="recursive()"
+                  (click)="recursive.set(!recursive())"
+                >
+                  <span class="check-box">
+                    @if (recursive()) {
+                      <pear-icon name="check" [size]="10" />
+                    }
+                  </span>
+                  Apply recursively
+                </button>
+                <div class="f-hint">
+                  Sets the same mode and owner on every file and folder inside.
+                </div>
+              </div>
+            </div>
+          }
+          @if (applyError(); as err) {
+            <div class="err-text">{{ err }}</div>
+          }
+        </div>
+      }
+    </div>
+
+    <div class="foot">
+      @if (dirty()) {
+        <span class="foot-note">unsaved changes</span>
+      }
+      <div class="foot-actions">
+        @if (dirty()) {
+          <button class="btn" (click)="revert()">Revert</button>
+        }
+        <button class="btn" (click)="closed.emit()">Close</button>
+        <button
+          class="btn primary"
+          [disabled]="!dirty() || applying() || !octalValid()"
+          (click)="apply()"
+        >
+          @if (applying()) {
+            <span class="pear-spinner"></span>
+          }
+          Apply
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

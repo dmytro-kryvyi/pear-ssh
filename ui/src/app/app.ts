@@ -21,6 +21,8 @@ import { TerminalPane } from './terminal/terminal';
 import { TermTabs, type TermTab } from './terminal/tabs';
 import { Workspace } from './workspace/workspace';
 import { FsStore } from './workspace/fs-store';
+import { PropertiesModal } from './workspace/properties';
+import { CompressDialog } from './workspace/compress-dialog';
 import { PaneGrid } from './workspace/pane-grid';
 import { FileOps } from './workspace/ops';
 import { HostActions } from './host-actions';
@@ -52,6 +54,8 @@ const TARGET_RE = /^(?:(?<user>[^@\s]+)@)?(?<host>[^@:\s]+)(?::(?<port>\d+))?$/;
     PearIcon,
     ContextMenu,
     TransferQueue,
+    PropertiesModal,
+    CompressDialog,
     SettingsModal,
     HostMeter,
     ClaudeDock,

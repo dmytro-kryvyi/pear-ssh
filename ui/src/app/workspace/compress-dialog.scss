@@ -1,0 +1,20 @@
+@use './modal';
+
+.modal.narrow {
+  width: 460px;
+}
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  font-size: 12.5px;
+  padding: 8px 0;
+}
+.loading .pear-spinner {
+  font-size: 12px;
+}
+.err-text.big {
+  font-size: 12.5px;
+  margin: 4px 0;
+}

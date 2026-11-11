@@ -4,7 +4,7 @@
     <div class="head-title">Transfers</div>
     <div class="head-sub">
       {{ store.activeCount() ? store.activeCount() + ' active' : 'nothing running' }} ·
-      {{ store.list().length }} this session
+      {{ store.totalCount() }} this session
     </div>
   </div>
   <div class="head-actions">
@@ -35,7 +35,7 @@
 </div>
 
 <div class="table-wrap">
-  @if (shown().length) {
+  @if (shown().length || shownOps().length) {
     <div class="thead">
       <span>Item</span>
       <span>Route</span>
@@ -46,6 +46,59 @@
       <span>Status</span>
       <span></span>
     </div>
+    @for (op of shownOps(); track op.id) {
+      <div class="row" [class.failed]="op.status === 'error'" [class.active]="op.status === 'running'">
+        <div class="name-cell">
+          <pear-icon name="archive" [size]="13" class="dir-icon" [class.dim]="op.status !== 'running'" />
+          <div class="name-text">
+            <div class="cell" [title]="op.label">{{ op.label }}</div>
+            <div class="cell dim sub" [title]="op.result">{{ op.result }}</div>
+          </div>
+        </div>
+        <div class="cell dim route" [title]="store.opHost(op)">
+          <span>{{ store.opHost(op) }}</span>
+        </div>
+        <div class="progress">
+          <div class="bar">
+            <div
+              class="fill"
+              [class.indeterminate]="op.status === 'running'"
+              [class.ok]="op.status === 'done'"
+              [class.err]="op.status === 'error' || op.status === 'canceled'"
+              [style.width.%]="op.status === 'running' ? null : 100"
+            ></div>
+          </div>
+          <span class="pct">{{ op.status === 'running' ? '' : op.status === 'done' ? '100%' : '' }}</span>
+        </div>
+        <span class="cell">—</span>
+        <span class="cell">—</span>
+        <span class="cell">{{ store.opElapsed(op) }}</span>
+        <div class="status-cell">
+          <span class="cell state" [class]="'cell state ' + opTone(op)">
+            @if (store.isCancellingOp(op)) {
+              <span class="pear-spinner"></span>
+            } @else {
+              <span class="dot" [class]="'dot ' + opTone(op)"></span>
+            }
+            {{ store.opStatusText(op) }}
+          </span>
+          @if (op.status === 'error' && op.error) {
+            <div class="err-text sub" [title]="op.output ?? op.error">{{ op.error }}</div>
+          }
+        </div>
+        <span class="row-action">
+          @if (op.status === 'running') {
+            <button class="icon-btn" title="Cancel" [disabled]="store.isCancellingOp(op)" (click)="store.cancelOp(op.id)">
+              <pear-icon name="stop" [size]="12" />
+            </button>
+          } @else {
+            <button class="icon-btn plain" title="Remove from list" (click)="store.removeOp(op.id)">
+              <pear-icon name="close" [size]="12" />
+            </button>
+          }
+        </span>
+      </div>
+    }
     @for (job of shown(); track job.id) {
       <div class="row" [class.failed]="job.status === 'error'" [class.active]="job.status === 'running'">
         <div class="name-cell">
@@ -114,7 +167,7 @@
     <div class="empty">
       <pear-icon name="swap" [size]="26" />
       <div>
-        @if (store.list().length) {
+        @if (store.totalCount()) {
           No {{ filter() }} transfers.
         } @else {
           No transfers yet — drag files between panes, drop them from your desktop, or use Upload in a folder's toolbar.

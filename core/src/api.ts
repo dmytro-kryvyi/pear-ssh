@@ -20,6 +20,10 @@ import type { HistoryEntry } from './history/store';
 import type { HostKeyPrompt } from './ssh/known-hosts';
 import type { SshConfigEntry } from './hosts/ssh-config';
 import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './transfers/engine';
+import type { FileInfo } from './fs/info';
+import type { PermsChange } from './fs/perms';
+import type { ArchiveFormat, ArchiveTools } from './fs/archive';
+import type { FsOpSnapshot } from './fs/ops-runner';
 import type {
   ClaudeChatEvent,
   ClaudeChatState,
@@ -113,6 +117,33 @@ export interface PearApi {
     rename(hostId: string, oldPath: string, newPath: string): Promise<void>;
     /** Same-host recursive copy. */
     copy(hostId: string, src: string, dest: string): Promise<void>;
+    /** Full lstat view of one path; `deep` also totals a directory (du + find). */
+    info(hostId: string, path: string, deep?: boolean): Promise<FileInfo>;
+    /** chown (owner/group) then chmod (mode); `recursive` applies -R to both. */
+    setPerms(hostId: string, path: string, change: PermsChange): Promise<void>;
+  };
+  /**
+   * Long shell operations on a host (archive extract/compress). They run in
+   * the background like transfers: start returns an op id, progress arrives
+   * via onUpdate, and cancel closes the command's channel.
+   */
+  ops: {
+    /** Which archive tools the host has (cached per host for a few minutes). */
+    tools(hostId: string): Promise<ArchiveTools>;
+    /** Unpack an archive into destDir (created if missing). Returns the op id. */
+    extract(hostId: string, archivePath: string, destDir: string): Promise<string>;
+    /** Pack `names` from `dir` into dir/archiveName. Returns the op id. */
+    compress(
+      hostId: string,
+      dir: string,
+      names: string[],
+      archiveName: string,
+      format: ArchiveFormat,
+    ): Promise<string>;
+    cancel(id: string): void;
+    list(): Promise<FsOpSnapshot[]>;
+    clearFinished(): void;
+    onUpdate(cb: (op: FsOpSnapshot) => void): () => void;
   };
   transfers: {
     /**

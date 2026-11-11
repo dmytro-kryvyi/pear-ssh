@@ -55,7 +55,8 @@ export {
   type ChannelRow,
   type ChannelTable,
 } from './rpc/channels';
-export { kindOf, modeString } from './ssh/mode';
+export { kindOf, modeString, modeText, octalOf, parseOctal } from './ssh/mode';
+export * from './fs';
 export {
   HostKeyError,
   KnownHosts,

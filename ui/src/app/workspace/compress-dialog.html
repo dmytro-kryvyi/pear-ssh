@@ -1,0 +1,65 @@
+<div class="overlay" (mousedown)="onBackdrop($event)">
+  <div class="modal narrow">
+    <div class="head">
+      <pear-icon class="head-icon" name="archive" [size]="15" />
+      <div class="head-text">
+        <div class="head-title">Compress {{ itemsText() }}</div>
+        <div class="head-sub">{{ hostName() }} · {{ req().dir }}</div>
+      </div>
+      <button class="head-close" (click)="closed.emit()" title="Close">
+        <pear-icon name="close" [size]="14" />
+      </button>
+    </div>
+
+    <div class="scroll">
+      @if (formats() === null) {
+        <div class="loading">
+          <span class="pear-spinner"></span> Checking which tools the host has…
+        </div>
+      } @else if (!formats()!.length) {
+        <div class="err-text big">No archive tool found on this host (tar, zip or 7z).</div>
+      } @else {
+        <div class="field">
+          <div class="f-label">Name</div>
+          <div class="f-control edit">
+            <input
+              class="text mono"
+              [ngModel]="name()"
+              (ngModelChange)="name.set($event)"
+              (keydown.enter)="create()"
+              spellcheck="false"
+              autofocus
+            />
+          </div>
+        </div>
+        <div class="field">
+          <div class="f-label">Format</div>
+          <div class="f-control edit">
+            <select class="text" [ngModel]="format()" (ngModelChange)="format.set($event)">
+              @for (f of formats()!; track f.format) {
+                <option [value]="f.format">{{ f.label }}</option>
+              }
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <div class="f-label">Creates</div>
+          <div class="f-control mono">{{ fullName() }}</div>
+        </div>
+      }
+    </div>
+
+    <div class="foot">
+      <span class="foot-note">runs on the host; shows in Transfers</span>
+      <div class="foot-actions">
+        <button class="btn" (click)="closed.emit()">Cancel</button>
+        <button class="btn primary" [disabled]="!valid() || busy()" (click)="create()">
+          @if (busy()) {
+            <span class="pear-spinner"></span>
+          }
+          Create
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

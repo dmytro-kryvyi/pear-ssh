@@ -1,6 +1,7 @@
 import type {
   DirListing,
   FileEntry,
+  FileInfo,
   HostConfig,
   HostGroup,
   OrchAction,
@@ -245,6 +246,31 @@ export function createMockBackend(): PearApi {
         const { dir, name } = parentOf(p);
         return clone(tree[dir]?.find((e) => e.name === name) ?? null);
       },
+      info: async (hostId, path): Promise<FileInfo> => {
+        await sleep(60);
+        const p = resolve(hostId, path);
+        const { dir, name } = parentOf(p);
+        const e = tree[dir]?.find((x) => x.name === name);
+        if (!e) throw new Error(`stat failed: No such file or directory`);
+        const mode = e.kind === 'dir' ? 0o40755 : e.kind === 'link' ? 0o120777 : 0o100644;
+        return {
+          path: p,
+          name,
+          kind: e.kind,
+          mode,
+          modeText: e.mode,
+          size: e.size,
+          nlink: 1,
+          uid: 1000,
+          gid: 1000,
+          owner: 'pear',
+          group: 'pear',
+          atimeMs: e.mtimeMs,
+          mtimeMs: e.mtimeMs,
+          ctimeMs: e.mtimeMs,
+        };
+      },
+      setPerms: async () => {},
       mkdir: async (hostId, path) => {
         const p = resolve(hostId, path);
         const { dir, name } = parentOf(p);
@@ -293,6 +319,15 @@ export function createMockBackend(): PearApi {
         listing(b.dir).push({ ...clone(entry), name: b.name, mtimeMs: Date.now() });
         if (contents[from] != null) contents[to] = contents[from];
       },
+    },
+    ops: {
+      tools: async () => ({ tools: [], tar: 'none' }),
+      extract: fail('ops.extract'),
+      compress: fail('ops.compress'),
+      cancel: noop,
+      list: async () => [],
+      clearFinished: noop,
+      onUpdate: never,
     },
     transfers: {
       start: fail('transfers.start'),

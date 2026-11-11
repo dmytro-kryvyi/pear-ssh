@@ -11,7 +11,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { FileEntry } from '@pear/core';
+import { archiveKind, archiveStem, availableFormats, extractCommand, isSingleFileKind, type FileEntry } from '@pear/core';
 import { PearIcon } from '../icons/icon';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
@@ -133,6 +133,12 @@ export class FileList {
   });
 
   constructor() {
+    // Probe the host's archive tools early so the context menu is accurate
+    // the first time it opens (the probe is cached per host).
+    effect(() => {
+      const id = this.tab().hostId;
+      untracked(() => this.ops.toolsFor(id));
+    });
     // Load when the tab points somewhere we have no listing for yet.
     effect(() => {
       const t = this.tab();
@@ -247,6 +253,8 @@ export class FileList {
       this.ops.cut(t.hostId, t.path, sel);
     } else if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
       void this.ops.paste(t.hostId, t.path);
+    } else if (event.altKey && event.key === 'Enter' && sel.length === 1) {
+      this.ops.openProperties(t.hostId, joinPath(t.path, sel[0]));
     } else {
       return;
     }
@@ -287,6 +295,8 @@ export class FileList {
         onClick: () => void this.ops.download(t.hostId, t.path, names),
       },
       { divider: true },
+      ...this.archiveItems(entry, names),
+      { divider: true },
       {
         label: 'Copy',
         icon: 'copy',
@@ -325,8 +335,52 @@ export class FileList {
         onClick: () =>
           void this.ops.remove(t.hostId, t.path, names).then(() => this.clearSelection()),
       },
+      { divider: true },
+      {
+        label: 'Properties…',
+        icon: 'info',
+        shortcut: 'Alt Enter',
+        disabled: !single,
+        onClick: () => this.ops.openProperties(t.hostId, full),
+      },
     ];
     this.menu.open(event.clientX, event.clientY, items);
+  }
+
+  /** Extract (single archive) and Compress (any selection), gated on the
+   *  host's toolbox once the probe has answered. */
+  private archiveItems(entry: FileEntry, names: string[]): MenuItem[] {
+    const t = this.tab();
+    const tools = this.ops.toolsFor(t.hostId);
+    const items: MenuItem[] = [];
+    const kind = names.length === 1 && entry.kind !== 'dir' ? archiveKind(entry.name) : null;
+    if (kind) {
+      const full = joinPath(t.path, entry.name);
+      const noTool = tools !== null && extractCommand(kind, full, t.path, tools) === null;
+      const suffix = noTool ? ' (no tool on host)' : '';
+      if (!isSingleFileKind(kind)) {
+        items.push({
+          label: `Extract to "${archiveStem(entry.name, kind)}/"${suffix}`,
+          icon: 'archive',
+          disabled: noTool,
+          onClick: () => void this.ops.extract(t.hostId, t.path, entry.name, 'subdir'),
+        });
+      }
+      items.push({
+        label: `Extract here${suffix}`,
+        icon: 'archive',
+        disabled: noTool,
+        onClick: () => void this.ops.extract(t.hostId, t.path, entry.name, 'here'),
+      });
+    }
+    const noFormat = tools !== null && availableFormats(tools).length === 0;
+    items.push({
+      label: `Compress…${noFormat ? ' (no tool on host)' : ''}`,
+      icon: 'archive',
+      disabled: noFormat,
+      onClick: () => this.ops.compressDialog.set({ hostId: t.hostId, dir: t.path, names }),
+    });
+    return items;
   }
 
   onListMenu(event: MouseEvent): void {
@@ -363,6 +417,12 @@ export class FileList {
         label: 'Upload from my machine…',
         icon: 'upload',
         onClick: () => void this.ops.uploadPicker(t.hostId, t.path),
+      },
+      { divider: true },
+      {
+        label: 'Folder properties…',
+        icon: 'info',
+        onClick: () => this.ops.openProperties(t.hostId, t.path),
       },
     ]);
   }

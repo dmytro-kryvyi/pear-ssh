@@ -9,6 +9,10 @@ import { HostGroupStore } from '../../hosts/groups';
 import { HostStore, sanitizeHost, type SecretCipher } from '../../hosts/store';
 import { parseGuestIp } from '../../orchestration/guest-ip';
 import { primaryKind } from '../../orchestration/orchestration';
+import { FsOpsRunner } from '../../fs/ops-runner';
+import { planCompress, planExtract } from '../../fs/archive-ops';
+import type { ArchiveFormat, ArchiveTools } from '../../fs/archive';
+import type { PermsChange } from '../../fs/perms';
 import { channelsOf } from '../../rpc/channels';
 import { KnownHosts, type HostKeyPrompt } from '../../ssh/known-hosts';
 import { SessionManager } from '../../ssh/sessions';
@@ -95,12 +99,17 @@ const asString = (v: unknown): string => {
  * Embedder-specific behaviour (native dialogs, browser uploads) replaces
  * individual channels via {@link override}.
  */
+const TOOLS_TTL_MS = 5 * 60_000;
+
 export class PearService {
   readonly hosts: HostStore;
   readonly groups: HostGroupStore;
   readonly history: HistoryStore;
   readonly sessions: SessionManager;
   readonly transfers: TransferEngine;
+  readonly fsOps: FsOpsRunner;
+  /** Archive tool probe per host; a host's toolbox rarely changes mid-session. */
+  private readonly toolsCache = new Map<string, { at: number; tools: ArchiveTools }>();
   readonly terms: TerminalHub;
   readonly features: PearServiceFeatures;
 
@@ -154,6 +163,7 @@ export class PearService {
             env.emit('host:disconnected', childId);
           }
           this.forwards.closeForHost(hostId); // dead tunnels must not keep listening
+          this.toolsCache.delete(hostId);
           env.emit('host:disconnected', hostId);
         },
       },
@@ -187,6 +197,10 @@ export class PearService {
         removeStaging,
       },
       { onUpdate: (job) => env.emit('transfer:update', job) },
+    );
+    this.fsOps = new FsOpsRunner(
+      { connection: (hostId) => this.sessions.connection(this.requireHost(hostId)) },
+      { onUpdate: (op) => env.emit('fsop:update', op) },
     );
 
     this.forwards = new PortForwardManager((host) => this.sessions.connection(host));
@@ -402,6 +416,14 @@ export class PearService {
     }
   }
 
+  private async archiveTools(host: HostConfig): Promise<ArchiveTools> {
+    const cached = this.toolsCache.get(host.id);
+    if (cached && Date.now() - cached.at < TOOLS_TTL_MS) return cached.tools;
+    const tools = await this.sessions.archiveTools(host);
+    this.toolsCache.set(host.id, { at: Date.now(), tools });
+    return tools;
+  }
+
   private registerHandlers(): void {
     const on = (channel: string, handler: ServiceHandler): void => {
       this.handlers.set(channel, handler);
@@ -561,6 +583,37 @@ export class PearService {
     on('fs:upload', () => {
       throw new Error('File upload is not available in this environment');
     });
+    on('fs:info', ([hostId, path, deep]) =>
+      sessions.fileInfo(this.requireHost(hostId), asString(path), deep === true),
+    );
+    on('fs:setPerms', ([hostId, path, change]) =>
+      sessions.setPerms(this.requireHost(hostId), asString(path), change as PermsChange),
+    );
+
+    on('ops:tools', ([hostId]) => this.archiveTools(this.requireHost(hostId)));
+    on('ops:extract', async ([hostId, archivePath, destDir]) => {
+      const host = this.requireHost(hostId);
+      const plan = planExtract(
+        await this.archiveTools(host),
+        asString(archivePath),
+        asString(destDir),
+      );
+      return this.fsOps.start({ hostId: host.id, ...plan });
+    });
+    on('ops:compress', async ([hostId, dir, names, archiveName, format]) => {
+      const host = this.requireHost(hostId);
+      const plan = planCompress(
+        await this.archiveTools(host),
+        asString(dir),
+        (names as unknown[]).map(asString),
+        asString(archiveName),
+        asString(format) as ArchiveFormat,
+      );
+      return this.fsOps.start({ hostId: host.id, ...plan });
+    });
+    on('ops:cancel', ([id]) => this.fsOps.cancel(asString(id)));
+    on('ops:list', () => this.fsOps.list());
+    on('ops:clearFinished', () => this.fsOps.clearFinished());
 
     on('orch:get', async ([hostId]) => {
       const host = this.requireHost(hostId);

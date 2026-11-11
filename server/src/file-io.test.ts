@@ -13,7 +13,7 @@ import {
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { HostConfig, TransferJobSnapshot } from '@pear/core';
+import type { FileInfo, FsOpSnapshot, HostConfig, TransferJobSnapshot } from '@pear/core';
 import { defaultConfig } from './config';
 import { safeFileName } from './file-io';
 import { createPearServer, type PearServer } from './server';
@@ -27,6 +27,7 @@ let server: PearServer;
 let port: number;
 let host: HostConfig;
 const jobs = new Map<string, TransferJobSnapshot>();
+const ops = new Map<string, FsOpSnapshot>();
 
 before(async () => {
   root = mkdtempSync(join(tmpdir(), 'pear-fileio-'));
@@ -49,6 +50,7 @@ before(async () => {
   server.rpc.emit = (channel, ...args) => {
     if (channel === 'transfer:update')
       jobs.set((args[0] as TransferJobSnapshot).id, args[0] as TransferJobSnapshot);
+    if (channel === 'fsop:update') ops.set((args[0] as FsOpSnapshot).id, args[0] as FsOpSnapshot);
     emit(channel, ...args);
   };
 });
@@ -219,5 +221,78 @@ test('the dialog-based upload channel explains itself instead of hanging', async
   await assert.rejects(
     server.service.invoke('fs:upload', [host.id, '/tmp', 'skip', false]),
     /browser/,
+  );
+});
+
+const opSettled = async (id: string) => {
+  for (let i = 0; i < 400; i++) {
+    const op = ops.get(id);
+    if (op && op.status !== 'running') return op;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error('op never settled');
+};
+
+test('fs:info and fs:setPerms describe and change a file', async () => {
+  const dir = join(root, 'remote', 'props');
+  mkdirSync(join(dir, 'sub'), { recursive: true });
+  writeFileSync(join(dir, 'a.txt'), 'hello');
+  writeFileSync(join(dir, 'sub', 'b.txt'), 'world!');
+  const info = (await server.service.invoke('fs:info', [host.id, join(dir, 'a.txt')])) as FileInfo;
+  assert.equal(info.kind, 'file');
+  assert.equal(info.size, 5);
+  assert.equal(info.name, 'a.txt');
+  assert.ok(info.owner.length > 0);
+  assert.ok(info.mtimeMs > 0);
+
+  await server.service.invoke('fs:setPerms', [host.id, join(dir, 'a.txt'), { mode: 0o600 }]);
+  const after = (await server.service.invoke('fs:info', [host.id, join(dir, 'a.txt')])) as FileInfo;
+  assert.equal(after.modeText, '-rw-------');
+
+  const deep = (await server.service.invoke('fs:info', [host.id, dir, true])) as FileInfo;
+  assert.equal(deep.kind, 'dir');
+  assert.deepEqual([deep.dir?.files, deep.dir?.dirs], [2, 1]);
+
+  await assert.rejects(
+    server.service.invoke('fs:info', [host.id, join(dir, 'nope')]),
+    /No such file/,
+  );
+});
+
+test('ops: compress then extract run as cancellable background ops', async () => {
+  const dir = join(root, 'remote', 'props');
+  const tools = (await server.service.invoke('ops:tools', [host.id])) as { tools: string[] };
+  assert.ok(tools.tools.includes('tar'));
+
+  const packId = (await server.service.invoke('ops:compress', [
+    host.id,
+    dir,
+    ['a.txt', 'sub'],
+    'props.tar.gz',
+    'tar.gz',
+  ])) as string;
+  const packed = await opSettled(packId);
+  assert.equal(packed.status, 'done', packed.error);
+  assert.equal(packed.label, 'Compress 2 items → props.tar.gz');
+  assert.ok(existsSync(join(dir, 'props.tar.gz')));
+
+  const unpackId = (await server.service.invoke('ops:extract', [
+    host.id,
+    join(dir, 'props.tar.gz'),
+    join(dir, 'out'),
+  ])) as string;
+  const unpacked = await opSettled(unpackId);
+  assert.equal(unpacked.status, 'done', unpacked.error);
+  assert.deepEqual(unpacked.dirs, [dir, join(dir, 'out')]);
+  assert.equal(readFileSync(join(dir, 'out', 'sub', 'b.txt'), 'utf8'), 'world!');
+
+  const listed = (await server.service.invoke('ops:list', [])) as FsOpSnapshot[];
+  assert.equal(listed.length, 2);
+  await server.service.invoke('ops:clearFinished', []);
+  assert.equal(((await server.service.invoke('ops:list', [])) as FsOpSnapshot[]).length, 0);
+
+  await assert.rejects(
+    server.service.invoke('ops:extract', [host.id, join(dir, 'a.txt'), dir]),
+    /Not a known archive type/,
   );
 });

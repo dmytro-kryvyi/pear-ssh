@@ -1,10 +1,10 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
-import type { TransferJobSnapshot } from '@pear/core';
+import type { FsOpSnapshot, TransferJobSnapshot } from '@pear/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { HostCatalog } from '../hosts';
 import { FsStore } from '../workspace/fs-store';
-import { compactProgress, fmtBytes, fmtDuration } from './format';
+import { compactProgress, fmtBytes, fmtDuration, fmtSeconds } from './format';
 
 /** How long a finished job stays in the toast before it drops to the tab only. */
 const DONE_LINGER_MS = 4000;
@@ -31,6 +31,11 @@ export class TransfersStore {
   private readonly fsStore = inject(FsStore);
 
   private readonly jobs = signal<Record<string, TransferJobSnapshot>>({});
+  /** Shell operations (extract/compress) — same lifecycle, no byte progress. */
+  private readonly ops = signal<Record<string, FsOpSnapshot>>({});
+  /** Ticks once a second while an op runs, for the elapsed-time column. */
+  readonly now = signal(Date.now());
+  private ticker: ReturnType<typeof setInterval> | null = null;
   /** Done jobs whose toast linger expired. */
   private readonly hiddenFromToast = signal<ReadonlySet<string>>(new Set());
   /** Cancel clicked, engine not yet confirmed — the optimistic "Cancelling…". */
@@ -48,14 +53,30 @@ export class TransfersStore {
   readonly failed = computed(() =>
     this.list().filter((j) => j.status === 'error' || j.status === 'canceled'),
   );
-  readonly activeCount = computed(() => this.active().length);
-  readonly hasFinished = computed(() => this.finished().length > 0);
+  readonly opsList = computed(() => Object.values(this.ops()));
+  readonly opsNewestFirst = computed(() => [...this.opsList()].reverse());
+  readonly activeOps = computed(() => this.opsList().filter((o) => o.status === 'running'));
+  readonly finishedOps = computed(() => this.opsList().filter((o) => o.status !== 'running'));
+  readonly failedOps = computed(() =>
+    this.opsList().filter((o) => o.status === 'error' || o.status === 'canceled'),
+  );
+  readonly activeCount = computed(() => this.active().length + this.activeOps().length);
+  readonly hasFinished = computed(
+    () => this.finished().length + this.finishedOps().length > 0,
+  );
+  readonly totalCount = computed(() => this.list().length + this.opsList().length);
+  readonly toastOps = computed(() => {
+    const hidden = this.hiddenFromToast();
+    return this.opsNewestFirst().filter((o) => !hidden.has(o.id));
+  });
 
   readonly toastList = computed(() => {
     const hidden = this.hiddenFromToast();
     return this.newestFirst().filter((j) => !hidden.has(j.id));
   });
-  readonly toastVisible = computed(() => !this.toastDismissed() && this.toastList().length > 0);
+  readonly toastVisible = computed(
+    () => !this.toastDismissed() && this.toastList().length + this.toastOps().length > 0,
+  );
 
   constructor() {
     if (!this.pear.available) return;
@@ -68,6 +89,43 @@ export class TransfersStore {
     });
     this.pear.api.transfers.onUpdate((job) => this.apply(job));
     effect(() => this.pear.api.transfers.setMaxParallel(this.settings.maxParallel()));
+    void this.pear.api.ops.list().then((ops) => {
+      this.ops.update((all) => {
+        const next = { ...all };
+        for (const op of ops) next[op.id] = next[op.id] ?? op;
+        return next;
+      });
+    });
+    this.pear.api.ops.onUpdate((op) => this.applyOp(op));
+    effect(() => {
+      const running = this.activeOps().length > 0;
+      if (running && !this.ticker) {
+        this.ticker = setInterval(() => this.now.set(Date.now()), 1000);
+      } else if (!running && this.ticker) {
+        clearInterval(this.ticker);
+        this.ticker = null;
+      }
+    });
+  }
+
+  private applyOp(op: FsOpSnapshot): void {
+    const previous = this.ops()[op.id];
+    this.ops.update((all) => ({ ...all, [op.id]: op }));
+    const newlyFailed = op.status === 'error' && previous?.status !== 'error';
+    if (!previous || newlyFailed) {
+      this.toastDismissed.set(false);
+      this.unhide(op.id);
+    }
+    if (op.status !== 'running' && this.cancelling().has(op.id)) {
+      this.cancelling.update((ids) => without(ids, op.id));
+    }
+    if (op.status === 'done' && previous?.status !== 'done') {
+      for (const dir of op.dirs) this.fsStore.invalidate(op.hostId, dir);
+      this.timers.set(
+        op.id,
+        setTimeout(() => this.hide(op.id), DONE_LINGER_MS),
+      );
+    }
   }
 
   private apply(job: TransferJobSnapshot): void {
@@ -113,6 +171,12 @@ export class TransfersStore {
       delete next[id];
       return next;
     });
+    this.ops.update((all) => {
+      if (!(id in all)) return all;
+      const next = { ...all };
+      delete next[id];
+      return next;
+    });
     this.hiddenFromToast.update((ids) => without(ids, id));
     this.cancelling.update((ids) => without(ids, id));
   }
@@ -128,6 +192,19 @@ export class TransfersStore {
 
   cancelAll(): void {
     for (const job of this.active()) this.cancel(job.id);
+    for (const op of this.activeOps()) this.cancelOp(op.id);
+  }
+
+  cancelOp(id: string): void {
+    const op = this.ops()[id];
+    if (!op || op.status !== 'running') return;
+    this.cancelling.update((ids) => new Set(ids).add(id));
+    this.pear.api.ops.cancel(id);
+  }
+
+  removeOp(id: string): void {
+    const op = this.ops()[id];
+    if (op && op.status !== 'running') this.drop(id);
   }
 
   /** Forget one finished job (the engine's copy goes on the next clear). */
@@ -138,7 +215,9 @@ export class TransfersStore {
 
   clearFinished(): void {
     this.pear.api.transfers.clearFinished();
+    this.pear.api.ops.clearFinished();
     for (const job of this.finished()) this.drop(job.id);
+    for (const op of this.finishedOps()) this.drop(op.id);
   }
 
   dismissToast(): void {
@@ -146,6 +225,45 @@ export class TransfersStore {
   }
 
   // ---- presentation --------------------------------------------------------
+
+  isCancellingOp(op: FsOpSnapshot): boolean {
+    return op.status === 'running' && (this.cancelling().has(op.id) || !!op.cancelRequested);
+  }
+
+  opHost(op: FsOpSnapshot): string {
+    return this.catalog.nameOf(op.hostId);
+  }
+
+  opStatusText(op: FsOpSnapshot): string {
+    switch (op.status) {
+      case 'done':
+        return op.kind === 'extract' ? 'Extracted' : 'Compressed';
+      case 'error':
+        return 'Failed';
+      case 'canceled':
+        return 'Canceled';
+    }
+    if (this.isCancellingOp(op)) return 'Cancelling…';
+    return op.kind === 'extract' ? 'Extracting…' : 'Compressing…';
+  }
+
+  /** Elapsed while running, duration once settled. */
+  opElapsed(op: FsOpSnapshot): string {
+    const end = op.finishedAt ?? this.now();
+    return fmtSeconds((end - op.startedAt) / 1000);
+  }
+
+  /** Second line: elapsed, the error, or the result path. */
+  opDetail(op: FsOpSnapshot): string {
+    switch (op.status) {
+      case 'error':
+        return op.error ?? '';
+      case 'done':
+        return `${op.result} · ${this.opElapsed(op)}`;
+      default:
+        return '';
+    }
+  }
 
   isCancelling(job: TransferJobSnapshot): boolean {
     return isActive(job) && (this.cancelling().has(job.id) || !!job.cancelRequested);

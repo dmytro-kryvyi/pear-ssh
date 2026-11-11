@@ -1,12 +1,16 @@
 import {
   ClaudeChatRuntime,
   ClaudeExecutor,
+  FsOpsRunner,
   HistoryStore,
   HostGroupStore,
   SessionManager,
   TransferEngine,
   importShellHistory,
+  planCompress,
+  planExtract,
   primaryKind,
+  type FsOpSnapshot,
   type ClaudeChatEvent,
   type ClaudeFocus,
   type ClaudeSessionMeta,
@@ -196,6 +200,13 @@ export function createNativeBackend(
       if (dir) void deps.plugin.localRemove({ path: dir, recursive: true }).catch(() => {});
     }
   };
+
+  // ---- shell operations (archive extract/compress) over a closable PTY ------
+  const opUpdates = new Set<(op: FsOpSnapshot) => void>();
+  const fsOps = new FsOpsRunner(
+    { connection: async (hostId) => (await ready).sessions.connection(await cfgFor(hostId)) },
+    { onUpdate: (op) => opUpdates.forEach((cb) => cb(op)) },
+  );
 
   const transfers = new TransferEngine(
     {
@@ -505,6 +516,37 @@ export function createNativeBackend(
       copy: async (hostId, src, dest) => {
         const { sessions } = await ready;
         return sessions.copy(await cfgFor(hostId), src, dest);
+      },
+      info: async (hostId, path, deep) => {
+        const { sessions } = await ready;
+        return sessions.fileInfo(await cfgFor(hostId), path, deep);
+      },
+      setPerms: async (hostId, path, change) => {
+        const { sessions } = await ready;
+        return sessions.setPerms(await cfgFor(hostId), path, change);
+      },
+    },
+    ops: {
+      tools: async (hostId) => {
+        const { sessions } = await ready;
+        return sessions.archiveTools(await cfgFor(hostId));
+      },
+      extract: async (hostId, archivePath, destDir) => {
+        const { sessions } = await ready;
+        const tools = await sessions.archiveTools(await cfgFor(hostId));
+        return fsOps.start({ hostId, ...planExtract(tools, archivePath, destDir) });
+      },
+      compress: async (hostId, dir, names, archiveName, format) => {
+        const { sessions } = await ready;
+        const tools = await sessions.archiveTools(await cfgFor(hostId));
+        return fsOps.start({ hostId, ...planCompress(tools, dir, names, archiveName, format) });
+      },
+      cancel: (id) => fsOps.cancel(id),
+      list: async () => fsOps.list(),
+      clearFinished: () => fsOps.clearFinished(),
+      onUpdate: (cb) => {
+        opUpdates.add(cb);
+        return () => opUpdates.delete(cb);
       },
     },
     transfers: {

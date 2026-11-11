@@ -3,11 +3,13 @@ import type {
   ClaudeFocus,
   ClaudePermissionAnswer,
   ClaudeUiResponse,
+  ArchiveFormat,
   ConflictPolicy,
   HostConfig,
   HostGroup,
   OrchAction,
   PearApi,
+  PermsChange,
   SubHostTarget,
   TermSize,
   TransferRequest,
@@ -71,6 +73,26 @@ const api: PearApi = {
       ipcRenderer.invoke('fs:rename', hostId, oldPath, newPath),
     copy: (hostId: string, src: string, dest: string) =>
       ipcRenderer.invoke('fs:copy', hostId, src, dest),
+    info: (hostId: string, path: string, deep?: boolean) =>
+      ipcRenderer.invoke('fs:info', hostId, path, deep),
+    setPerms: (hostId: string, path: string, change: PermsChange) =>
+      ipcRenderer.invoke('fs:setPerms', hostId, path, change),
+  },
+  ops: {
+    tools: (hostId: string) => ipcRenderer.invoke('ops:tools', hostId),
+    extract: (hostId: string, archivePath: string, destDir: string) =>
+      ipcRenderer.invoke('ops:extract', hostId, archivePath, destDir),
+    compress: (
+      hostId: string,
+      dir: string,
+      names: string[],
+      archiveName: string,
+      format: ArchiveFormat,
+    ) => ipcRenderer.invoke('ops:compress', hostId, dir, names, archiveName, format),
+    cancel: (id: string) => ipcRenderer.send('ops:cancel', id),
+    list: () => ipcRenderer.invoke('ops:list'),
+    clearFinished: () => ipcRenderer.send('ops:clearFinished'),
+    onUpdate: (cb) => subscribe('fsop:update', cb),
   },
   transfers: {
     start: (req: TransferRequest) => ipcRenderer.invoke('transfers:start', req),

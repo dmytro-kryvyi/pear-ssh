@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import type { TransferJobSnapshot } from '@pear/core';
+import type { FsOpSnapshot, TransferJobSnapshot } from '@pear/core';
 import { PearIcon } from '../icons/icon';
 import { Settings } from '../settings';
 import { fmtBytes, fmtRate, fmtSeconds } from './format';
@@ -43,16 +43,48 @@ export class TransfersPage {
     }
   });
 
+  readonly shownOps = computed<FsOpSnapshot[]>(() => {
+    const all = this.store.opsNewestFirst();
+    switch (this.filter()) {
+      case 'active':
+        return all.filter((o) => o.status === 'running');
+      case 'done':
+        return all.filter((o) => o.status === 'done');
+      case 'failed':
+        return all.filter((o) => o.status === 'error' || o.status === 'canceled');
+      default:
+        return all;
+    }
+  });
+
   count(key: Filter): number {
     switch (key) {
       case 'active':
         return this.store.activeCount();
       case 'done':
-        return this.store.finished().length - this.store.failed().length;
+        return (
+          this.store.finished().length -
+          this.store.failed().length +
+          this.store.finishedOps().length -
+          this.store.failedOps().length
+        );
       case 'failed':
-        return this.store.failed().length;
+        return this.store.failed().length + this.store.failedOps().length;
       default:
-        return this.store.list().length;
+        return this.store.totalCount();
+    }
+  }
+
+  opTone(op: FsOpSnapshot): 'ok' | 'warn' | 'err' | 'off' {
+    switch (op.status) {
+      case 'done':
+        return 'ok';
+      case 'error':
+        return 'err';
+      case 'canceled':
+        return 'off';
+      default:
+        return this.store.isCancellingOp(op) ? 'warn' : 'ok';
     }
   }
 
