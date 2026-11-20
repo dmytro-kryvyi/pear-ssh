@@ -557,7 +557,7 @@ export function createNativeBackend(
       start: async (req) => transfers.start(req),
       // "Download to my device": stage on the phone, then publish every file
       // into the system Downloads collection (Download/Pear) when done.
-      download: async (srcHostId, srcDir, names, conflict, verify, skipMacMeta) => {
+      download: async (srcHostId, srcDir, names, conflict, verify, skipMacMeta, compress) => {
         const staging = (await deps.plugin.makeStagingDir()).path;
         const id = transfers.start({
           src: { hostId: srcHostId, dir: srcDir },
@@ -567,6 +567,7 @@ export function createNativeBackend(
           conflict,
           verify,
           skipMacMeta: skipMacMeta !== false,
+          compress: compress === true,
         });
         downloadJobs.set(id, staging);
         return id;

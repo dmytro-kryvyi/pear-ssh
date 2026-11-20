@@ -108,6 +108,7 @@ const api: PearApi = {
       conflict: ConflictPolicy,
       verify: boolean,
       skipMacMeta?: boolean,
+      compress?: boolean,
     ) =>
       ipcRenderer.invoke(
         'transfers:download',
@@ -117,6 +118,7 @@ const api: PearApi = {
         conflict,
         verify,
         skipMacMeta,
+        compress,
       ),
     cancel: (id: string) => ipcRenderer.send('transfers:cancel', id),
     retry: (id: string) => ipcRenderer.invoke('transfers:retry', id),

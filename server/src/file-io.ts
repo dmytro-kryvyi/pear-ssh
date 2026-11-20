@@ -52,7 +52,7 @@ export class FileIo {
   constructor(private readonly service: PearService) {
     service.override(
       'transfers:download',
-      ([srcHostId, srcDir, names, conflict, verify, skipMacMeta]) =>
+      ([srcHostId, srcDir, names, conflict, verify, skipMacMeta, compress]) =>
         this.startDownload(
           String(srcHostId),
           String(srcDir),
@@ -60,6 +60,7 @@ export class FileIo {
           conflict as ConflictPolicy,
           verify === true,
           skipMacMeta !== false,
+          compress === true,
         ),
     );
     // The file picker lives in the browser; it POSTs to /api/upload instead.
@@ -173,6 +174,7 @@ export class FileIo {
     conflict: ConflictPolicy,
     verify: boolean,
     skipMacMeta = true,
+    compress = false,
   ): Promise<string> {
     if (!names.length || names.some((n) => !safeFileName(encodeURIComponent(n)))) {
       throw new Error('Nothing to download');
@@ -188,6 +190,7 @@ export class FileIo {
         conflict,
         verify,
         skipMacMeta,
+        compress,
       })) as string;
       this.downloads.set(jobId, { staging, names, ready: false, timer: null });
       return jobId;

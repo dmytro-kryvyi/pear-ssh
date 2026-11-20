@@ -762,6 +762,8 @@ interface TarKnobs {
   createGate: Promise<void> | null;
   /** What `tar --version` says: decides roots mode (busybox) or list mode. */
   flavor: 'gnu' | 'bsd' | 'busybox';
+  /** The host has gzip (the probe says so). */
+  gzip: boolean;
 }
 
 function tarKnobs(): TarKnobs {
@@ -772,6 +774,7 @@ function tarKnobs(): TarKnobs {
     cutStream: false,
     createGate: null,
     flavor: 'busybox',
+    gzip: true,
   };
 }
 
@@ -820,10 +823,12 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
     };
     if (command === TAR_PROBE) {
       setTimeout(() => {
-        if (!knobs.tarMissing) pipe.emit(enc.encode(VERSIONS[knobs.flavor] + '\n'));
+        if (!knobs.tarMissing) {
+          pipe.emit(enc.encode(VERSIONS[knobs.flavor] + '\n' + (knobs.gzip ? 'GZIP\n' : '')));
+        }
         pipe.finish(knobs.tarMissing ? 1 : 0);
       }, 0);
-    } else if ((m = command.match(/^tar -c -f - -C ('(?:[^']|'\\'')*') --no-recursion --null -T -$/))) {
+    } else if ((m = command.match(/^tar -c(?: -z)? -f - -C ('(?:[^']|'\\'')*') --no-recursion --null -T -$/))) {
       const dir = unq(m[1]);
       let list = '';
       pipe.stdin = (chunk) => (list += dec.decode(chunk));
@@ -835,7 +840,7 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
           .filter((k) => t.fs.get(k)?.kind === 'file');
         sendTree(dir, keys);
       };
-    } else if ((m = command.match(/^tar -x -o -f - -C ('(?:[^']|'\\'')*')$/))) {
+    } else if ((m = command.match(/^tar -x(?: -z)? -o -f - -C ('(?:[^']|'\\'')*')$/))) {
       const dir = unq(m[1]);
       const reader = new TarReader();
       let data: Uint8Array[] = [];
@@ -867,7 +872,7 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
           pipe.finish(2);
         }
       };
-    } else if ((m = command.match(/^tar -c -f - -C ('(?:[^']|'\\'')*') (.*)$/))) {
+    } else if ((m = command.match(/^tar -c(?: -z)? -f - -C ('(?:[^']|'\\'')*') (.*)$/))) {
       const dir = unq(m[1]);
       const roots = m[2].split(' ').map((r) => unq(r).replace(/^\.\//, ''));
       const keys = [...t.fs.keys()]
@@ -918,6 +923,9 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
   return { commands, knobs };
 }
 
+/** Every gzip/gunzip wrap the engine asked the Pear machine's side for. */
+const wrapped: string[] = [];
+
 /** The Pear machine's side, over the relay transport's fs. */
 function memTarIo(local: MemTransport): TarIo {
   return {
@@ -965,6 +973,16 @@ function memTarIo(local: MemTransport): TarIo {
           resolve({ code, bytes: text.length });
         });
       });
+    },
+    // The emulated hosts speak plain tar whatever the flag says; what the
+    // tests check is that the engine asks for compression and wraps the pipe.
+    gzip: (pipe) => {
+      wrapped.push('gzip');
+      return pipe;
+    },
+    gunzip: (pipe) => {
+      wrapped.push('gunzip');
+      return pipe;
     },
     async prefixHash(path, bytes) {
       const node = local.fs.get(path);
@@ -1475,4 +1493,39 @@ test('pipe copies report the far side\'s error, and fall back when no channel op
   const ok = await f.finished(f.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['a.txt'] })));
   assert.equal(ok.status, 'done', ok.error);
   assert.equal(f.b.starts.length, 1, 'the transport\'s own uploadFile carried it');
+});
+
+// ---- Stream compression -------------------------------------------------------
+
+test('compress: tar streams carry -z and are wrapped, only when asked and the host has gzip', async () => {
+  const run = async (over: Partial<TransferRequest>, gzip = true) => {
+    const h = tarHarness({ local: tree('/up/tree', 40), a: tree('/src/tree', 40), b: { '/dst': null } });
+    h.aPipes.knobs.gzip = h.bPipes.knobs.gzip = gzip;
+    h.local.fs.set('/dl', { kind: 'dir' });
+    wrapped.length = 0;
+    const last = await h.finished(h.engine.start(req({ names: ['tree'], ...over })));
+    assert.equal(last.status, 'done', last.error);
+    return h;
+  };
+  const up = await run({ src: { hostId: null, dir: '/up' }, compress: true });
+  assert.equal(up.bPipes.commands[1], `tar -x -z -o -f - -C '/dst'`);
+  assert.deepEqual(wrapped, ['gzip']);
+  assert.equal(filesOn(up.b, '/dst/tree'), 40);
+
+  const down = await run({ dest: { hostId: null, dir: '/dl' }, compress: true });
+  assert.equal(down.aPipes.commands[1], `tar -c -z -f - -C '/src' './tree'`);
+  assert.deepEqual(wrapped, ['gunzip']);
+
+  const direct = await run({ compress: true });
+  assert.equal(direct.aPipes.commands[1], `tar -c -z -f - -C '/src' './tree'`);
+  assert.equal(direct.bPipes.commands[1], `tar -x -z -o -f - -C '/dst'`);
+  assert.deepEqual(wrapped.sort(), ['gunzip', 'gzip']);
+
+  const off = await run({ src: { hostId: null, dir: '/up' } });
+  assert.equal(off.bPipes.commands[1], `tar -x -o -f - -C '/dst'`);
+  assert.deepEqual(wrapped, []);
+
+  const noGzip = await run({ src: { hostId: null, dir: '/up' }, compress: true }, false);
+  assert.equal(noGzip.bPipes.commands[1], `tar -x -o -f - -C '/dst'`, 'a host without gzip gets a plain stream');
+  assert.deepEqual(wrapped, []);
 });

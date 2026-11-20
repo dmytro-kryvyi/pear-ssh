@@ -259,6 +259,7 @@ export class FileOps {
         conflict: this.settings.conflict(),
         verify: this.settings.verifyChecksums(),
         skipMacMeta: this.settings.skipMacMeta(),
+        compress: this.settings.compressStreams(),
       }),
     );
   }
@@ -272,6 +273,7 @@ export class FileOps {
         this.settings.conflict(),
         this.settings.verifyChecksums(),
         this.settings.skipMacMeta(),
+        this.settings.compressStreams(),
       ),
     );
   }
@@ -316,6 +318,7 @@ export class FileOps {
           conflict: this.settings.conflict(),
           verify: this.settings.verifyChecksums(),
           skipMacMeta: this.settings.skipMacMeta(),
+        compress: this.settings.compressStreams(),
         });
       }
     });

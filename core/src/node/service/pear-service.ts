@@ -777,20 +777,24 @@ export class PearService {
         dest: this.normalizeEndpoint(req.dest),
       });
     });
-    on('transfers:download', ([srcHostId, srcDir, names, conflict, verify, skipMacMeta]) => {
-      if (!this.env.downloadsDir) {
-        throw new Error('Downloads are not available in this environment');
-      }
-      return transfers.start({
-        src: this.normalizeEndpoint({ hostId: asString(srcHostId), dir: asString(srcDir) }),
-        dest: { hostId: null, dir: this.env.downloadsDir },
-        names: names as string[],
-        op: 'copy',
-        conflict: conflict as ConflictPolicy,
-        verify: verify === true,
-        skipMacMeta: skipMacMeta !== false,
-      });
-    });
+    on(
+      'transfers:download',
+      ([srcHostId, srcDir, names, conflict, verify, skipMacMeta, compress]) => {
+        if (!this.env.downloadsDir) {
+          throw new Error('Downloads are not available in this environment');
+        }
+        return transfers.start({
+          src: this.normalizeEndpoint({ hostId: asString(srcHostId), dir: asString(srcDir) }),
+          dest: { hostId: null, dir: this.env.downloadsDir },
+          names: names as string[],
+          op: 'copy',
+          conflict: conflict as ConflictPolicy,
+          verify: verify === true,
+          skipMacMeta: skipMacMeta !== false,
+          compress: compress === true,
+        });
+      },
+    );
     on('transfers:cancel', ([id]) => transfers.cancel(asString(id)));
     on('transfers:retry', ([id]) => transfers.retry(asString(id)));
     on('transfers:list', () => transfers.list());

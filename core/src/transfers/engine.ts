@@ -58,6 +58,9 @@ export interface TransferRequest {
   /** Leave `__MACOSX`, `.DS_Store` and `._*` inside walked folders behind
    *  (default true). Explicitly selected names are always carried. */
   skipMacMeta?: boolean;
+  /** gzip the tar streams of this job (hosts with gzip): worth it for text
+   *  over a slow link, wasted CPU on media over a fast one. */
+  compress?: boolean;
   /** Set by retry(): destination names an earlier attempt settled on. */
   destNames?: Record<string, string>;
 }
@@ -164,6 +167,10 @@ export interface TarIo {
   ): Promise<{ atEnd: boolean; code: number | null }>;
   /** SHA-256 of the first `bytes` bytes of a file on the Pear machine. */
   prefixHash(path: string, bytes: number): Promise<string>;
+  /** The same channel with everything written to it gzip-compressed. */
+  gzip?(pipe: PipeChannel): PipeChannel;
+  /** The same channel with everything read from it gunzipped. */
+  gunzip?(pipe: PipeChannel): PipeChannel;
   /**
    * Write a local file into the pipe and end it. Resolves with the file's
    * permission bits and modification time once every byte is handed over.
@@ -323,7 +330,9 @@ const RESUME_MIN_BYTES = 32 * 1024 * 1024;
 const MTIME_SLACK_MS = 2_000;
 const PREFIX_HASH_TIMEOUT_MS = 10 * 60_000;
 /** Prints tar's version line (for its flavour) and exits 0 iff tar exists. */
-export const TAR_PROBE = 'tar --version 2>&1 | head -n 1; command -v tar >/dev/null 2>&1';
+export const TAR_PROBE =
+  'tar --version 2>&1 | head -n 1; command -v gzip >/dev/null 2>&1 && echo GZIP; ' +
+  'command -v tar >/dev/null 2>&1';
 /** One `find` over a big tree may take a while on a slow disk. */
 const WALK_TIMEOUT_MS = 120_000;
 
@@ -821,6 +830,19 @@ export class TransferEngine {
 
   /** Per transport: can it stream, does the route carry stdin, which tar is there. */
   private tarProbe = new WeakMap<SshTransport, Promise<TarFlavor | null>>();
+  /** Transports whose host also has gzip (learned by the same probe). */
+  private hasGzip = new WeakSet<SshTransport>();
+
+  /** Compress this job's streams? Asked for, possible here, and on every host involved. */
+  private zip(job: Job, ...hosts: SshTransport[]): boolean {
+    const tar = this.env.tar;
+    return (
+      job.req.compress === true &&
+      !!tar?.gzip &&
+      !!tar.gunzip &&
+      hosts.every((h) => this.hasGzip.has(h))
+    );
+  }
 
   private canTar(t: SshTransport): Promise<TarFlavor | null> {
     const cached = this.tarProbe.get(t);
@@ -834,6 +856,7 @@ export class TransferEngine {
         const { code, stdout } = await collectPipe(pipe);
         clearTimeout(timer);
         if (code !== 0) return null;
+        if (/^GZIP$/m.test(stdout)) this.hasGzip.add(t);
         if (/GNU tar/i.test(stdout)) return 'gnu';
         if (/bsdtar|libarchive/i.test(stdout)) return 'bsd';
         return 'busybox';
@@ -846,13 +869,17 @@ export class TransferEngine {
   }
 
   /** Roots mode: tar walks the selected entries itself (any tar). */
-  private createCommand(dir: string, names: string[]): string {
-    return `tar -c -f - -C ${shq(dir)} ${names.map((n) => shq('./' + n)).join(' ')}`;
+  private createCommand(dir: string, names: string[], z = false): string {
+    return `tar -c${z ? ' -z' : ''} -f - -C ${shq(dir)} ${names.map((n) => shq('./' + n)).join(' ')}`;
+  }
+
+  private extractCommand(dir: string, z = false): string {
+    return `tar -x${z ? ' -z' : ''} -o -f - -C ${shq(dir)}`;
   }
 
   /** List mode: exactly the files named on stdin, NUL-separated (gnu, bsd). */
-  private listCommand(dir: string): string {
-    return `tar -c -f - -C ${shq(dir)} --no-recursion --null -T -`;
+  private listCommand(dir: string, z = false): string {
+    return `tar -c${z ? ' -z' : ''} -f - -C ${shq(dir)} --no-recursion --null -T -`;
   }
 
   private async useTar(manifest: Manifest, leg: Leg): Promise<boolean> {
@@ -882,23 +909,27 @@ export class TransferEngine {
     job.prog.tar = true;
     const remote = leg.mode === 'upload' ? leg.to : leg.from;
     const listMode = leg.mode === 'download' && (await this.canTar(remote)) !== 'busybox';
+    const z = this.zip(job, remote);
     const command =
       leg.mode === 'upload'
-        ? `tar -x -o -f - -C ${shq(leg.toDir)}`
+        ? this.extractCommand(leg.toDir, z)
         : listMode
-          ? this.listCommand(leg.fromDir)
-          : this.createCommand(leg.fromDir, manifest.moveRoots);
+          ? this.listCommand(leg.fromDir, z)
+          : this.createCommand(leg.fromDir, manifest.moveRoots, z);
     // A file list carries no directory entries: make them here, so empty
     // folders exist too.
     if (listMode) await this.makeDirs(job, leg.to, leg.toDir, manifest.dirs);
-    const pipe = await remote.execPipe!(command);
+    const raw = await remote.execPipe!(command);
+    // Compression wraps one direction only: what we write (upload) or what we
+    // read (download); the file list below goes to tar's stdin as it is.
+    const pipe = !z ? raw : leg.mode === 'upload' ? this.env.tar!.gzip!(raw) : this.env.tar!.gunzip!(raw);
     let stderr = '';
     pipe.onStderr((text) => (stderr = (stderr + text).slice(-2048)));
     const closed = new Promise<number | null>((resolve) => pipe.onClose(resolve));
     if (listMode) {
       // Fed while the unpacker is already reading: tar starts streaming as
       // soon as the first names arrive. A failure here shows up as tar's exit.
-      const feed = new PipeWriter(pipe);
+      const feed = new PipeWriter(raw);
       void feed
         .write(encodeNulList(manifest.files.map((f) => './' + f[leg.fromKey])))
         .then(() => feed.end())
@@ -985,16 +1016,22 @@ export class TransferEngine {
     const { req } = job;
     job.prog.tar = true;
     const listMode = (await this.canTar(src)) !== 'busybox';
-    const srcPipe = await src.execPipe!(
-      listMode ? this.listCommand(req.src.dir) : this.createCommand(req.src.dir, manifest.moveRoots),
+    const z = this.zip(job, src, dest);
+    const srcRaw = await src.execPipe!(
+      listMode
+        ? this.listCommand(req.src.dir, z)
+        : this.createCommand(req.src.dir, manifest.moveRoots, z),
     );
-    let destPipe: PipeChannel;
+    let destRaw: PipeChannel;
     try {
-      destPipe = await dest.execPipe!(`tar -x -o -f - -C ${shq(req.dest.dir)}`);
+      destRaw = await dest.execPipe!(this.extractCommand(req.dest.dir, z));
     } catch (err) {
-      srcPipe.close();
+      srcRaw.close();
       throw err;
     }
+    // Each hop is its own SSH link from here, so each is compressed by itself.
+    const srcPipe = z ? this.env.tar!.gunzip!(srcRaw) : srcRaw;
+    const destPipe = z ? this.env.tar!.gzip!(destRaw) : destRaw;
     let srcErr = '';
     let destErr = '';
     srcPipe.onStderr((t) => (srcErr = (srcErr + t).slice(-2048)));
@@ -1006,7 +1043,7 @@ export class TransferEngine {
     };
     job.aborter.addEventListener('abort', onCancel);
     if (listMode) {
-      const feed = new PipeWriter(srcPipe);
+      const feed = new PipeWriter(srcRaw);
       void feed
         .write(encodeNulList(manifest.files.map((f) => './' + f.srcRel)))
         .then(() => feed.end())

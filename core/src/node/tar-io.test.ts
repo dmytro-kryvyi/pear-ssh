@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { LocalConnection } from './local';
 import { nodeTarIo } from './tar-io';
 import { PipeClosedError } from '../transfers/stream-util';
+import type { PipeChannel } from '../ssh/transport';
 
 /**
  * The Node tar glue against the real GNU tar on this machine: what `pack`
@@ -223,4 +224,63 @@ test('sendFile and receiveFile carry one file through cat with progress, mode an
     onProgress: () => {},
   });
   assert.equal(none.code, 1);
+});
+
+test('gzip and gunzip adapters: compressed streams round-trip through real tar -z', async () => {
+  // Compressible content, so the size on the wire can be told apart.
+  const zsrc = join(root, 'zsrc', 'tree');
+  mkdirSync(zsrc, { recursive: true });
+  for (let i = 0; i < 50; i++) writeFileSync(join(zsrc, `t${i}.txt`), `line ${i}\n`.repeat(4000));
+  const files = Array.from({ length: 50 }, (_, i) => ({
+    src: `tree/t${i}.txt`,
+    entry: `tree/t${i}.txt`,
+    size: 0,
+  }));
+
+  const out = join(root, 'zout');
+  mkdirSync(out);
+  const raw = await conn().execPipe(`tar -x -z -o -f - -C ${JSON.stringify(out)}`);
+  let wire = 0;
+  // Same channel, counting what actually goes onto the wire.
+  const counted: PipeChannel = Object.assign(Object.create(raw) as PipeChannel, {
+    write: (c: Uint8Array) => ((wire += c.length), raw.write(c)),
+  });
+  const closed = new Promise<number | null>((r) => raw.onClose(r));
+  let payload = 0;
+  await nodeTarIo.pack(join(root, 'zsrc'), { dirs: ['tree'], files }, nodeTarIo.gzip!(counted), {
+    onEntry: () => {},
+    onProgress: (_i, b) => (payload = Math.max(payload, b)),
+  });
+  assert.equal(await closed, 0);
+  assert.equal(readFileSync(join(out, 'tree', 't49.txt'), 'utf8'), 'line 49\n'.repeat(4000));
+  assert.ok(
+    wire < 50 * payload * 0.2,
+    `compressed on the wire (${wire} bytes for ${50 * payload})`,
+  );
+
+  const back = join(root, 'zback');
+  mkdirSync(back);
+  const down = await conn().execPipe(
+    `tar -c -z -f - -C ${JSON.stringify(join(root, 'zsrc'))} ./tree`,
+  );
+  const result = await nodeTarIo.unpack(nodeTarIo.gunzip!(down), back, {
+    map: (p) => p,
+    onEntry: () => {},
+    onProgress: () => {},
+  });
+  assert.deepEqual(result, { atEnd: true, code: 0 });
+  assert.equal(readFileSync(join(back, 'tree', 't0.txt'), 'utf8'), 'line 0\n'.repeat(4000));
+
+  // A stream cut short is reported as truncated, not as success.
+  const cut = await conn().execPipe(
+    `tar -c -z -f - -C ${JSON.stringify(join(root, 'src'))} ./tree/big.bin | head -c 50000`,
+  );
+  await assert.rejects(
+    nodeTarIo.unpack(nodeTarIo.gunzip!(cut), join(root, 'zcut'), {
+      map: (p) => p,
+      onEntry: () => {},
+      onProgress: () => {},
+    }),
+    /ended in the middle|inside a header/,
+  );
 });

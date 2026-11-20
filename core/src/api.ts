@@ -166,6 +166,8 @@ export interface PearApi {
       verify: boolean,
       /** Leave macOS metadata inside folders behind (default true). */
       skipMacMeta?: boolean,
+      /** gzip the transfer stream (default false). */
+      compress?: boolean,
     ): Promise<string>;
     cancel(id: string): void;
     /**

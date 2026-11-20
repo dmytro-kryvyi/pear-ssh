@@ -4,6 +4,7 @@
 // both directions honour the pipe's backpressure.
 
 import { createHash } from 'node:crypto';
+import { createGunzip, createGzip } from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PipeChannel } from '../ssh/transport';
@@ -346,6 +347,75 @@ function receiveFile(
   });
 }
 
-export const nodeTarIo: TarIo = { pack, unpack, prefixHash, sendFile, receiveFile };
+/**
+ * Writes are gzip-compressed on their way into the pipe. Level 1: on a link
+ * worth compressing for, the cheap setting already wins most of the size.
+ */
+function gzip(pipe: PipeChannel): PipeChannel {
+  const gz = createGzip({ level: 1 });
+  gz.on('data', (chunk: Buffer) => {
+    if (!pipe.write(chunk)) gz.pause();
+  });
+  pipe.onDrain(() => gz.resume());
+  gz.on('end', () => pipe.end());
+  gz.on('error', () => pipe.close());
+  // Once the far side is gone nothing more may be written into the stream.
+  pipe.onClose(() => gz.destroy());
+  return {
+    write: (chunk) => (gz.destroyed ? false : gz.write(chunk)),
+    onDrain: (cb) => void gz.on('drain', cb),
+    end: () => {
+      if (!gz.destroyed) gz.end();
+    },
+    pause: () => pipe.pause(),
+    resume: () => pipe.resume(),
+    onData: (cb) => pipe.onData(cb),
+    onStderr: (cb) => pipe.onStderr(cb),
+    onClose: (cb) => pipe.onClose(cb),
+    close: () => pipe.close(),
+  };
+}
+
+/** Reads come out gunzipped; the close is reported after the last byte did. */
+function gunzip(pipe: PipeChannel): PipeChannel {
+  const gz = createGunzip();
+  let finished = false;
+  const done: (() => void)[] = [];
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    for (const cb of done) cb();
+  };
+  gz.on('end', finish);
+  // A cut or corrupt stream: what was decoded so far stands, and the tar
+  // reader downstream reports the truncation.
+  gz.on('error', finish);
+  gz.on('close', finish);
+  pipe.onData((chunk) => {
+    if (!finished && !gz.write(chunk)) pipe.pause();
+  });
+  gz.on('drain', () => pipe.resume());
+  return {
+    write: (chunk) => pipe.write(chunk),
+    onDrain: (cb) => pipe.onDrain(cb),
+    end: () => pipe.end(),
+    pause: () => void gz.pause(),
+    resume: () => void gz.resume(),
+    onData: (cb) => void gz.on('data', cb),
+    onStderr: (cb) => pipe.onStderr(cb),
+    onClose: (cb) =>
+      pipe.onClose((code) => {
+        const report = (): void => cb(code);
+        if (finished) return report();
+        done.push(report);
+        gz.end();
+        // Nothing reading the decoded side yet must not hold the close back.
+        gz.resume();
+      }),
+    close: () => pipe.close(),
+  };
+}
+
+export const nodeTarIo: TarIo = { pack, unpack, prefixHash, sendFile, receiveFile, gzip, gunzip };
 
 export type { TarEntry };

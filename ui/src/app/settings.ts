@@ -67,6 +67,8 @@ export class Settings {
   readonly verifyChecksums = signal(false);
   /** Leave `__MACOSX`, `.DS_Store` and `._*` inside transferred folders behind. */
   readonly skipMacMeta = signal(true);
+  /** gzip folder streams: for text-heavy trees over a slow link. */
+  readonly compressStreams = signal(false);
   readonly termPlacement = signal<TermPlacement>('shared');
 
   // Monitoring
@@ -119,6 +121,9 @@ export class Settings {
         this.verifyChecksums.set(saved.verifyChecksums);
       }
       if (typeof saved.skipMacMeta === 'boolean') this.skipMacMeta.set(saved.skipMacMeta);
+      if (typeof saved.compressStreams === 'boolean') {
+        this.compressStreams.set(saved.compressStreams);
+      }
       if (['shared', 'per-host', 'in-pane'].includes(saved.termPlacement)) {
         this.termPlacement.set(saved.termPlacement);
       }
@@ -166,6 +171,7 @@ export class Settings {
           maxParallel: this.maxParallel(),
           verifyChecksums: this.verifyChecksums(),
           skipMacMeta: this.skipMacMeta(),
+          compressStreams: this.compressStreams(),
           termPlacement: this.termPlacement(),
           liveStats: this.liveStats(),
           monitorInterval: this.monitorInterval(),

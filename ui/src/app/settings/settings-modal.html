@@ -197,6 +197,13 @@
                 <button class="toggle" [class.on]="settings.skipMacMeta()" (click)="settings.skipMacMeta.set(!settings.skipMacMeta())"><span></span></button>
               </div>
               <div class="row">
+                <div class="row-label">
+                  <div class="l-title">Compress folder streams</div>
+                  <div class="l-sub">gzip on the wire: faster for text over a slow link, slower for photos and video on a fast one</div>
+                </div>
+                <button class="toggle" [class.on]="settings.compressStreams()" (click)="settings.compressStreams.set(!settings.compressStreams())"><span></span></button>
+              </div>
+              <div class="row">
                 <div class="row-label"><div class="l-title">Max parallel transfers</div></div>
                 <div class="seg-row">
                   @for (n of [1, 2, 3, 6]; track n) {
