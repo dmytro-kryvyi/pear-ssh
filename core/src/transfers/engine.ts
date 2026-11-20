@@ -164,6 +164,21 @@ export interface TarIo {
   ): Promise<{ atEnd: boolean; code: number | null }>;
   /** SHA-256 of the first `bytes` bytes of a file on the Pear machine. */
   prefixHash(path: string, bytes: number): Promise<string>;
+  /**
+   * Write a local file into the pipe and end it. Resolves with the file's
+   * permission bits and modification time once every byte is handed over.
+   */
+  sendFile(
+    localPath: string,
+    pipe: PipeChannel,
+    opts: { signal?: AbortSignalLike; onProgress(bytes: number): void },
+  ): Promise<{ mode: number; mtimeSec: number }>;
+  /** Write what the pipe sends into a local file; resolves when it closes. */
+  receiveFile(
+    pipe: PipeChannel,
+    localPath: string,
+    opts: { mtimeMs?: number; onProgress(bytes: number): void },
+  ): Promise<{ code: number | null; bytes: number }>;
 }
 
 export interface TransferEvents {
@@ -633,8 +648,10 @@ export class TransferEngine {
             this.emit(job, true);
           },
         };
-        if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
-        else await leg.to.uploadFile(fromPath, toPath, opts);
+        if (!(await this.pipeCopy(leg, file, fromPath, toPath, opts))) {
+          if (leg.mode === 'download') await leg.from.download(fromPath, toPath, opts);
+          else await leg.to.uploadFile(fromPath, toPath, opts);
+        }
         if (job.req.verify) {
           // Hashing re-reads the whole file on both ends; it cannot be
           // interrupted, but a cancel that lands during it still wins.
@@ -699,6 +716,70 @@ export class TransferEngine {
       job.aborter.removeEventListener('abort', onCancel);
     }
     if (failure) throw failure;
+  }
+
+  /**
+   * One file over a raw channel (`cat` on the far end) for transports that
+   * prefer it: bytes are metered and cancellable all the way, and nothing is
+   * staged on a container's parent host. False = not applicable or the
+   * channel could not be opened; the caller uses the transport's own method.
+   */
+  private async pipeCopy(
+    leg: Leg,
+    file: ManifestFile,
+    fromPath: string,
+    toPath: string,
+    opts: TransferOpts,
+  ): Promise<boolean> {
+    const tar = this.env.tar;
+    const remote = leg.mode === 'upload' ? leg.to : leg.from;
+    if (!tar || !remote.prefersPipe || !remote.execPipe) return false;
+    let pipe: PipeChannel;
+    try {
+      pipe = await remote.execPipe(
+        leg.mode === 'upload' ? `cat > ${shq(toPath)}` : `cat -- ${shq(fromPath)}`,
+      );
+    } catch {
+      return false;
+    }
+    let stderr = '';
+    pipe.onStderr((t) => (stderr = (stderr + t).slice(-1024)));
+    const onAbort = (): void => pipe.close();
+    opts.signal?.addEventListener('abort', onAbort);
+    const report = (bytes: number): void => opts.onProgress?.({ bytes, total: file.size });
+    const failed = (code: number | null): Error =>
+      new Error(stderr.trim().split('\n').pop() || `copy ended with ${code === null ? 'no status' : `exit ${code}`}`);
+    try {
+      if (opts.signal?.aborted) throw new Error('canceled');
+      if (leg.mode === 'upload') {
+        const closed = new Promise<number | null>((resolve) => pipe.onClose(resolve));
+        let sent: { mode: number; mtimeSec: number };
+        try {
+          sent = await tar.sendFile(fromPath, pipe, { signal: opts.signal, onProgress: report });
+        } catch (err) {
+          if (opts.signal?.aborted) throw new Error('canceled');
+          const code = await closed;
+          throw code !== 0 ? failed(code) : err;
+        }
+        const code = await closed;
+        if (opts.signal?.aborted) throw new Error('canceled');
+        if (code !== 0) throw failed(code);
+        // Best effort: permission bits and the source's time (the latter needs
+        // a touch that understands @seconds — GNU and busybox do).
+        const p = shq(toPath);
+        const mode = (sent.mode & 0o7777).toString(8);
+        await remote
+          .exec(`chmod ${mode} -- ${p}; touch -d @${sent.mtimeSec} -- ${p} 2>/dev/null; true`)
+          .catch(() => {});
+      } else {
+        const got = await tar.receiveFile(pipe, toPath, { mtimeMs: file.mtimeMs, onProgress: report });
+        if (opts.signal?.aborted) throw new Error('canceled');
+        if (got.code !== 0) throw failed(got.code);
+      }
+      return true;
+    } finally {
+      opts.signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   /**

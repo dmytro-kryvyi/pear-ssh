@@ -264,6 +264,88 @@ async function prefixHash(path: string, bytes: number): Promise<string> {
   return hash.digest('hex');
 }
 
-export const nodeTarIo: TarIo = { pack, unpack, prefixHash };
+async function sendFile(
+  localPath: string,
+  pipe: PipeChannel,
+  opts: { onProgress(bytes: number): void },
+): Promise<{ mode: number; mtimeSec: number }> {
+  const out = new PipeWriter(pipe);
+  const fh = await fs.open(localPath, 'r');
+  try {
+    const st = await fh.stat();
+    const buffer = Buffer.allocUnsafe(READ_PIECE);
+    let sent = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buffer, 0, READ_PIECE, sent);
+      if (bytesRead === 0) break;
+      await out.write(Uint8Array.prototype.slice.call(buffer, 0, bytesRead) as Uint8Array);
+      sent += bytesRead;
+      opts.onProgress(sent);
+    }
+    if (sent === 0) opts.onProgress(0);
+    out.end();
+    return { mode: st.mode & 0o7777, mtimeSec: Math.floor(st.mtimeMs / 1000) };
+  } finally {
+    await fh.close();
+  }
+}
+
+function receiveFile(
+  pipe: PipeChannel,
+  localPath: string,
+  opts: { mtimeMs?: number; onProgress(bytes: number): void },
+): Promise<{ code: number | null; bytes: number }> {
+  return new Promise((resolve, reject) => {
+    let chain: Promise<void> = Promise.resolve();
+    let handle: fs.FileHandle | null = null;
+    let failure: Error | null = null;
+    let pending = 0;
+    let paused = false;
+    let bytes = 0;
+    const fail = (err: unknown): void => {
+      if (failure) return;
+      failure = err instanceof Error ? err : new Error(String(err));
+      pipe.close();
+    };
+    const enqueue = (step: () => Promise<void>): void => {
+      chain = chain.then(() => (failure ? undefined : step())).catch(fail);
+    };
+    enqueue(async () => {
+      handle = await fs.open(localPath, 'w');
+    });
+    pipe.onData((chunk) => {
+      const copy = Uint8Array.prototype.slice.call(chunk) as Uint8Array;
+      pending += copy.length;
+      if (!paused && pending > UNPACK_HIGH) {
+        paused = true;
+        pipe.pause();
+      }
+      enqueue(async () => {
+        await handle!.write(copy);
+        pending -= copy.length;
+        bytes += copy.length;
+        if (paused && pending < UNPACK_LOW) {
+          paused = false;
+          pipe.resume();
+        }
+        opts.onProgress(bytes);
+      });
+    });
+    pipe.onClose((code) => {
+      void chain.then(async () => {
+        await handle?.close().catch(() => {});
+        if (failure) return reject(failure);
+        if (code === 0 && opts.mtimeMs) {
+          const t = new Date(opts.mtimeMs);
+          await fs.utimes(localPath, t, t).catch(() => {});
+        }
+        if (bytes === 0) opts.onProgress(0);
+        resolve({ code, bytes });
+      });
+    });
+  });
+}
+
+export const nodeTarIo: TarIo = { pack, unpack, prefixHash, sendFile, receiveFile };
 
 export type { TarEntry };

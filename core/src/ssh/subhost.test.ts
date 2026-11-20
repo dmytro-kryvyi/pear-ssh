@@ -161,6 +161,8 @@ test('execPipe nests through the parent with stdin forwarded', async () => {
 
   const noPipe = await connected(new FakeParent(() => ok(), false));
   assert.equal(noPipe.execPipe, undefined, 'no streaming without a streaming parent');
+  assert.equal(noPipe.prefersPipe, undefined);
+  assert.equal(sub.prefersPipe, true, 'single files should use the pipe, not docker cp');
 });
 
 test('subExec targets lxc through pct', () => {

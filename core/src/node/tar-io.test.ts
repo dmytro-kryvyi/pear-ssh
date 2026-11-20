@@ -195,3 +195,32 @@ test('unpack rejects a truncated stream and names the entry in flight', async ()
   );
   assert.deepEqual(started, ['tree/big.bin']);
 });
+
+test('sendFile and receiveFile carry one file through cat with progress, mode and time', async () => {
+  const src = join(root, 'src', 'tree', 'big.bin');
+  const there = join(root, 'piped.bin');
+  const up = await conn().execPipe(`cat > ${JSON.stringify(there)}`);
+  const closed = new Promise<number | null>((r) => up.onClose(r));
+  const seen: number[] = [];
+  const meta = await nodeTarIo.sendFile(src, up, { onProgress: (b) => seen.push(b) });
+  assert.equal(await closed, 0);
+  assert.equal(sha(readFileSync(there)), sha(bigBytes));
+  assert.equal(seen.at(-1), BIG);
+  assert.equal(meta.mode, lstatSync(src).mode & 0o7777);
+
+  const back = join(root, 'piped-back.bin');
+  const down = await conn().execPipe(`cat -- ${JSON.stringify(there)}`);
+  const got = await nodeTarIo.receiveFile(down, back, {
+    mtimeMs: 1_600_000_000_000,
+    onProgress: () => {},
+  });
+  assert.deepEqual(got, { code: 0, bytes: BIG });
+  assert.equal(sha(readFileSync(back)), sha(bigBytes));
+  assert.equal(Math.floor(lstatSync(back).mtimeMs / 1000), 1_600_000_000);
+
+  const missing = await conn().execPipe('cat -- /nonexistent/file');
+  const none = await nodeTarIo.receiveFile(missing, join(root, 'none.bin'), {
+    onProgress: () => {},
+  });
+  assert.equal(none.code, 1);
+});

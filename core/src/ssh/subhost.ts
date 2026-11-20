@@ -182,6 +182,7 @@ export class SubHostTransport implements SshTransport {
   /** Present only when the parent can stream — sub-hosts nest, and a
    *  docker-in-LXC target inherits whatever its chain of parents offers. */
   readonly execPipe?: (command: string) => Promise<PipeChannel>;
+  readonly prefersPipe?: boolean;
 
   constructor(
     private readonly parent: SshTransport,
@@ -189,7 +190,10 @@ export class SubHostTransport implements SshTransport {
   ) {
     parent.onClose(() => this.teardown());
     const parentPipe = parent.execPipe?.bind(parent);
-    if (parentPipe) this.execPipe = (command) => parentPipe(subExecPipe(this.target, command));
+    if (parentPipe) {
+      this.execPipe = (command) => parentPipe(subExecPipe(this.target, command));
+      this.prefersPipe = true;
+    }
   }
 
   get isConnected(): boolean {

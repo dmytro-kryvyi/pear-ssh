@@ -42,6 +42,8 @@ class MemTransport implements SshTransport {
   /** Destination path whose transfer fails with 'boom'. */
   failOn: string | null = null;
   fs = new Map<string, Node>();
+  /** Like a sub-host: single files go over execPipe (`cat`). */
+  prefersPipe?: boolean;
   /** Honour TransferOpts.startOffset, like the ssh2 transport. */
   canResume?: boolean;
   /** startOffset of every download/uploadFile call, in order. */
@@ -885,6 +887,29 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
         }
         pipe.finish(0);
       };
+    } else if ((m = command.match(/^cat > ('(?:[^']|'\\'')*')$/))) {
+      const path = unq(m[1]);
+      const parts: Uint8Array[] = [];
+      t.fs.set(path, { kind: 'file', data: '<partial>' });
+      pipe.stdin = (chunk) => parts.push(chunk);
+      pipe.stdinEnd = () => {
+        if (path === t.failOn) {
+          pipe.stderr('sh: write error: No space left on device\n');
+          return pipe.finish(1);
+        }
+        t.fs.set(path, { kind: 'file', data: parts.map((c) => dec.decode(c)).join('') });
+        pipe.finish(0);
+      };
+    } else if ((m = command.match(/^cat -- ('(?:[^']|'\\'')*')$/))) {
+      const node = t.fs.get(unq(m[1]));
+      setTimeout(() => {
+        if (node?.kind !== 'file') {
+          pipe.stderr('cat: No such file or directory\n');
+          return pipe.finish(1);
+        }
+        pipe.emit(enc.encode(node.data));
+        pipe.finish(0);
+      }, 0);
     } else {
       throw new Error(`unexpected pipe command: ${command}`);
     }
@@ -917,6 +942,29 @@ function memTarIo(local: MemTransport): TarIo {
       }
       await out.write(writer.end());
       out.end();
+    },
+    async sendFile(localPath, pipe, opts) {
+      const node = local.fs.get(localPath);
+      if (node?.kind !== 'file') throw new Error(`${localPath}: not a file`);
+      const out = new PipeWriter(pipe);
+      const bytes = enc.encode(node.data);
+      await out.write(bytes);
+      opts.onProgress(bytes.length);
+      out.end();
+      return { mode: 0o640, mtimeSec: Math.floor((node.mtime ?? 0) / 1000) };
+    },
+    receiveFile(pipe, localPath, opts) {
+      return new Promise((resolve) => {
+        const parts: Uint8Array[] = [];
+        local.fs.set(localPath, { kind: 'file', data: '<partial>' });
+        pipe.onData((c) => parts.push(c));
+        pipe.onClose((code) => {
+          const text = parts.map((c) => dec.decode(c)).join('');
+          if (code === 0) local.fs.set(localPath, { kind: 'file', data: text, mtime: opts.mtimeMs });
+          opts.onProgress(text.length);
+          resolve({ code, bytes: text.length });
+        });
+      });
     },
     async prefixHash(path, bytes) {
       const node = local.fs.get(path);
@@ -1386,4 +1434,45 @@ test('cancel still removes a large partial', async () => {
   release();
   assert.equal((await h.finished(id)).status, 'canceled');
   assert.equal(h.b.fs.has('/dst/big.bin'), false);
+});
+
+// ---- Single files over the pipe (sub-hosts) ---------------------------------
+
+test('a transport that prefers the pipe gets single files through cat, both ways', async () => {
+  const h = tarHarness({ local: { '/up/a.txt': 'into the box' }, b: { '/dst': null, '/dst/out.txt': 'out of the box' } });
+  h.b.prefersPipe = true;
+  const up = await h.finished(h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['a.txt'] })));
+  assert.equal(up.status, 'done', up.error);
+  assert.deepEqual(h.bPipes.commands, [`cat > '/dst/a.txt'`]);
+  assert.equal(await h.b.readFile('/dst/a.txt'), 'into the box');
+  assert.equal(h.b.starts.length, 0, 'uploadFile (staging + docker cp) was not used');
+  assert.ok(h.b.execs.some((c) => c.startsWith(`chmod 640 -- '/dst/a.txt'; touch -d @`)), 'mode and time applied');
+  assert.ok(!h.updates.some((u) => u.id === up.id && u.phase === 'pushing'));
+
+  h.local.fs.set('/dl', { kind: 'dir' });
+  const down = await h.finished(
+    h.engine.start(req({ src: { hostId: 'b', dir: '/dst' }, dest: { hostId: null, dir: '/dl' }, names: ['out.txt'] })),
+  );
+  assert.equal(down.status, 'done', down.error);
+  assert.equal(h.bPipes.commands.at(-1), `cat -- '/dst/out.txt'`);
+  assert.equal(await h.local.readFile('/dl/out.txt'), 'out of the box');
+});
+
+test('pipe copies report the far side\'s error, and fall back when no channel opens', async () => {
+  const h = tarHarness({ local: { '/up/a.txt': 'x' }, b: { '/dst': null } });
+  h.b.prefersPipe = true;
+  h.b.failOn = '/dst/a.txt';
+  const bad = await h.finished(h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['a.txt'] })));
+  assert.equal(bad.status, 'error');
+  assert.equal(bad.error, 'sh: write error: No space left on device');
+  assert.equal(h.b.fs.has('/dst/a.txt'), false, 'partial removed');
+
+  const f = tarHarness({ local: { '/up/a.txt': 'x' }, b: { '/dst': null } });
+  f.b.prefersPipe = true;
+  f.b.execPipe = async () => {
+    throw new Error('no channel');
+  };
+  const ok = await f.finished(f.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['a.txt'] })));
+  assert.equal(ok.status, 'done', ok.error);
+  assert.equal(f.b.starts.length, 1, 'the transport\'s own uploadFile carried it');
 });

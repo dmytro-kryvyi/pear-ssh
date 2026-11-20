@@ -103,6 +103,12 @@ export interface SshTransport {
    * makes callers fall back to per-file copies.
    */
   execPipe?(command: string): Promise<PipeChannel>;
+  /**
+   * Single files are better carried over `execPipe` than through
+   * download/uploadFile — true for sub-hosts, whose own file methods stage
+   * every file on the parent and hand it to `docker cp` / `pct push`.
+   */
+  readonly prefersPipe?: boolean;
   /** download/uploadFile honour `TransferOpts.startOffset`. */
   readonly canResume?: boolean;
   listDir(path: string): Promise<DirListing>;
