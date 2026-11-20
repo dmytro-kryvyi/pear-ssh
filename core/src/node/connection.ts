@@ -411,6 +411,9 @@ export class SshConnection implements SshTransport {
             reject(this.channelError(err));
           } else {
             sftp.on('close', () => (this.sftpPromise = undefined));
+            // Every file in flight watches the session for a drop; eight at
+            // once is the normal case, not a leak.
+            sftp.setMaxListeners(64);
             resolve(sftp);
           }
         });

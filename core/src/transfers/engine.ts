@@ -697,6 +697,7 @@ export class TransferEngine {
       }
     };
 
+    const width = Math.min(FILE_CONCURRENCY, remote.maxParallelFiles ?? FILE_CONCURRENCY);
     const active = new Set<Promise<void>>();
     const launch = (file: ManifestFile): Promise<void> => {
       const p: Promise<void> = carry(file)
@@ -714,7 +715,7 @@ export class TransferEngine {
           if (failure) break;
           await launch(file);
         } else {
-          while (active.size >= FILE_CONCURRENCY) await Promise.race(active);
+          while (active.size >= width) await Promise.race(active);
           launch(file);
         }
       }
@@ -1339,6 +1340,7 @@ export class TransferEngine {
   /** Create the manifest's directories, parents before children, several
    *  per round trip. Existing directories are fine. */
   private async makeDirs(job: Job, to: SshTransport, toDir: string, dirs: string[]): Promise<void> {
+    const width = Math.min(DIR_CONCURRENCY, to.maxParallelFiles ?? DIR_CONCURRENCY);
     const byDepth = new Map<number, string[]>();
     for (const dir of dirs) {
       const depth = dir.split('/').length;
@@ -1348,10 +1350,10 @@ export class TransferEngine {
     }
     for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
       const batch = byDepth.get(depth)!;
-      for (let i = 0; i < batch.length; i += DIR_CONCURRENCY) {
+      for (let i = 0; i < batch.length; i += width) {
         this.checkCanceled(job);
         await Promise.all(
-          batch.slice(i, i + DIR_CONCURRENCY).map((dir) => to.mkdir(joinPath(toDir, dir)).catch(() => {})),
+          batch.slice(i, i + width).map((dir) => to.mkdir(joinPath(toDir, dir)).catch(() => {})),
         );
       }
     }

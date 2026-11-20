@@ -109,6 +109,12 @@ export interface SshTransport {
    * every file on the parent and hand it to `docker cp` / `pct push`.
    */
   readonly prefersPipe?: boolean;
+  /**
+   * How many files may be carried at once. Set by transports where every
+   * file (and every mkdir) costs SSH session channels of its own — sshd
+   * allows ten per connection, terminals and SFTP included.
+   */
+  readonly maxParallelFiles?: number;
   /** download/uploadFile honour `TransferOpts.startOffset`. */
   readonly canResume?: boolean;
   listDir(path: string): Promise<DirListing>;

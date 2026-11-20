@@ -183,6 +183,8 @@ export class SubHostTransport implements SshTransport {
    *  docker-in-LXC target inherits whatever its chain of parents offers. */
   readonly execPipe?: (command: string) => Promise<PipeChannel>;
   readonly prefersPipe?: boolean;
+  /** Each file is an exec (or two) on the parent: keep well under MaxSessions. */
+  readonly maxParallelFiles = 3;
 
   constructor(
     private readonly parent: SshTransport,

@@ -42,6 +42,7 @@ class MemTransport implements SshTransport {
   /** Destination path whose transfer fails with 'boom'. */
   failOn: string | null = null;
   fs = new Map<string, Node>();
+  maxParallelFiles?: number;
   /** Like a sub-host: single files go over execPipe (`cat`). */
   prefersPipe?: boolean;
   /** Honour TransferOpts.startOffset, like the ssh2 transport. */
@@ -1528,4 +1529,16 @@ test('compress: tar streams carry -z and are wrapped, only when asked and the ho
   const noGzip = await run({ src: { hostId: null, dir: '/up' }, compress: true }, false);
   assert.equal(noGzip.bPipes.commands[1], `tar -x -o -f - -C '/dst'`, 'a host without gzip gets a plain stream');
   assert.deepEqual(wrapped, []);
+});
+
+test('a transport that spends a session per file is not flooded with parallel files', async () => {
+  const seed: Record<string, string> = {};
+  for (let i = 0; i < 12; i++) seed[`/src/f${i}.txt`] = 'x';
+  const h = harness({ a: seed, local: { '/dl': null } });
+  h.a.maxParallelFiles = 3;
+  h.a.delayMs = 3;
+  const names = Object.keys(seed).map((p) => p.slice(5));
+  const last = await h.finished(h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names })));
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(h.a.maxActive, 3);
 });
