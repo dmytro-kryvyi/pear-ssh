@@ -69,7 +69,9 @@
   gap: 14px;
   min-height: 0;
 
-  > * { flex-shrink: 0; }
+  // .blk wrappers are display: contents, so the blocks inside them are the
+  // real flex items — without this they shrink to fit instead of scrolling.
+  > *, > .blk > * { flex-shrink: 0; }
 }
 
 .chat-empty {
