@@ -170,6 +170,16 @@ export class Workspace {
     return tab.id;
   }
 
+  /** Show a folder in the focused pane: its existing tab there, else a new one. */
+  openDir(hostId: string, path: string): void {
+    const pane = this.focusedPane();
+    const existing = pane?.tabs.find(
+      (t) => t.kind === 'dir' && t.hostId === hostId && t.path === path,
+    );
+    if (pane && existing) this.activateTab(pane.id, existing.id);
+    else this.newTab(pane?.id ?? null, hostId, path);
+  }
+
   /** Open a file tab next to the active one; refocus an existing match. */
   openFile(paneIdArg: string, hostId: string, path: string): void {
     const pane = this.panes().find((p) => p.id === paneIdArg);

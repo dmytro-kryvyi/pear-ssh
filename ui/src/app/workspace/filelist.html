@@ -45,6 +45,15 @@
       </div>
     }
 
+    <button
+      class="tb-icon-btn"
+      [class.on]="isFavourite()"
+      [disabled]="!canFavourite()"
+      (click)="favourites.toggle(tab().hostId, tab().path)"
+      [title]="favouriteTitle()"
+    >
+      <pear-icon [name]="isFavourite() ? 'starFilled' : 'star'" [size]="13" />
+    </button>
     <button class="tb-icon-btn" (click)="showFilter.set(!showFilter())" title="Filter">
       <pear-icon name="search" [size]="13" />
     </button>

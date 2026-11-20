@@ -3,6 +3,7 @@ import {
   ClaudeExecutor,
   FsOpsRunner,
   HistoryStore,
+  FavouriteStore,
   HostGroupStore,
   SessionManager,
   TransferEngine,
@@ -40,6 +41,7 @@ export interface NativeBackendDeps {
 interface Ready {
   hosts: MobileHostStore;
   groups: HostGroupStore;
+  favourites: FavouriteStore;
   history: HistoryStore;
   sessions: SessionManager;
 }
@@ -127,6 +129,7 @@ export function createNativeBackend(
   const ready: Promise<Ready> = (async () => {
     const hosts = await MobileHostStore.load(deps.kv, deps.cipher);
     const groups = new HostGroupStore(await syncStorage(deps.kv, 'pear.groups'));
+    const favourites = new FavouriteStore(await syncStorage(deps.kv, 'pear.favourites'));
     const history = new HistoryStore(await syncStorage(deps.kv, 'pear.history'));
     const sessions = new SessionManager(
       {
@@ -143,7 +146,7 @@ export function createNativeBackend(
       (cfg, jump) => new CapacitorSshTransport(cfg, { plugin: deps.plugin, hub, gate: deps.gate }, jump),
       (id) => hosts.get(id),
     );
-    return { hosts, groups, history, sessions };
+    return { hosts, groups, favourites, history, sessions };
   })();
 
   /** Decrypted connect-time config; an override password wins for this call. */
@@ -412,7 +415,7 @@ export function createNativeBackend(
       list: async () => (await ready).hosts.listSanitized(),
       upsert: async (host) => (await ready).hosts.upsert(host),
       remove: async (id) => {
-        const { hosts, groups, sessions } = await ready;
+        const { hosts, groups, favourites, sessions } = await ready;
         sessions.disconnectHost(id);
         // Removing the Claude host: drop the runtime + tunnel, and clear the
         // sticky pick even when the runtime was never built this run — a
@@ -420,6 +423,7 @@ export function createNativeBackend(
         if (activeClaudeHostId === id) teardownClaude();
         if ((await deps.kv.get(CLAUDE_HOST_KEY)) === id) await deps.kv.set(CLAUDE_HOST_KEY, '');
         groups.removeHostRefs(id);
+        favourites.removeHostRefs(id);
         await hosts.remove(id);
       },
       addLocal: notYet('This device cannot be a host'),
@@ -453,6 +457,17 @@ export function createNativeBackend(
       remove: async (id) => (await ready).groups.remove(id),
       setMembership: async (hostId, groupId, member) =>
         (await ready).groups.setMembership(hostId, groupId, member),
+    },
+    favourites: {
+      list: async () => (await ready).favourites.list(),
+      upsert: async (fav) => {
+        const { hosts, favourites } = await ready;
+        if (!hosts.listSanitized().some((h) => h.id === fav.hostId)) {
+          throw new Error(`Unknown host: ${fav.hostId}`);
+        }
+        return favourites.upsert(fav);
+      },
+      remove: async (id) => (await ready).favourites.remove(id),
     },
     term: {
       open: async (hostId, size, opts) => {

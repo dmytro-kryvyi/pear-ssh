@@ -1,20 +1,22 @@
 import { Component, computed, inject, output, signal } from '@angular/core';
-import type { HostConfig } from '@pear/core';
-import { ORCH_ICON, PmHeader, PmHostDot, PmIconBtn, PmWsGlyph } from '../chrome/chrome';
+import type { Favourite, HostConfig } from '@pear/core';
+import { PmHeader, PmIconBtn, PmWsGlyph } from '../chrome/chrome';
+import { PmFavourites } from '../favourites/favourites';
 import { PmIcon } from '../icons/icon';
 import { PmServerFoot } from '../remote/server-foot';
 import { PearSession } from '../state/session';
 import { PmHostRow } from './host-row';
 
-/** Hosts screen — workspace strip, recents, searchable host list. */
+/** Hosts screen — workspace strip, favourite folders, searchable host list. */
 @Component({
   selector: 'pm-hosts-screen',
-  imports: [PmHeader, PmIconBtn, PmIcon, PmHostDot, PmWsGlyph, PmHostRow, PmServerFoot],
+  imports: [PmHeader, PmIconBtn, PmIcon, PmWsGlyph, PmHostRow, PmServerFoot, PmFavourites],
   templateUrl: './hosts-screen.html',
   styleUrl: './hosts-screen.scss',
 })
 export class PmHostsScreen {
   readonly connect = output<HostConfig>();
+  readonly openFavourite = output<Favourite>();
 
   protected readonly session = inject(PearSession);
   protected readonly query = signal('');
@@ -40,8 +42,6 @@ export class PmHostsScreen {
         (h.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
     );
   });
-
-  protected readonly ORCH_ICON = ORCH_ICON;
 
   protected newHost(): void {
     this.session.editHost.set(this.session.blankHost());

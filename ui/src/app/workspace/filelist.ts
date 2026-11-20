@@ -16,6 +16,7 @@ import { PearIcon } from '../icons/icon';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { HostCatalog } from '../hosts';
+import { Favourites } from '../favourites';
 import { TermRouter } from '../terminal/router';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
 import { snapshotDrop } from '../remote/connect';
@@ -56,6 +57,7 @@ export class FileList {
   readonly ws = inject(Workspace);
   readonly settings = inject(Settings);
   readonly catalog = inject(HostCatalog);
+  readonly favourites = inject(Favourites);
   private readonly termRouter = inject(TermRouter);
   private readonly menu = inject(ContextMenuService);
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameField');
@@ -87,6 +89,16 @@ export class FileList {
 
   readonly host = computed(() => this.catalog.byId(this.tab().hostId));
   readonly state = computed(() => this.store.read(this.tab().hostId, this.tab().path));
+
+  readonly isFavourite = computed(() => !!this.favourites.find(this.tab().hostId, this.tab().path));
+  readonly canFavourite = computed(() => this.favourites.canSave(this.tab().hostId, this.tab().path));
+  readonly favouriteTitle = computed(() => {
+    if (this.isFavourite()) return 'Remove from favourites';
+    if (this.canFavourite()) return 'Add to favourites';
+    return this.tab().path.startsWith('/')
+      ? 'Pin this container to save its folders as favourites'
+      : 'Add to favourites';
+  });
 
   readonly crumbs = computed(() => {
     const p = this.tab().path;
@@ -295,6 +307,18 @@ export class FileList {
         icon: 'download',
         onClick: () => void this.ops.download(t.hostId, t.path, names),
       },
+      ...(entry.kind === 'dir' && single
+        ? [
+            {
+              label: this.favourites.find(t.hostId, full)
+                ? 'Remove from favourites'
+                : 'Add to favourites',
+              icon: this.favourites.find(t.hostId, full) ? 'starFilled' : 'star',
+              disabled: !this.favourites.canSave(t.hostId, full),
+              onClick: () => void this.favourites.toggle(t.hostId, full),
+            } satisfies MenuItem,
+          ]
+        : []),
       { divider: true },
       ...this.archiveItems(entry, names),
       { divider: true },

@@ -469,6 +469,20 @@ describe('NativeSshBackend', () => {
     expect(spec.host).toBe('10.0.0.1');
   });
 
+  it('favourites persist in the kv, dedupe, and go when their host is removed', async () => {
+    const kv = new MemKv();
+    const api = createNativeBackend({ plugin: new FakePlugin(), gate: yesGate, kv, cipher: fakeCipher });
+    const id = await withHost(api);
+
+    const fav = await api.favourites.upsert({ hostId: id, path: '/srv/www' });
+    expect((await api.favourites.upsert({ hostId: id, path: '/srv/www' })).id).toBe(fav.id);
+    await expect(api.favourites.upsert({ hostId: 'nope', path: '/' })).rejects.toThrow(/Unknown host/);
+    expect(JSON.parse((await kv.get('pear.favourites'))!)).toHaveLength(1);
+
+    await api.hosts.remove(id);
+    expect(await api.favourites.list()).toEqual([]);
+  });
+
   it('terminals ride SessionManager and surface data/exit events', async () => {
     const plugin = new FakePlugin();
     const api = backend(plugin);

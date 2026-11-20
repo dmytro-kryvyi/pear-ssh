@@ -4,6 +4,13 @@
   [hostStatus]="session.host() ? session.statusOf(session.host()!.id) : 'unknown'"
   (hostTap)="hostTap.emit()"
 >
+  <pm-icon-btn
+    slot="right"
+    [icon]="session.currentFavourite() ? 'starFilled' : 'star'"
+    [iconSize]="19"
+    [label]="session.currentFavourite() ? 'Remove from favourites' : 'Add to favourites'"
+    (click)="session.toggleFavourite()"
+  />
   <pm-icon-btn slot="right" icon="upload" [iconSize]="19" label="Upload" (click)="upload()" />
 </pm-header>
 

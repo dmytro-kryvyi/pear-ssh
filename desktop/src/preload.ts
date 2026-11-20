@@ -7,6 +7,7 @@ import type {
   CopyPair,
   ConflictPolicy,
   HostConfig,
+  Favourite,
   HostGroup,
   OrchAction,
   PearApi,
@@ -48,6 +49,12 @@ const api: PearApi = {
     remove: (id: string) => ipcRenderer.invoke('hostgroups:remove', id),
     setMembership: (hostId: string, groupId: string, member: boolean) =>
       ipcRenderer.invoke('hostgroups:setMembership', hostId, groupId, member),
+  },
+  favourites: {
+    list: () => ipcRenderer.invoke('favourites:list'),
+    upsert: (fav: Omit<Favourite, 'id'> & { id?: string }) =>
+      ipcRenderer.invoke('favourites:upsert', fav),
+    remove: (id: string) => ipcRenderer.invoke('favourites:remove', id),
   },
   term: {
     open: (hostId: string, size: TermSize, opts?: { password?: string; cwd?: string }) =>

@@ -5,6 +5,7 @@ import type { PermissionAnswer } from '../../claude/permission-bridge';
 import { HistoryStore } from '../../history/store';
 import { importShellHistory } from '../../history/import';
 import { EphemeralHostRegistry } from '../../hosts/ephemeral';
+import { FavouriteStore } from '../../hosts/favourites';
 import { HostGroupStore } from '../../hosts/groups';
 import { HostStore, sanitizeHost, type SecretCipher } from '../../hosts/store';
 import { parseGuestIp } from '../../orchestration/guest-ip';
@@ -26,7 +27,7 @@ import {
   type TransferEndpoint,
   type TransferRequest,
 } from '../../transfers/engine';
-import type { HostConfig, HostGroup, OrchAction, SubHostTarget, TermSize } from '../../types';
+import type { Favourite, HostConfig, HostGroup, OrchAction, SubHostTarget, TermSize } from '../../types';
 import { uuid } from '../../uuid';
 import { ClaudeChatRuntime } from '../claude/chat-runtime';
 import { ClaudeExecutor } from '../claude/executor';
@@ -107,6 +108,7 @@ const TOOLS_TTL_MS = 5 * 60_000;
 export class PearService {
   readonly hosts: HostStore;
   readonly groups: HostGroupStore;
+  readonly favourites: FavouriteStore;
   readonly history: HistoryStore;
   readonly sessions: SessionManager;
   readonly transfers: TransferEngine;
@@ -144,6 +146,7 @@ export class PearService {
     this.features = { localHost: true, sshConfig: true, claudePty: true, ...env.features };
     this.hosts = new HostStore(this.file('hosts.json'), env.cipher);
     this.groups = new HostGroupStore(this.file('workspaces.json'));
+    this.favourites = new FavouriteStore(this.file('favourites.json'));
     this.history = new HistoryStore(this.file('history.json'));
 
     if (env.verifyHostKeys) this.knownHosts = new KnownHosts(this.file('known_hosts.json'));
@@ -365,7 +368,10 @@ export class PearService {
     }
     this.sessions.disconnectHost(id);
     if (this.ephemeral.get(id)) this.ephemeral.remove(id);
-    else this.hosts.remove(id);
+    else {
+      this.hosts.remove(id);
+      this.favourites.removeHostRefs(id);
+    }
   }
 
   private claudeUiRequest(payload: ClaudeUiRequestPayload): Promise<unknown> {
@@ -440,7 +446,7 @@ export class PearService {
     const on = (channel: string, handler: ServiceHandler): void => {
       this.handlers.set(channel, handler);
     };
-    const { hosts, groups, history, sessions, transfers, ephemeral, terms } = this;
+    const { hosts, groups, favourites, history, sessions, transfers, ephemeral, terms } = this;
 
     on('hosts:list', () => hosts.listSanitized());
     on('hosts:upsert', ([host]) => hosts.upsert(host as Omit<HostConfig, 'id'> & { id?: string }));
@@ -478,6 +484,17 @@ export class PearService {
     on('hostgroups:setMembership', ([hostId, groupId, member]) =>
       groups.setMembership(asString(hostId), asString(groupId), member === true),
     );
+
+    on('favourites:list', () => favourites.list());
+    on('favourites:upsert', ([fav]) => {
+      const f = fav as Omit<Favourite, 'id'> & { id?: string };
+      if (ephemeral.get(asString(f.hostId))) {
+        throw new Error('Pin this container first: an unpinned one is forgotten on disconnect');
+      }
+      if (!hosts.get(asString(f.hostId))) throw new Error(`Unknown host: ${String(f.hostId)}`);
+      return favourites.upsert(f);
+    });
+    on('favourites:remove', ([id]) => favourites.remove(asString(id)));
 
     on('term:open', async ([hostId, size, rawOpts], ctx) => {
       const host = this.requireHost(hostId);
@@ -722,6 +739,7 @@ export class PearService {
       if (!cfg?.parentId && !cfg?.via) throw new Error(`Not a pinned sub-host: ${String(id)}`);
       hosts.remove(cfg.id);
       groups.removeHostRefs(cfg.id);
+      favourites.removeHostRefs(cfg.id);
       return sanitizeHost(ephemeral.add(cfg));
     });
     on('subhosts:jumpInVm', async ([parentId, vmid, name]) => {

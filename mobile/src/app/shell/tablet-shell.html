@@ -68,6 +68,8 @@
       }
     </div>
 
+    <pm-favourites class="rail-favs" [list]="true" (open)="openFavourite($event)" />
+
     @if (dragId()) {
       <div class="drag-hint">Drop on a workspace above to add it there.</div>
     }

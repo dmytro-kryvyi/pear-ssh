@@ -119,6 +119,7 @@ export { fetchDockerDf } from './monitor/docker-df';
 export { parseGuestIp } from './orchestration/guest-ip';
 export { HostStore, sanitizeHost, type HostStorage, type SecretCipher } from './hosts/store';
 export { HostGroupStore } from './hosts/groups';
+export { FavouriteStore } from './hosts/favourites';
 export { autoShort, shortLabel } from './hosts/identity';
 export {
   resolveSshHosts,

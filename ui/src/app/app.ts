@@ -13,6 +13,7 @@ import { Pear } from './pear';
 import { Settings } from './settings';
 import { HostCatalog } from './hosts';
 import { HostGroups } from './hosts/groups';
+import { Favourites, type FavouriteRow } from './favourites';
 import { HostEditor } from './hosts/host-editor';
 import { WorkspaceEditor } from './hosts/workspace-editor';
 import { SshImport } from './hosts/ssh-import';
@@ -31,7 +32,7 @@ import { OrchStore } from './orch/store';
 import { TasksDrawer } from './orch/tasks-drawer';
 import { FACET_KINDS, FACET_META } from './orch/facet-meta';
 import { PearIcon } from './icons/icon';
-import { ContextMenu } from './menu/context-menu';
+import { ContextMenu, ContextMenuService } from './menu/context-menu';
 import { TransferQueue } from './transfers/queue';
 import { TransfersStore } from './transfers/store';
 import { SettingsModal } from './settings/settings-modal';
@@ -84,6 +85,8 @@ export class App {
   readonly ops = inject(FileOps);
   readonly actions = inject(HostActions);
   readonly hostGroups = inject(HostGroups);
+  readonly favourites = inject(Favourites);
+  private readonly menu = inject(ContextMenuService);
   readonly link = inject(RemoteLink);
   readonly transfers = inject(TransfersStore);
 
@@ -325,6 +328,38 @@ export class App {
       return;
     }
     this.ws.newTab(pane?.id ?? null, host.id, host.cwd || (this.fsStore.homes()[host.id] ?? '~'));
+  }
+
+  onFavouriteMenu(event: MouseEvent, row: FavouriteRow): void {
+    event.preventDefault();
+    const { fav } = row;
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Open', icon: 'folderOpen', onClick: () => this.ws.openDir(fav.hostId, fav.path) },
+      {
+        label: 'Open in another pane',
+        icon: 'split',
+        disabled: !this.ws.focusedPane(),
+        onClick: () => {
+          const pane = this.ws.focusedPane();
+          if (pane) this.ws.openToSide(pane.id, fav.hostId, fav.path, 'dir');
+        },
+      },
+      { divider: true },
+      {
+        label: 'Rename',
+        icon: 'pencil',
+        onClick: () => {
+          const label = window.prompt('Name for this favourite', row.label);
+          if (label !== null) void this.favourites.rename(fav, label);
+        },
+      },
+      {
+        label: 'Remove from favourites',
+        icon: 'trash',
+        danger: true,
+        onClick: () => void this.favourites.remove(fav.id),
+      },
+    ]);
   }
 
   async addHost(): Promise<void> {

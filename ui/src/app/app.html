@@ -211,6 +211,32 @@
       }
     }
 
+    @if (favourites.rows().length) {
+      <div class="favourites">
+        <div class="section-title"><span>Favourites</span></div>
+        @if (favourites.error()) {
+          <div class="quick-add-error">{{ favourites.error() }}</div>
+        }
+        <div class="fav-list">
+          @for (row of favourites.rows(); track row.fav.id) {
+            <div
+              class="fav-row"
+              [title]="row.host.name + ':' + row.fav.path"
+              (click)="ws.openDir(row.fav.hostId, row.fav.path)"
+              (contextmenu)="onFavouriteMenu($event, row)"
+            >
+              <pear-icon name="starFilled" [size]="12" class="fav-star" />
+              <span class="fav-label">{{ row.label }}</span>
+              <span class="fav-host">
+                <span class="fav-dot" [style.background]="catalog.color(row.host.id)"></span>
+                {{ row.host.name }}
+              </span>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
     <form class="quick-add" (ngSubmit)="addHost()">
       <div class="section-title"><span>Quick connect</span></div>
       @if (error()) {
