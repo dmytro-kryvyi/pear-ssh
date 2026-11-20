@@ -11,6 +11,7 @@ import {
   parseHashLines,
 } from './stream-util';
 import { TAR_MAX_OCTAL_SIZE, type TarEntryType } from './tar';
+import { relayTar } from './tar-relay';
 
 // The pure tsconfig carries no platform lib; timers exist wherever this runs.
 declare function setTimeout(handler: () => void, timeout?: number): unknown;
@@ -107,6 +108,9 @@ export interface TransferJobSnapshot {
   filesSkipped?: number;
   /** Smoothed files per second of the current stage; null until measurable. */
   filesPerSec?: number | null;
+  /** A host→host job streaming straight from one host into the other (one
+   *  stage, nothing staged on the Pear machine). */
+  direct?: boolean;
   /** cancel() was called on a running job; `canceled` follows once it stops. */
   cancelRequested?: boolean;
 }
@@ -439,9 +443,16 @@ export class TransferEngine {
       snap.filesSkipped = manifest.skipped;
       snap.bytesTotal = manifest.files.reduce((a, f) => a + f.size, 0);
       snap.fileCount = manifest.files.length;
+      const direct = snap.stages === 2 && (await this.canDirect(manifest, src, dest, job.req.src.dir));
+      if (direct) {
+        snap.stages = 1;
+        snap.direct = true;
+      }
       this.startStage(job, 0, manifest);
 
-      if (snap.stages === 2) {
+      if (direct) {
+        await this.directStage(job, manifest, src, dest);
+      } else if (snap.stages === 2) {
         staging = await this.env.makeStagingDir();
         const relay = await this.env.connection(null);
         await this.copyStage(job, manifest, {
@@ -856,6 +867,208 @@ export class TransferEngine {
     }
   }
 
+  // ---- host → host, direct ---------------------------------------------------
+
+  private async canDirect(
+    manifest: Manifest,
+    src: SshTransport,
+    dest: SshTransport,
+    srcDir: string,
+  ): Promise<boolean> {
+    if (!manifest.files.length) return false;
+    const unsafe = (s: string): boolean => s.includes('\n');
+    if (manifest.dirs.some(unsafe)) return false;
+    for (const f of manifest.files) {
+      if (f.size > TAR_MAX_OCTAL_SIZE || unsafe(f.srcRel) || unsafe(f.destRel)) return false;
+    }
+    const [from, to] = await Promise.all([this.canTar(src), this.canTar(dest)]);
+    if (!from || !to) return false;
+    if (from === 'busybox' && this.createCommand(srcDir, manifest.moveRoots).length > TAR_CMD_MAX) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * One stage, no staging: `tar -c` on the source host streams through the
+   * Pear machine's memory into `tar -x` on the destination host. Large files
+   * ride along in the stream (nothing to resume from on a relay).
+   */
+  private async directStage(
+    job: Job,
+    manifest: Manifest,
+    src: SshTransport,
+    dest: SshTransport,
+  ): Promise<void> {
+    const snap = job.snapshot;
+    const { req } = job;
+    job.prog.tar = true;
+    const listMode = (await this.canTar(src)) !== 'busybox';
+    const srcPipe = await src.execPipe!(
+      listMode ? this.listCommand(req.src.dir) : this.createCommand(req.src.dir, manifest.moveRoots),
+    );
+    let destPipe: PipeChannel;
+    try {
+      destPipe = await dest.execPipe!(`tar -x -o -f - -C ${shq(req.dest.dir)}`);
+    } catch (err) {
+      srcPipe.close();
+      throw err;
+    }
+    let srcErr = '';
+    let destErr = '';
+    srcPipe.onStderr((t) => (srcErr = (srcErr + t).slice(-2048)));
+    destPipe.onStderr((t) => (destErr = (destErr + t).slice(-2048)));
+    const destClosed = new Promise<number | null>((resolve) => destPipe.onClose(resolve));
+    const onCancel = (): void => {
+      srcPipe.close();
+      destPipe.close();
+    };
+    job.aborter.addEventListener('abort', onCancel);
+    if (listMode) {
+      const feed = new PipeWriter(srcPipe);
+      void feed
+        .write(encodeNulList(manifest.files.map((f) => './' + f.srcRel)))
+        .then(() => feed.end())
+        .catch(() => {});
+    }
+
+    const bySrc = new Map(manifest.files.map((f) => [f.srcRel, f]));
+    const byDest = new Map(manifest.files.map((f) => [f.destRel, f]));
+    let completedBytes = 0;
+    let completedCount = 0;
+    const recent: { path: string; end: number }[] = [];
+    const prune = (sent: number): void => {
+      while (recent.length && recent[0].end <= sent - PIPE_SLACK) {
+        job.partials.delete(recent.shift()!.path);
+      }
+    };
+    try {
+      snap.phase = 'copying';
+      let result: { atEnd: boolean; code: number | null };
+      try {
+        result = await relayTar(srcPipe, destPipe, {
+          dirs: manifest.dirs,
+          dirMtimeSec: Math.floor(this.now() / 1000),
+          map: (path) => bySrc.get(path)?.destRel ?? null,
+          onEntry: (destRel, phase) => {
+            const file = byDest.get(destRel);
+            if (!file) return;
+            const toPath = joinPath(req.dest.dir, destRel);
+            if (phase === 'start') {
+              job.partials.set(toPath, req.dest.hostId);
+              snap.currentName = destRel;
+              snap.fileIndex = Math.min(completedCount + 1, manifest.files.length);
+              return;
+            }
+            completedBytes += file.size;
+            completedCount++;
+            this.fileDone(job, file);
+            recent.push({ path: toPath, end: completedBytes });
+            prune(completedBytes);
+            snap.bytesDone = completedBytes;
+            this.emit(job, true);
+          },
+          onProgress: (destRel, bytes) => {
+            const file = byDest.get(destRel);
+            snap.bytesDone = completedBytes + (file ? Math.min(bytes, file.size) : 0);
+            prune(snap.bytesDone);
+            this.emit(job);
+          },
+        });
+      } catch (err) {
+        this.checkCanceled(job);
+        destPipe.end();
+        // Whichever side quit first explains the failure.
+        const destCode = await Promise.race([
+          destClosed,
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2_000)),
+        ]);
+        destPipe.close();
+        if (typeof destCode === 'number' && destCode !== 0) {
+          throw new Error(this.tarError('tar -x', destCode, destErr));
+        }
+        throw new Error(`${this.tarError('tar -c', null, srcErr)}: ${messageOf(err)}`);
+      }
+      const destCode = await destClosed;
+      this.checkCanceled(job);
+      if (destCode !== 0) throw new Error(this.tarError('tar -x', destCode, destErr));
+      const missing = manifest.files.length - completedCount;
+      if (missing > 0 || !result.atEnd) {
+        throw new Error(
+          result.code === 0
+            ? `${missing} file(s) were not in the stream from the source host`
+            : this.tarError('tar -c', result.code, srcErr),
+        );
+      }
+      for (const [path, hostId] of job.partials) if (hostId === req.dest.hostId) job.partials.delete(path);
+      if (req.verify) {
+        snap.phase = 'verifying';
+        snap.currentName = null;
+        this.emit(job, true);
+        const [a, b] = await Promise.all([
+          this.remoteHashes(job, src, req.src.dir, manifest.files.map((f) => f.srcRel)),
+          this.remoteHashes(job, dest, req.dest.dir, manifest.files.map((f) => f.destRel)),
+        ]);
+        const bad = manifest.files.filter((f) => {
+          const want = a.get(f.srcRel);
+          // A symlink has nothing of its own to hash on either side.
+          return want !== undefined && want !== b.get(f.destRel);
+        });
+        await this.failMismatched(job, req.dest.hostId, req.dest.dir, bad.map((f) => f.destRel));
+        snap.phase = 'copying';
+      }
+    } finally {
+      job.aborter.removeEventListener('abort', onCancel);
+    }
+  }
+
+  /** SHA-256 of every named file under `dir` on a host, in one batch. */
+  private async remoteHashes(
+    job: Job,
+    t: SshTransport,
+    dir: string,
+    names: string[],
+  ): Promise<Map<string, string>> {
+    const pipe = await t.execPipe!(batchHashCommand(dir, shq));
+    let stderr = '';
+    pipe.onStderr((text) => (stderr = (stderr + text).slice(-2048)));
+    const onCancel = (): void => pipe.close();
+    job.aborter.addEventListener('abort', onCancel);
+    try {
+      const output = collectPipe(pipe);
+      const writer = new PipeWriter(pipe);
+      await writer.write(encodeNulList(names)).catch(() => {});
+      writer.end();
+      const { stdout } = await output;
+      this.checkCanceled(job);
+      let hashes = parseHashLines(stdout);
+      if (hashes.size === 0 && /not found|No such/i.test(stderr)) {
+        // No xargs or no checksum tool on the host: one file at a time.
+        hashes = new Map();
+        for (const name of names) {
+          this.checkCanceled(job);
+          hashes.set(name, await t.hash(joinPath(dir, name)));
+        }
+      }
+      return hashes;
+    } finally {
+      job.aborter.removeEventListener('abort', onCancel);
+    }
+  }
+
+  /** Remove the files whose checksums disagreed and fail the job naming them. */
+  private async failMismatched(
+    job: Job,
+    hostId: string | null,
+    dir: string,
+    bad: string[],
+  ): Promise<void> {
+    if (!bad.length) return;
+    await Promise.all(bad.map((rel) => this.removeAt(hostId, joinPath(dir, rel))));
+    const more = bad.length > 3 ? ` (+${bad.length - 3} more)` : '';
+    throw new Error(`checksum mismatch: ${bad.slice(0, 3).join(', ')}${more}`);
+  }
+
   private tarError(tool: string, code: number | null, stderr: string): string {
     const last = stderr
       .split('\n')
@@ -989,43 +1202,19 @@ export class TransferEngine {
     const remote = leg.mode === 'upload' ? leg.to : leg.from;
     const remoteDir = leg.mode === 'upload' ? leg.toDir : leg.fromDir;
     const remoteKey = leg.mode === 'upload' ? 'destRel' : leg.fromKey;
-    const names = manifest.files.map((f) => f[remoteKey]);
-    const pipe = await remote.execPipe!(batchHashCommand(remoteDir, shq));
-    let stderr = '';
-    pipe.onStderr((text) => (stderr = (stderr + text).slice(-2048)));
-    const onCancel = (): void => pipe.close();
-    job.aborter.addEventListener('abort', onCancel);
-    let remoteHashes: Map<string, string>;
-    try {
-      const output = collectPipe(pipe);
-      const writer = new PipeWriter(pipe);
-      await writer.write(encodeNulList(names)).catch(() => {});
-      writer.end();
-      const { stdout } = await output;
-      this.checkCanceled(job);
-      remoteHashes = parseHashLines(stdout);
-      if (remoteHashes.size === 0 && /not found|No such/i.test(stderr)) {
-        // No xargs or no checksum tool on the host: one file at a time.
-        remoteHashes = new Map();
-        for (const name of names) {
-          this.checkCanceled(job);
-          remoteHashes.set(name, await remote.hash(joinPath(remoteDir, name)));
-        }
-      }
-    } finally {
-      job.aborter.removeEventListener('abort', onCancel);
-    }
+    const remoteHashes = await this.remoteHashes(
+      job,
+      remote,
+      remoteDir,
+      manifest.files.map((f) => f[remoteKey]),
+    );
     const bad: string[] = [];
     for (const f of manifest.files) {
       // Symlinks carry no digest (the host would hash their target instead).
       const mine = local.get(f.destRel);
       if (mine !== undefined && mine !== remoteHashes.get(f[remoteKey])) bad.push(f.destRel);
     }
-    if (bad.length) {
-      await Promise.all(bad.map((rel) => this.removeAt(leg.toHostId, joinPath(leg.toDir, rel))));
-      const more = bad.length > 3 ? ` (+${bad.length - 3} more)` : '';
-      throw new Error(`checksum mismatch: ${bad.slice(0, 3).join(', ')}${more}`);
-    }
+    await this.failMismatched(job, leg.toHostId, leg.toDir, bad);
     snap.phase = 'copying';
   }
 

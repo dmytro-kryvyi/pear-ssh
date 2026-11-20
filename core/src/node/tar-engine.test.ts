@@ -152,3 +152,53 @@ test('cancel mid-stream leaves no half-written file behind', async () => {
   const hash = createHash('sha256').update(big).digest('hex');
   assert.ok(hash.length === 64);
 });
+
+test('host to host: real tar on both ends, streamed directly with verification', async () => {
+  const updates: TransferJobSnapshot[] = [];
+  const hosts = { a: new LocalConnection(), b: new LocalConnection(), relay: new LocalConnection() };
+  let staged = 0;
+  const eng = new TransferEngine(
+    {
+      connection: async (hostId) => {
+        const t = hostId === null ? hosts.relay : hosts[hostId as 'a' | 'b'];
+        if (!t.isConnected) await t.connect();
+        return t;
+      },
+      makeStagingDir: () => {
+        staged++;
+        return makeStagingDir();
+      },
+      removeStaging,
+      tar: nodeTarIo,
+    },
+    { onUpdate: (j) => updates.push(j) },
+  );
+  const dst = join(root, 'dst-direct');
+  mkdirSync(join(dst, 'tree'), { recursive: true });
+  const id = eng.start({
+    src: { hostId: 'a', dir: join(root, 'src') },
+    dest: { hostId: 'b', dir: dst },
+    names: ['tree'],
+    op: 'copy',
+    conflict: 'rename',
+    verify: true,
+  });
+  const last = await new Promise<TransferJobSnapshot>((resolve) => {
+    const check = () => {
+      const u = updates.filter((x) => x.id === id).at(-1);
+      if (u && ['done', 'error', 'canceled'].includes(u.status)) resolve(u);
+      else setTimeout(check, 5);
+    };
+    check();
+  });
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(last.direct, true);
+  assert.equal(staged, 0);
+  const got = join(dst, 'tree (1)');
+  assert.equal(readFileSync(join(got, 'sub', 'f99.txt'), 'utf8'), 'content 99');
+  assert.equal(readFileSync(join(got, LONG), 'utf8'), 'long');
+  assert.equal(readlinkSync(join(got, 'link')), 'f0.txt');
+  assert.equal(Math.floor(lstatSync(join(got, 'f0.txt')).mtimeMs / 1000), 1_600_000_000);
+  assert.equal(existsSync(join(got, '__MACOSX')), false);
+  assert.equal(last.filesDone, 102);
+});

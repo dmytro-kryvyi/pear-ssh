@@ -1022,16 +1022,85 @@ test('tar: an upload of many files packs on the Pear machine and tar -x unpacks 
   assert.equal(h.b.activeNow, 0);
 });
 
-test('tar: a relay uses a stream on both legs and cleans staging', async () => {
-  const h = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+test('host to host streams directly: no staging, one stage, renamed roots honoured', async () => {
+  const h = tarHarness({ a: tree('/src/tree', 40), b: { '/dst/tree/old.txt': 'old' } });
   const id = h.engine.start(req({ names: ['tree'] }));
   const last = await h.finished(id);
   assert.equal(last.status, 'done', last.error);
-  assert.equal(h.aPipes.commands[1], `tar -c -f - -C '/src' './tree'`);
-  assert.equal(h.bPipes.commands[1], `tar -x -o -f - -C '/dst'`);
-  assert.equal(filesOn(h.b, '/dst/tree'), 40);
+  assert.equal(last.stages, 1);
+  assert.equal(last.direct, true);
+  assert.deepEqual(h.aPipes.commands, [TAR_PROBE, `tar -c -f - -C '/src' './tree'`]);
+  assert.deepEqual(h.bPipes.commands, [TAR_PROBE, `tar -x -o -f - -C '/dst'`]);
+  assert.deepEqual(h.stagingDirs, [], 'nothing staged on the Pear machine');
+  assert.equal(filesOn(h.b, '/dst/tree (1)'), 40, 'landed under the name the conflict policy chose');
+  assert.equal(await h.b.readFile('/dst/tree (1)/sub/f1.txt'), 'content 1');
+  assert.equal(filesOn(h.b, '/dst/tree/'), 1, 'the existing folder is untouched');
+  assert.equal(last.filesDone, 40);
+  assert.equal(last.bytesDone, last.bytesTotal);
+});
+
+test('direct: a gnu source is handed the file list, metadata never leaves it, one file is enough', async () => {
+  const h = tarHarness({ a: { ...tree('/src/tree', 3), '/src/tree/.DS_Store': 'junk' }, b: { '/dst': null } });
+  h.aPipes.knobs.flavor = 'gnu';
+  const last = await h.finished(h.engine.start(req({ names: ['tree'] })));
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(h.aPipes.commands[1], `tar -c -f - -C '/src' --no-recursion --null -T -`);
+  assert.equal(filesOn(h.b, '/dst/tree'), 3);
+  assert.ok(h.b.fs.get('/dst/tree/sub')?.kind === 'dir');
+});
+
+test('direct: falls back to the staged relay when a side cannot stream', async () => {
+  const h = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  h.bPipes.knobs.tarMissing = true;
+  const last = await h.finished(h.engine.start(req({ names: ['tree'] })));
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(last.stages, 2);
+  assert.equal(last.direct, undefined);
+  assert.equal(h.stagingDirs.length, 1);
   assert.deepEqual(h.removedStaging, h.stagingDirs);
-  assert.equal(h.local.fs.has(h.stagingDirs[0]), false);
+  assert.equal(filesOn(h.b, '/dst/tree'), 40);
+});
+
+test('direct: cancel closes both ends and removes the file in flight', async () => {
+  const h = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  let release!: () => void;
+  h.aPipes.knobs.createGate = new Promise<void>((r) => (release = r));
+  const id = h.engine.start(req({ names: ['tree'] }));
+  while (!h.updates.some((u) => u.id === id && (u.filesDone ?? 0) > 5)) await new Promise((r) => setTimeout(r, 1));
+  h.engine.cancel(id);
+  release();
+  const last = await h.finished(id);
+  assert.equal(last.status, 'canceled');
+  assert.ok(filesOn(h.b, '/dst/tree') < 40);
+});
+
+test('direct: either host failing is reported with that host\'s own words', async () => {
+  const full = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  full.bPipes.knobs.extractFails = 'No space left on device';
+  const a = await full.finished(full.engine.start(req({ names: ['tree'] })));
+  assert.equal(a.status, 'error');
+  assert.equal(a.error, 'tar -x exit 2: tar: No space left on device');
+
+  const cut = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  cut.aPipes.knobs.cutStream = true;
+  const b = await cut.finished(cut.engine.start(req({ names: ['tree'] })));
+  assert.equal(b.status, 'error');
+  assert.match(b.error ?? '', /^tar -c (exit 2|ended without a status): tar: killed/);
+});
+
+test('direct: verify compares the two hosts\' checksums', async () => {
+  const good = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  const ok = await good.finished(good.engine.start(req({ names: ['tree'], verify: true })));
+  assert.equal(ok.status, 'done', ok.error);
+  assert.match(good.aPipes.commands[2], /^cd '\/src' && if command -v sha256sum/);
+  assert.match(good.bPipes.commands[2], /^cd '\/dst' && if command -v sha256sum/);
+
+  const bad = tarHarness({ a: tree('/src/tree', 40), b: { '/dst': null } });
+  bad.b.corruptHash = true;
+  const fail = await bad.finished(bad.engine.start(req({ names: ['tree'], verify: true })));
+  assert.equal(fail.status, 'error');
+  assert.match(fail.error ?? '', /^checksum mismatch: .* \(\+37 more\)$/);
+  assert.equal(filesOn(bad.b, '/dst/tree'), 0);
 });
 
 test('tar: the per-file path stays for few files, newline names, hosts without tar or streaming', async () => {

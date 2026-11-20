@@ -330,6 +330,7 @@ export class TransfersStore {
       case 'finalizing':
         return 'Removing source…';
       default: {
+        if (job.direct) return `Streaming from ${this.fromName(job)} to ${this.toName(job)}`;
         // Stage 0 of a relay and a plain download both pull from the source.
         const pulling = job.dest.hostId === null || (job.stages === 2 && job.stage === 0);
         return pulling ? `Downloading from ${this.fromName(job)}` : `Uploading to ${this.toName(job)}`;
