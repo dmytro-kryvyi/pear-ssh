@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Server, utils, type Connection, type SFTPWrapper } from 'ssh2';
@@ -28,22 +28,29 @@ class FakeSftpHost {
   writes = 0;
   /** When set, the connection is dropped after this many WRITE requests. */
   dropAfterWrites: number | null = null;
+  /** mtime (seconds) per path, as set by FSETSTAT or seeded by a test. */
+  mtimes = new Map<string, number>();
+  openFlags: number[] = [];
   private nextHandle = 0;
 
   attach(client: Connection, sftp: SFTPWrapper): void {
     const later = (fn: () => void): void => void setTimeout(fn, RTT_MS);
-    const attrsOf = (buf: Buffer) => ({
+    const attrsOf = (buf: Buffer, path?: string) => ({
       mode: 0o100644,
       uid: 0,
       gid: 0,
       size: buf.length,
       atime: 0,
-      mtime: 0,
+      mtime: (path && this.mtimes.get(path)) || 0,
     });
     sftp.on('OPEN', (reqid, filename, flags, attrs) => {
       if (flags & OPEN_MODE.WRITE) {
-        this.files.set(filename, Buffer.alloc(0));
+        // Truncate only when asked: a resumed upload reopens without TRUNC.
+        if (flags & OPEN_MODE.TRUNC || !this.files.has(filename)) {
+          this.files.set(filename, Buffer.alloc(0));
+        }
         this.openModes.push(attrs.mode);
+        this.openFlags.push(flags);
       } else if (!this.files.has(filename)) {
         return later(() => sftp.status(reqid, STATUS_CODE.NO_SUCH_FILE));
       }
@@ -71,8 +78,13 @@ class FakeSftpHost {
       later(() => sftp.data(reqid, slice));
     });
     sftp.on('FSTAT', (reqid, handle) => {
-      const buf = this.files.get(this.handles.get(handle.toString())!)!;
-      later(() => sftp.attrs(reqid, attrsOf(buf)));
+      const path = this.handles.get(handle.toString())!;
+      later(() => sftp.attrs(reqid, attrsOf(this.files.get(path)!, path)));
+    });
+    sftp.on('FSETSTAT', (reqid, handle, attrs) => {
+      const path = this.handles.get(handle.toString())!;
+      if (attrs.mtime !== undefined) this.mtimes.set(path, attrs.mtime);
+      later(() => sftp.status(reqid, STATUS_CODE.OK));
     });
     const statPath = (reqid: number, path: string): void => {
       const buf = this.files.get(path);
@@ -183,6 +195,25 @@ test('upload keeps the source permission bits', async () => {
     remote.openModes.length = 0;
     await conn.uploadFile(local, '/remote/secret.txt');
     assert.equal(remote.openModes[0] & 0o777, 0o600);
+  } finally {
+    conn.dispose();
+  }
+});
+
+test('modification times travel with the file in both directions', async () => {
+  const conn = await connect();
+  try {
+    const local = join(dir, 'dated.txt');
+    await writeFile(local, 'old news');
+    await utimes(local, new Date(1_600_000_000_000), new Date(1_600_000_000_000));
+    await conn.uploadFile(local, '/remote/dated.txt');
+    assert.equal(remote.mtimes.get('/remote/dated.txt'), 1_600_000_000);
+
+    remote.files.set('/remote/older.txt', Buffer.from('older'));
+    remote.mtimes.set('/remote/older.txt', 1_500_000_000);
+    const back = join(dir, 'older.txt');
+    await conn.download('/remote/older.txt', back);
+    assert.equal(Math.floor((await stat(back)).mtimeMs / 1000), 1_500_000_000);
   } finally {
     conn.dispose();
   }

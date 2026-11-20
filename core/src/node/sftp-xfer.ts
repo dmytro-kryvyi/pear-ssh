@@ -161,9 +161,20 @@ function openRemote(
   });
 }
 
-function fstatRemote(sftp: SFTPWrapper, handle: Buffer): Promise<{ size: number }> {
+function fstatRemote(sftp: SFTPWrapper, handle: Buffer): Promise<{ size: number; mtime?: number }> {
   return new Promise((resolve, reject) => {
     sftp.fstat(handle, (err, stats) => (err ? reject(err) : resolve(stats)));
+  });
+}
+
+/** Stamp the source's times on the copy. Best effort: some servers refuse. */
+function futimesRemote(sftp: SFTPWrapper, handle: Buffer, mtimeSec: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+    sftp.futimes(handle, mtimeSec, mtimeSec, () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
@@ -227,6 +238,8 @@ export async function sftpPut(
           return len;
         },
       });
+      // So a later "is it unchanged?" comparison has something to go by.
+      if (!watch.gone()) await futimesRemote(sftp, handle, Math.floor(st.mtimeMs / 1000));
     } catch (err) {
       primary = err;
       throw err;
@@ -257,7 +270,8 @@ export async function sftpGet(
     const handle = await openRemote(sftp, remotePath, 'r');
     let primary: unknown = null;
     try {
-      const total = (await fstatRemote(sftp, handle)).size;
+      const remote = await fstatRemote(sftp, handle);
+      const total = remote.size;
       const { read: chunk } = chunkSizes(sftp);
       const fh = await fsp.open(localPath, 'w');
       try {
@@ -281,6 +295,10 @@ export async function sftpGet(
             return got;
           },
         });
+        if (remote.mtime) {
+          const t = new Date(remote.mtime * 1000);
+          await fh.utimes(t, t).catch(() => {});
+        }
       } finally {
         await fh.close();
       }

@@ -2,6 +2,7 @@ import type { AbortSignalLike, PipeChannel, SshTransport, TransferOpts } from '.
 import { shq } from '../shq';
 import { uuid } from '../uuid';
 import { isMacMeta } from './mac-meta';
+import { parseWalk, walkCommand, type WalkedTree } from './remote-walk';
 import {
   PipeWriter,
   batchHashCommand,
@@ -199,6 +200,8 @@ interface ManifestFile {
   srcRel: string;
   destRel: string;
   size: number;
+  /** Source modification time; 0 when the listing did not carry one. */
+  mtimeMs: number;
 }
 
 interface Manifest {
@@ -270,6 +273,13 @@ const PIPE_SLACK = 8 * 1024 * 1024;
  *  risked against ARG_MAX. */
 const TAR_CMD_MAX = 64 * 1024;
 const TAR_PROBE_MS = 10_000;
+/** Prints tar's version line (for its flavour) and exits 0 iff tar exists. */
+export const TAR_PROBE = 'tar --version 2>&1 | head -n 1; command -v tar >/dev/null 2>&1';
+/** One `find` over a big tree may take a while on a slow disk. */
+const WALK_TIMEOUT_MS = 120_000;
+
+/** gnu and bsd tar read a NUL-separated file list from stdin; busybox does not. */
+type TarFlavor = 'gnu' | 'bsd' | 'busybox';
 
 export class TransferEngine {
   private jobs = new Map<string, Job>();
@@ -600,38 +610,40 @@ export class TransferEngine {
 
   // ---- tar legs ---------------------------------------------------------------
 
-  /** Per transport: can it stream, does the route carry stdin, is tar there. */
-  private tarProbe = new WeakMap<SshTransport, Promise<boolean>>();
+  /** Per transport: can it stream, does the route carry stdin, which tar is there. */
+  private tarProbe = new WeakMap<SshTransport, Promise<TarFlavor | null>>();
 
-  private canTar(t: SshTransport): Promise<boolean> {
+  private canTar(t: SshTransport): Promise<TarFlavor | null> {
     const cached = this.tarProbe.get(t);
     if (cached) return cached;
-    const probe = (async (): Promise<boolean> => {
-      if (!t.execPipe) return false;
+    const probe = (async (): Promise<TarFlavor | null> => {
+      if (!t.execPipe) return null;
       try {
-        const pipe = await t.execPipe('command -v tar >/dev/null 2>&1');
+        const pipe = await t.execPipe(TAR_PROBE);
         pipe.end();
-        const code = await new Promise<number | null>((resolve) => {
-          const timer = setTimeout(() => {
-            pipe.close();
-            resolve(null);
-          }, TAR_PROBE_MS);
-          pipe.onClose((c) => {
-            clearTimeout(timer);
-            resolve(c);
-          });
-        });
-        return code === 0;
+        const timer = setTimeout(() => pipe.close(), TAR_PROBE_MS);
+        const { code, stdout } = await collectPipe(pipe);
+        clearTimeout(timer);
+        if (code !== 0) return null;
+        if (/GNU tar/i.test(stdout)) return 'gnu';
+        if (/bsdtar|libarchive/i.test(stdout)) return 'bsd';
+        return 'busybox';
       } catch {
-        return false;
+        return null;
       }
     })();
     this.tarProbe.set(t, probe);
     return probe;
   }
 
+  /** Roots mode: tar walks the selected entries itself (any tar). */
   private createCommand(dir: string, names: string[]): string {
     return `tar -c -f - -C ${shq(dir)} ${names.map((n) => shq('./' + n)).join(' ')}`;
+  }
+
+  /** List mode: exactly the files named on stdin, NUL-separated (gnu, bsd). */
+  private listCommand(dir: string): string {
+    return `tar -c -f - -C ${shq(dir)} --no-recursion --null -T -`;
   }
 
   private async useTar(manifest: Manifest, leg: Leg): Promise<boolean> {
@@ -641,30 +653,48 @@ export class TransferEngine {
     for (const f of manifest.files) {
       if (f.size > TAR_MAX_OCTAL_SIZE || unsafe(f.srcRel) || unsafe(f.destRel)) return false;
     }
-    if (leg.mode === 'download') {
+    const flavor = await this.canTar(leg.mode === 'upload' ? leg.to : leg.from);
+    if (!flavor) return false;
+    if (leg.mode === 'download' && flavor === 'busybox') {
       if (this.createCommand(leg.fromDir, manifest.moveRoots).length > TAR_CMD_MAX) return false;
     }
-    return this.canTar(leg.mode === 'upload' ? leg.to : leg.from);
+    return true;
   }
 
   /**
    * Carry the whole leg as one tar stream. Upload: the Pear machine packs,
-   * `tar -x` on the host unpacks. Download: `tar -c` on the host packs the
-   * selected top-level entries, the Pear machine unpacks what the manifest
-   * wants (renamed roots, skipped metadata) and drops the rest.
+   * `tar -x` on the host unpacks. Download: `tar -c` on the host packs —
+   * exactly the manifest's files when its tar reads a list from stdin, else
+   * the selected top-level entries — and the Pear machine unpacks what the
+   * manifest wants (renamed roots, skipped metadata), dropping the rest.
    */
   private async tarStage(job: Job, manifest: Manifest, leg: Leg): Promise<void> {
     const snap = job.snapshot;
     job.prog.tar = true;
     const remote = leg.mode === 'upload' ? leg.to : leg.from;
+    const listMode = leg.mode === 'download' && (await this.canTar(remote)) !== 'busybox';
     const command =
       leg.mode === 'upload'
         ? `tar -x -o -f - -C ${shq(leg.toDir)}`
-        : this.createCommand(leg.fromDir, manifest.moveRoots);
+        : listMode
+          ? this.listCommand(leg.fromDir)
+          : this.createCommand(leg.fromDir, manifest.moveRoots);
+    // A file list carries no directory entries: make them here, so empty
+    // folders exist too.
+    if (listMode) await this.makeDirs(job, leg.to, leg.toDir, manifest.dirs);
     const pipe = await remote.execPipe!(command);
     let stderr = '';
     pipe.onStderr((text) => (stderr = (stderr + text).slice(-2048)));
     const closed = new Promise<number | null>((resolve) => pipe.onClose(resolve));
+    if (listMode) {
+      // Fed while the unpacker is already reading: tar starts streaming as
+      // soon as the first names arrive. A failure here shows up as tar's exit.
+      const feed = new PipeWriter(pipe);
+      void feed
+        .write(encodeNulList(manifest.files.map((f) => './' + f[leg.fromKey])))
+        .then(() => feed.end())
+        .catch(() => {});
+    }
     const onCancel = (): void => pipe.close();
     job.aborter.addEventListener('abort', onCancel);
     const hashes = new Map<string, string>();
@@ -948,12 +978,42 @@ export class TransferEngine {
 
       if (st.kind === 'dir') {
         manifest.dirs.push(destName);
-        await this.walkDir(job, src, srcPath, name, destName, manifest);
+        const fast = req.src.hostId === null ? null : await this.fastWalk(job, src, req.src.dir, [name]);
+        if (fast) {
+          const rename = (rel: string): string => destName + rel.slice(name.length);
+          for (const d of fast.dirs) if (d !== name) manifest.dirs.push(rename(d));
+          for (const f of fast.files) {
+            manifest.files.push({ srcRel: f.rel, destRel: rename(f.rel), size: f.size, mtimeMs: f.mtimeMs });
+          }
+        } else {
+          await this.walkDir(job, src, srcPath, name, destName, manifest);
+        }
       } else {
-        manifest.files.push({ srcRel: name, destRel: destName, size: st.size });
+        manifest.files.push({ srcRel: name, destRel: destName, size: st.size, mtimeMs: st.mtimeMs });
       }
     }
     return manifest;
+  }
+
+  /**
+   * A whole tree in one round trip (see remote-walk.ts); null when the host
+   * cannot answer in that form, and the caller lists directory by directory.
+   */
+  private async fastWalk(
+    job: Job,
+    t: SshTransport,
+    dir: string,
+    names: string[],
+  ): Promise<WalkedTree | null> {
+    try {
+      const result = await t.exec(walkCommand(dir, names), { timeoutMs: WALK_TIMEOUT_MS });
+      this.checkCanceled(job);
+      if (result.code !== 0) return null;
+      return parseWalk(result.stdout, names, { skipMacMeta: job.req.skipMacMeta ?? true });
+    } catch (err) {
+      this.checkCanceled(job);
+      return null;
+    }
   }
 
   private async walkDir(
@@ -975,7 +1035,7 @@ export class TransferEngine {
         manifest.dirs.push(destRel);
         await this.walkDir(job, src, joinPath(absDir, entry.name), srcRel, destRel, manifest);
       } else {
-        manifest.files.push({ srcRel, destRel, size: entry.size });
+        manifest.files.push({ srcRel, destRel, size: entry.size, mtimeMs: entry.mtimeMs });
       }
     }
   }

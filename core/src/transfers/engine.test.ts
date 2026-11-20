@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { TransferEngine, joinPath } from './engine';
+import { TAR_PROBE, TransferEngine, joinPath } from './engine';
 import type { TransferEnv, TransferJobSnapshot, TransferRequest } from './engine';
 import type {
   DirListing,
@@ -71,8 +71,26 @@ class MemTransport implements SshTransport {
   async shellCommand(): Promise<ShellChannel> {
     throw new Error('not used');
   }
-  async exec(): Promise<ExecResult> {
-    return { code: 0, stdout: '', stderr: '' };
+  /** Commands run through exec, and an optional scripted answer. */
+  execs: string[] = [];
+  listDirs = 0;
+  execAnswer: ((command: string) => ExecResult | null) | null = null;
+  async exec(command = ''): Promise<ExecResult> {
+    this.execs.push(command);
+    return this.execAnswer?.(command) ?? { code: 0, stdout: '', stderr: '' };
+  }
+
+  /** What `find … -exec stat -c '%f %s %Y %n'` prints for the given roots. */
+  findOutput(dir: string, roots: string[]): string {
+    const lines: string[] = [];
+    for (const key of [...this.fs.keys()].sort()) {
+      const root = roots.find((r) => key === joinPath(dir, r) || key.startsWith(joinPath(dir, r) + '/'));
+      if (!root) continue;
+      const node = this.fs.get(key)!;
+      const mode = node.kind === 'dir' ? '41ed 4096' : `81a4 ${node.data.length}`;
+      lines.push(`${mode} 1700000000 ./${key.slice(dir.length + 1)}`);
+    }
+    return lines.join('\n') + '\n';
   }
 
   private entry(path: string, name: string): FileEntry {
@@ -87,6 +105,7 @@ class MemTransport implements SshTransport {
   }
 
   async listDir(path: string): Promise<DirListing> {
+    this.listDirs++;
     const prefix = path === '/' ? '/' : path + '/';
     const entries: FileEntry[] = [];
     for (const key of this.fs.keys()) {
@@ -731,10 +750,19 @@ interface TarKnobs {
   cutStream: boolean;
   /** `tar -c` waits on this before sending the second half. */
   createGate: Promise<void> | null;
+  /** What `tar --version` says: decides roots mode (busybox) or list mode. */
+  flavor: 'gnu' | 'bsd' | 'busybox';
 }
 
 function tarKnobs(): TarKnobs {
-  return { tarMissing: false, extractFails: null, createExit: 0, cutStream: false, createGate: null };
+  return {
+    tarMissing: false,
+    extractFails: null,
+    createExit: 0,
+    cutStream: false,
+    createGate: null,
+    flavor: 'busybox',
+  };
 }
 
 const unq = (s: string) => s.replace(/^'|'$/g, '').replace(/'\\''/g, "'");
@@ -747,8 +775,55 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
     commands.push(command);
     const pipe = new MemPipe();
     let m: RegExpMatchArray | null;
-    if (command.startsWith('command -v tar')) {
-      setTimeout(() => pipe.finish(knobs.tarMissing ? 1 : 0), 0);
+    const VERSIONS = { gnu: 'tar (GNU tar) 1.35', bsd: 'bsdtar 3.7.4 - libarchive 3.7.4', busybox: 'tar (busybox) 1.36.1' };
+    const sendTree = (dir: string, keys: string[]): void => {
+      const writer = new TarWriter();
+      const chunks: Uint8Array[] = [];
+      for (const key of keys) {
+        const rel = './' + key.slice(dir.length + 1);
+        const node = t.fs.get(key)!;
+        if (node.kind === 'dir') {
+          chunks.push(writer.header({ path: rel, type: 'dir', size: 0, mode: 0o755, mtimeSec: 1 }));
+        } else {
+          const bytes = enc.encode(node.data);
+          chunks.push(writer.header({ path: rel, type: 'file', size: bytes.length, mode: 0o644, mtimeSec: 1 }));
+          chunks.push(bytes, writer.padding(bytes.length));
+        }
+      }
+      chunks.push(writer.end());
+      setTimeout(async () => {
+        const half = Math.floor(chunks.length / 2);
+        for (let i = 0; i < chunks.length; i++) {
+          if (i === half) {
+            if (knobs.createGate) await knobs.createGate;
+            if (knobs.cutStream) {
+              pipe.stderr('tar: killed\n');
+              return pipe.finish(2);
+            }
+          }
+          if (pipe.closed) return;
+          pipe.emit(chunks[i]);
+        }
+        pipe.finish(knobs.createExit);
+      }, 0);
+    };
+    if (command === TAR_PROBE) {
+      setTimeout(() => {
+        if (!knobs.tarMissing) pipe.emit(enc.encode(VERSIONS[knobs.flavor] + '\n'));
+        pipe.finish(knobs.tarMissing ? 1 : 0);
+      }, 0);
+    } else if ((m = command.match(/^tar -c -f - -C ('(?:[^']|'\\'')*') --no-recursion --null -T -$/))) {
+      const dir = unq(m[1]);
+      let list = '';
+      pipe.stdin = (chunk) => (list += dec.decode(chunk));
+      pipe.stdinEnd = () => {
+        const keys = list
+          .split('\0')
+          .filter(Boolean)
+          .map((n) => joinPath(dir, n.replace(/^\.\//, '')))
+          .filter((k) => t.fs.get(k)?.kind === 'file');
+        sendTree(dir, keys);
+      };
     } else if ((m = command.match(/^tar -x -o -f - -C ('(?:[^']|'\\'')*')$/))) {
       const dir = unq(m[1]);
       const reader = new TarReader();
@@ -780,37 +855,10 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
     } else if ((m = command.match(/^tar -c -f - -C ('(?:[^']|'\\'')*') (.*)$/))) {
       const dir = unq(m[1]);
       const roots = m[2].split(' ').map((r) => unq(r).replace(/^\.\//, ''));
-      const writer = new TarWriter();
-      const chunks: Uint8Array[] = [];
-      for (const key of [...t.fs.keys()].sort()) {
-        const root = roots.find((r) => key === joinPath(dir, r) || key.startsWith(joinPath(dir, r) + '/'));
-        if (!root) continue;
-        const rel = './' + key.slice(dir.length + 1);
-        const node = t.fs.get(key)!;
-        if (node.kind === 'dir') {
-          chunks.push(writer.header({ path: rel, type: 'dir', size: 0, mode: 0o755, mtimeSec: 1 }));
-        } else {
-          const bytes = enc.encode(node.data);
-          chunks.push(writer.header({ path: rel, type: 'file', size: bytes.length, mode: 0o644, mtimeSec: 1 }));
-          chunks.push(bytes, writer.padding(bytes.length));
-        }
-      }
-      chunks.push(writer.end());
-      setTimeout(async () => {
-        const half = Math.floor(chunks.length / 2);
-        for (let i = 0; i < chunks.length; i++) {
-          if (i === half) {
-            if (knobs.createGate) await knobs.createGate;
-            if (knobs.cutStream) {
-              pipe.stderr('tar: killed\n');
-              return pipe.finish(2);
-            }
-          }
-          if (pipe.closed) return;
-          pipe.emit(chunks[i]);
-        }
-        pipe.finish(knobs.createExit);
-      }, 0);
+      const keys = [...t.fs.keys()]
+        .sort()
+        .filter((key) => roots.some((r) => key === joinPath(dir, r) || key.startsWith(joinPath(dir, r) + '/')));
+      sendTree(dir, keys);
     } else if ((m = command.match(/^cd ('(?:[^']|'\\'')*') && if command -v sha256sum/))) {
       const dir = unq(m[1]);
       let list = '';
@@ -935,7 +983,7 @@ test('tar: a download of many files runs as one tar -c stream from the host', as
   const id = h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'] }));
   const last = await h.finished(id);
   assert.equal(last.status, 'done', last.error);
-  assert.deepEqual(h.aPipes.commands, ['command -v tar >/dev/null 2>&1', `tar -c -f - -C '/src' './tree'`]);
+  assert.deepEqual(h.aPipes.commands, [TAR_PROBE, `tar -c -f - -C '/src' './tree'`]);
   assert.equal(filesOn(h.local, '/dl/tree'), 40);
   assert.equal(await h.local.readFile('/dl/tree/sub/f1.txt'), 'content 1');
   const mid = h.updates.filter((u) => u.id === id && u.status === 'running' && u.phase === 'copying');
@@ -949,7 +997,7 @@ test('tar: an upload of many files packs on the Pear machine and tar -x unpacks 
   const id = h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['tree'] }));
   const last = await h.finished(id);
   assert.equal(last.status, 'done', last.error);
-  assert.deepEqual(h.bPipes.commands, ['command -v tar >/dev/null 2>&1', `tar -x -o -f - -C '/dst'`]);
+  assert.deepEqual(h.bPipes.commands, [TAR_PROBE, `tar -x -o -f - -C '/dst'`]);
   assert.equal(filesOn(h.b, '/dst/tree'), 40);
   assert.ok(h.b.fs.get('/dst/tree/sub')?.kind === 'dir');
   assert.equal(last.bytesDone, last.bytesTotal);
@@ -981,7 +1029,7 @@ test('tar: the per-file path stays for few files, newline names, hosts without t
   const noTar = tarHarness({ a: tree('/src/tree', 40), local: { '/dl': null } });
   noTar.aPipes.knobs.tarMissing = true;
   assert.equal((await noTar.finished(noTar.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'] })))).status, 'done');
-  assert.deepEqual(noTar.aPipes.commands, ['command -v tar >/dev/null 2>&1']);
+  assert.deepEqual(noTar.aPipes.commands, [TAR_PROBE]);
   assert.equal(filesOn(noTar.local, '/dl/tree'), 40);
 
   const noPipe = tarHarness({ a: tree('/src/tree', 40), local: { '/dl': null } });
@@ -1085,4 +1133,46 @@ test('per-file ETA counts small files at files/s and big bytes at the link rate'
   assert.ok(mid.every((u) => (u.filesPerSec ?? 0) > 0), 'files/s measured');
   assert.ok(mid.some((u) => u.etaSec != null && u.etaSec > 0), 'an ETA is produced');
   assert.equal(last.filesDone, 21);
+});
+
+test('a remote folder is listed in one round trip when the host can answer find+stat', async () => {
+  const h = harness({ a: tree('/src/tree', 12), local: { '/dl': null } });
+  h.a.execAnswer = (cmd) =>
+    cmd.startsWith("cd -- '/src' && find './tree'")
+      ? { code: 0, stdout: h.a.findOutput('/src', ['tree']), stderr: '' }
+      : null;
+  const last = await h.finished(h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'] })));
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(h.a.listDirs, 0, 'no per-directory listing');
+  assert.equal(last.fileCount, 12);
+  assert.equal(filesOn(h.local, '/dl/tree'), 12);
+  assert.ok(h.local.fs.get('/dl/tree/sub')?.kind === 'dir');
+});
+
+test('the one-shot listing falls back to the directory walk when its output is not usable', async () => {
+  for (const answer of [
+    { code: 0, stdout: 'stat: illegal option -- c\n', stderr: '' },
+    { code: 127, stdout: '', stderr: 'find: not found' },
+  ]) {
+    const h = harness({ a: tree('/src/tree', 6), local: { '/dl': null } });
+    h.a.execAnswer = () => answer;
+    const last = await h.finished(h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'] })));
+    assert.equal(last.status, 'done', last.error);
+    assert.ok(h.a.listDirs >= 2, 'walked directory by directory');
+    assert.equal(filesOn(h.local, '/dl/tree'), 6);
+  }
+});
+
+test('tar: gnu and bsd hosts are asked for exactly the wanted files (list mode)', async () => {
+  for (const flavor of ['gnu', 'bsd'] as const) {
+    const seed = { ...tree('/src/tree', 40), '/src/tree/.DS_Store': 'junk', '/src/tree/__MACOSX': null, '/src/tree/__MACOSX/._x': 'junk' };
+    const h = tarHarness({ a: seed, local: { '/dl': null } });
+    h.aPipes.knobs.flavor = flavor;
+    const last = await h.finished(h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'] })));
+    assert.equal(last.status, 'done', last.error);
+    assert.deepEqual(h.aPipes.commands, [TAR_PROBE, `tar -c -f - -C '/src' --no-recursion --null -T -`]);
+    assert.equal(filesOn(h.local, '/dl/tree'), 40);
+    assert.equal(h.local.fs.has('/dl/tree/.DS_Store'), false);
+    assert.ok(h.local.fs.get('/dl/tree/sub')?.kind === 'dir', 'parents created without dir entries');
+  }
 });

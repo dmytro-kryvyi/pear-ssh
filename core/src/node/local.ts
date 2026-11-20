@@ -338,13 +338,16 @@ export class LocalConnection implements SshTransport {
   }
 
   private async streamCopy(from: string, to: string, opts?: TransferOpts): Promise<void> {
-    const total = (await fs.stat(from)).size;
+    const st = await fs.stat(from);
+    const total = st.size;
     await pipeline(
       createReadStream(from),
       byteCounter((bytes) => opts?.onProgress?.({ bytes, total })),
       createWriteStream(to),
       { signal: toAbortSignal(opts?.signal) },
     );
+    // Keep the source's modification time, like the SFTP and tar paths do.
+    await fs.utimes(to, st.atime, st.mtime).catch(() => {});
   }
 
   dispose(): void {
