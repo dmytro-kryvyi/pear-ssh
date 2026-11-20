@@ -17,7 +17,7 @@ export interface TermInfo {
   termId: string;
   /** null for terminals not bound to a host (the Claude CLI PTY). */
   hostId: string | null;
-  kind: 'shell' | 'claude';
+  kind: 'shell' | 'orch' | 'claude';
   cols: number;
   rows: number;
   createdAt: number;
@@ -88,7 +88,7 @@ export class TerminalHub {
 
   track(
     termId: string,
-    meta: { hostId: string | null; kind: 'shell' | 'claude'; size: TermSize },
+    meta: { hostId: string | null; kind: 'shell' | 'orch' | 'claude'; size: TermSize },
     ops: TermOps,
   ): void {
     this.entries.set(termId, {

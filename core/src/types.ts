@@ -176,6 +176,8 @@ export interface ClaudeStatus {
   installed: boolean;
   /** Pear's MCP server is up and the workspace dir is provisioned. */
   mcpReady: boolean;
+  /** What `claude auth status` reports; absent when the CLI can't say. */
+  loggedIn?: boolean;
 }
 
 export interface FileEntry {

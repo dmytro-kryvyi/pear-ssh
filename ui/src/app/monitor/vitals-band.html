@@ -81,7 +81,7 @@
           </span>
           <div class="rows">
             @for (m of mounts(); track m.mount) {
-              <div class="row">
+              <div class="row" (contextmenu)="onMountMenu($event, m)">
                 <span class="row-name" [title]="m.fs">{{ m.mount }}</span>
                 <span class="row-val">{{ kb(m.usedKB) }} / {{ kb(m.totalKB) }}</span>
               </div>
@@ -106,7 +106,7 @@
         </div>
       </div>
 
-      <div class="band-foot">
+      <div class="band-foot" (contextmenu)="onFootMenu($event)">
         <pear-icon name="terminal" [size]="11" />
         <span>{{ s.stale ? 'last known values — sampling stalled' : 'one round-trip per sample' }}</span>
         <span class="foot-cmd">cat /proc/stat /proc/meminfo; df -Pk; cat /proc/net/dev</span>

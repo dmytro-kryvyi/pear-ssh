@@ -167,6 +167,14 @@ export class ClaudeChatRuntime {
     this.active?.interrupt();
   }
 
+  /** Stop the CLI process (the conversation survives for --resume) without
+   *  the user-facing bookkeeping of interrupt — e.g. before a sign-in flow,
+   *  so a stale process can't race the fresh credentials. */
+  stop(): void {
+    this.bridge.denyAll();
+    this.active?.interrupt();
+  }
+
   /** Forget the active conversation (the next send starts a fresh session). */
   newSession(): void {
     this.bridge.denyAll();

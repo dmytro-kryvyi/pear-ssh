@@ -16,6 +16,7 @@ import { HostGroups } from './hosts/groups';
 import { HostEditor } from './hosts/host-editor';
 import { WorkspaceEditor } from './hosts/workspace-editor';
 import { SshImport } from './hosts/ssh-import';
+import { SshConfigImporter } from './hosts/ssh-config-importer';
 import { WorkspaceSwitcher, HOST_DRAG_TYPE } from './hosts/workspace-switcher';
 import { TerminalPane } from './terminal/terminal';
 import { TermTabs, type TermTab } from './terminal/tabs';
@@ -26,6 +27,13 @@ import { CompressDialog } from './workspace/compress-dialog';
 import { PaneGrid } from './workspace/pane-grid';
 import { FileOps } from './workspace/ops';
 import { HostActions } from './host-actions';
+import { Notices } from './notices';
+import { Clipboard } from './clipboard';
+import { ContextMenuService } from './menu/context-menu';
+import { copyItem, editMenuFor, editableFieldOf } from './menu/menu-items';
+import { TermRouter } from './terminal/router';
+import { sshCommand } from '@pear/core';
+import type { MenuItem } from './menu/context-menu';
 import { OrchPanel } from './orch/orchpanel';
 import { OrchStore } from './orch/store';
 import { TasksDrawer } from './orch/tasks-drawer';
@@ -74,6 +82,7 @@ const TARGET_RE = /^(?:(?<user>[^@\s]+)@)?(?<host>[^@:\s]+)(?::(?<port>\d+))?$/;
 })
 export class App {
   private readonly pear = inject(Pear);
+  private readonly importer = inject(SshConfigImporter);
   readonly orchStore = inject(OrchStore);
   private readonly monitor = inject(MonitorStore);
   readonly settings = inject(Settings);
@@ -100,9 +109,9 @@ export class App {
   readonly dragHostId = signal<string | null>(null);
   readonly dragOverGroup = signal<string | null>(null);
 
-  /** Transient "lost connection" notice; deliberate removals stay silent. */
-  readonly notice = signal<string | null>(null);
-  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  readonly notices = inject(Notices);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
   private readonly expectedDisconnects = new Set<string>();
 
   readonly facetMeta = FACET_META;
@@ -236,6 +245,20 @@ export class App {
   constructor() {
     if (!this.bridged) return;
     void this.catalog.refresh();
+    // Electron gives text fields no native menu. Any component that owns its
+    // right-click has already called preventDefault by the time this bubble
+    // listener runs; everything else that is a plain text field gets the
+    // standard Cut / Copy / Paste / Select all. xterm and Monaco keep their
+    // own handling (their hidden textareas must not get this menu). In a
+    // browser (Pear server) the native input menu is better — it can paste
+    // on plain http, which the async clipboard API cannot — so skip this.
+    if (!this.link.remote) document.addEventListener('contextmenu', (e) => {
+      if (e.defaultPrevented) return;
+      const field = editableFieldOf(e.target);
+      if (!field || field.closest('.xterm, .monaco-editor')) return;
+      e.preventDefault();
+      this.menu.open(e.clientX, e.clientY, editMenuFor(field, this.clipboard));
+    });
     // Serve read_terminal / reveal_in_app round-trips from the main process.
     inject(ClaudeUiBridge).start();
 
@@ -336,39 +359,35 @@ export class App {
     const { user, host, port } = match.groups;
     const entries = await this.pear.api.hosts.sshConfigEntries();
     const entry = entries.find((e) => e.alias === host);
-    if (entry?.proxyJump) {
-      this.error.set(`'${entry.alias}' uses ProxyJump — add it manually for now`);
-      return;
-    }
     if (!entry && !user) {
       this.error.set(`'${host}' is not an ~/.ssh/config alias — use user@host[:port]`);
       return;
     }
     const tag = this.hostTag.trim();
-    const saved = await this.pear.api.hosts.upsert(
-      entry
-        ? {
-            // Typed user/port override the config's values.
-            name: this.hostName.trim() || entry.alias,
-            host: entry.host,
-            user: user ?? entry.user ?? 'root',
-            port: port ? Number(port) : (entry.port ?? 22),
-            aliases: [entry.alias],
-            auth: entry.identityFile
-              ? { method: 'key', privateKeyPath: entry.identityFile }
-              : undefined,
-            tags: tag ? [tag] : undefined,
-            kind: 'plain',
-          }
-        : {
+    const tags = tag ? [tag] : undefined;
+    let saved: HostConfig;
+    try {
+      saved = entry
+        ? // Typed user/port override the config's values; a ProxyJump chain
+          // is materialised as jump hosts (reused when already in the catalog).
+          await this.importer.importEntry(entry, entries, {
+            name: this.hostName.trim() || undefined,
+            user: user ?? undefined,
+            port: port ? Number(port) : undefined,
+            tags,
+          })
+        : await this.pear.api.hosts.upsert({
             name: this.hostName.trim() || host,
             host,
             user: user!,
             port: port ? Number(port) : 22,
-            tags: tag ? [tag] : undefined,
+            tags,
             kind: 'plain',
-          },
-    );
+          });
+    } catch (err) {
+      this.error.set(err instanceof Error ? err.message : String(err));
+      return;
+    }
     this.target = '';
     this.hostName = '';
     this.hostTag = '';
@@ -459,10 +478,9 @@ export class App {
     this.ws.newTab(null, saved.id, '~');
   }
 
+  /** Deliberate removals stay silent; this is for surprises. */
   private showNotice(text: string): void {
-    this.notice.set(text);
-    if (this.noticeTimer) clearTimeout(this.noticeTimer);
-    this.noticeTimer = setTimeout(() => this.notice.set(null), 6000);
+    this.notices.show(text, 'error');
   }
 
   async removeHost(event: MouseEvent, host: HostConfig): Promise<void> {
@@ -486,11 +504,12 @@ export class App {
 
   async togglePin(event: MouseEvent, host: HostConfig): Promise<void> {
     event.stopPropagation();
-    if (this.isPinned(host)) {
-      await this.pear.api.subhosts.unpin(host.id);
-    } else {
-      await this.pear.api.subhosts.pin(host.id);
-    }
+    await this.setPinned(host, !this.isPinned(host));
+  }
+
+  private async setPinned(host: HostConfig, pinned: boolean): Promise<void> {
+    if (pinned) await this.pear.api.subhosts.pin(host.id);
+    else await this.pear.api.subhosts.unpin(host.id);
     await this.catalog.refresh();
   }
 
@@ -556,6 +575,89 @@ export class App {
   onTermFailed(hostId: string, message: string): void {
     this.tabs.closeHost(hostId);
     this.error.set(message);
+  }
+
+  private readonly termRouter = inject(TermRouter);
+
+  /** Right-click on a root host row. */
+  onHostMenu(event: MouseEvent, h: HostConfig): void {
+    event.preventDefault();
+    const addr = h.local ? '' : `${h.user}@${h.host}${h.port !== 22 ? ':' + h.port : ''}`;
+    const ssh = sshCommand(h, (id) => this.allHosts().find((x) => x.id === id));
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Open files', icon: 'folderOpen', onClick: () => this.openHost(h) },
+      { label: 'New shell', icon: 'terminal', onClick: () => this.termRouter.newShell(h.id, h.cwd ?? null) },
+      { divider: true },
+      { label: 'Edit host…', icon: 'pencil', onClick: () => this.editHost.set(h) },
+      copyItem('Copy address', h.local ? '' : h.host, this.clipboard),
+      copyItem('Copy user@host', addr, this.clipboard, 'address'),
+      copyItem('Copy ssh command', ssh, this.clipboard, 'command'),
+      { divider: true },
+      {
+        label: 'Close shells',
+        disabled: this.termCount(h.id) === 0,
+        onClick: () => this.tabs.closeHost(h.id),
+      },
+      { label: 'Remove host', icon: 'trash', danger: true, onClick: () => void this.removeHostById(h) },
+    ]);
+  }
+
+  /** Right-click on a sub-host (container / CT / via) row. */
+  onSubHostMenu(event: MouseEvent, c: HostConfig): void {
+    event.preventDefault();
+    const pinned = this.isPinned(c);
+    const ref = c.target ? c.target.ref : `${c.user}@${c.host}`;
+    const items: MenuItem[] = [
+      { label: 'Open files', icon: 'folderOpen', onClick: () => this.openHost(c) },
+      { label: 'New shell', icon: 'terminal', onClick: () => this.termRouter.newShell(c.id) },
+      { divider: true },
+      copyItem('Copy name', c.name, this.clipboard),
+      copyItem(c.target ? (c.target.type === 'lxc' ? 'Copy CT id' : 'Copy container ref') : 'Copy user@host', ref, this.clipboard, 'ref'),
+      { divider: true },
+      {
+        label: pinned ? 'Unpin (forget after restart)' : 'Pin (keep after restart)',
+        icon: pinned ? 'pinFilled' : 'pin',
+        onClick: () => void this.setPinned(c, !pinned),
+      },
+    ];
+    if (pinned) items.push({ label: 'Edit host…', icon: 'pencil', onClick: () => this.editHost.set(c) });
+    items.push({ label: 'Remove', icon: 'trash', danger: true, onClick: () => void this.removeHostById(c) });
+    this.menu.open(event.clientX, event.clientY, items);
+  }
+
+  /** Right-click on a bottom-dock terminal tab. */
+  onDockTabMenu(event: MouseEvent, t: TermTab): void {
+    event.preventDefault();
+    const siblings = this.tabs.tabs().filter((x) => x.hostId === t.hostId && x.row === t.row);
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Close', icon: 'close', onClick: () => this.tabs.close(t.id) },
+      {
+        label: 'Close others',
+        disabled: siblings.length < 2,
+        onClick: () => siblings.filter((x) => x.id !== t.id).forEach((x) => this.tabs.close(x.id)),
+      },
+      { label: 'Close all for host', onClick: () => this.tabs.closeHost(t.hostId) },
+      { divider: true },
+      { label: 'New shell here', icon: 'terminal', onClick: () => this.tabs.newShell(t.hostId, t.cwd) },
+      copyItem('Copy working directory', t.cwd, this.clipboard, 'path'),
+      ...(t.row === 'orch' ? [copyItem('Copy command', t.initialCommand, this.clipboard)] : []),
+    ]);
+  }
+
+  /** Right-click on the dock's host label. */
+  onDockLabelMenu(event: MouseEvent, host: HostConfig): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'New shell', icon: 'terminal', onClick: () => this.tabs.newShell(host.id) },
+      { label: 'Close shells', onClick: () => this.tabs.closeHost(host.id) },
+      { divider: true },
+      copyItem('Copy connection label', this.hostLabel(host), this.clipboard, 'label'),
+    ]);
+  }
+
+  onToastMenu(event: MouseEvent, text: string): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, [copyItem('Copy message', text, this.clipboard)]);
   }
 
   disconnectTerms(): void {

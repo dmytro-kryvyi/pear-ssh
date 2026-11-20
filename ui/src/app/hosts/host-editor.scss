@@ -143,6 +143,8 @@
 .text.area { resize: vertical; line-height: 1.5; font-family: inherit; }
 .text::placeholder { color: var(--fg-3); }
 .text:focus { outline: none; border-color: var(--accent-line); }
+select.text { cursor: pointer; }
+select.text option { background: var(--bg-2); color: var(--fg-0); }
 
 // ---- endpoint / kv rows ----------------------------------------------------
 

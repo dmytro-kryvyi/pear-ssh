@@ -15,8 +15,10 @@ export {
   type RunResult,
 } from './claude/executor';
 export { PearMcpServer, type PearMcpServerInfo } from './claude/mcp-server';
-export { claudeInstalled, launchClaudePty } from './claude/pty';
-export { ClaudeChatSession, type ChatSessionOpts } from './claude/chat-session';
+export { claudeAuthStatus, claudeInstalled, launchClaudePty, type ClaudePtyCommand } from './claude/pty';
+export { listClaudeModels } from './claude/models';
+export { loginShell, runInLoginShell } from './claude/shell';
+export { ClaudeChatSession, DEFAULT_IDLE_MS, type ChatSessionOpts } from './claude/chat-session';
 export { PermissionBridge, type PermissionAnswer } from './claude/permission-bridge';
 export {
   ClaudeChatRuntime,

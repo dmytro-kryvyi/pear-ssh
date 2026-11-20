@@ -146,7 +146,8 @@ export class HostCatalog {
     return hay.some((s) => s.toLowerCase().includes(q));
   }
 
-  private descendantsOf(id: string): HostConfig[] {
+  /** Every host that rides on `id`, directly or transitively (sub-hosts and via-hosts). */
+  descendantsOf(id: string): HostConfig[] {
     return this.childrenOf(id);
   }
 

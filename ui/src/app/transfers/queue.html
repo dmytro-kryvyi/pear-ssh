@@ -68,7 +68,7 @@
         </div>
       }
       @for (job of store.toastList(); track job.id) {
-        <div class="job" [class.failed]="job.status === 'error'">
+        <div class="job" [class.failed]="job.status === 'error'" (contextmenu)="onJobMenu($event, job)">
           <div class="job-top">
             @if (job.status === 'done') {
               <pear-icon name="check" [size]="13" class="job-icon ok" />

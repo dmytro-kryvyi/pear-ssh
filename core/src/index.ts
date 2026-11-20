@@ -88,6 +88,7 @@ export {
   subShellCommand,
 } from './ssh/subhost';
 export {
+  actionCommandText,
   FACET_KINDS,
   FACET_PROVIDERS,
   detectFacets,
@@ -121,11 +122,14 @@ export { HostStore, sanitizeHost, type HostStorage, type SecretCipher } from './
 export { HostGroupStore } from './hosts/groups';
 export { autoShort, shortLabel } from './hosts/identity';
 export {
+  parseProxyJump,
   resolveSshHosts,
   tokenizeSshConfig,
+  type ProxyJumpHop,
   type SshConfigDirective,
   type SshConfigEntry,
 } from './hosts/ssh-config';
+export { sshCommand } from './hosts/ssh-command';
 export { EphemeralHostRegistry } from './hosts/ephemeral';
 export { shq } from './shq';
 export {
@@ -161,6 +165,8 @@ export {
   type ClaudeUiResponse,
 } from './claude/events';
 export { ChatStreamParser, toolDisplay } from './claude/parser';
+export { isClaudeAuthError } from './claude/auth';
+export { listModelsRequest, parseModelList, type ClaudeModelInfo } from './claude/models';
 export { applyEdit } from './claude/edit';
 export {
   ClaudeExecutor,

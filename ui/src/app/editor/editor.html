@@ -1,4 +1,4 @@
-<div class="tabbar">
+<div class="tabbar" (contextmenu)="onTabMenu($event)">
   <div class="tab">
     <pear-icon name="fileCode" [size]="13" class="tab-icon" />
     <span class="tab-name">{{ fileName() }}</span>

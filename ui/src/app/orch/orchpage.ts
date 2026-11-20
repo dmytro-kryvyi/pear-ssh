@@ -1,9 +1,12 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
 import type {
+  ContainerInfo,
   FacetKind,
   HostConfig,
   OrchAction,
+  ProxmoxGuestInfo,
   SubHostTarget,
+  SwarmNodeInfo,
   SwarmServiceInfo,
   SwarmTaskInfo,
 } from '@pear/core';
@@ -18,6 +21,17 @@ import { VitalsBand } from '../monitor/vitals-band';
 import { DockerDisk } from '../monitor/docker-disk';
 import { memPair, memPct, pctNum, pctText, tone, uptime } from './format';
 import { taskTone } from './tasks-drawer';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService } from '../menu/context-menu';
+import {
+  alertMenu,
+  containerMenu,
+  guestMenu,
+  nodeMenu,
+  projectMenu,
+  serviceMenu,
+  type OrchMenuDeps,
+} from './orch-menus';
 
 @Component({
   selector: 'pear-orchpage',
@@ -36,6 +50,8 @@ export class OrchPage {
   private readonly store = inject(OrchStore);
   private readonly pear = inject(Pear);
   readonly settings = inject(Settings);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
 
   readonly busy = signal<string | null>(null);
   readonly actionError = signal<string | null>(null);
@@ -133,6 +149,45 @@ export class OrchPage {
   refresh(): void {
     this.actionError.set(null);
     void this.store.refresh(this.host().id);
+  }
+
+
+  // ---- context menus ---------------------------------------------------
+
+  private readonly menuDeps: OrchMenuDeps = {
+    act: (key, action, title) => void this.act(key, action, title),
+    jumpInto: (key, target, name) => void this.jumpInto(key, target, name),
+    jumpIntoVm: (key, vmid, name) => void this.jumpIntoVm(key, vmid, name),
+    openTasks: (s) => this.openTasks(s),
+    copy: (text, what) => void this.clipboard.copy(text, what),
+  };
+
+  onContainerMenu(event: MouseEvent, c: ContainerInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, containerMenu(c, this.menuDeps));
+  }
+  onProjectMenu(event: MouseEvent, project: string | null, containers: ContainerInfo[]): void {
+    if (!project) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu.open(event.clientX, event.clientY, projectMenu(project, containers, this.menuDeps));
+  }
+  onServiceMenu(event: MouseEvent, s: SwarmServiceInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, serviceMenu(s, this.menuDeps));
+  }
+  onGuestMenu(event: MouseEvent, g: ProxmoxGuestInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, guestMenu(g, this.menuDeps));
+  }
+  onNodeMenu(event: MouseEvent, n: SwarmNodeInfo): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, nodeMenu(n, this.menuDeps));
+  }
+  onAlertMenu(event: MouseEvent, s: SwarmServiceInfo): void {
+    event.preventDefault();
+    const f = this.latestFailure(s);
+    this.menu.open(event.clientX, event.clientY, alertMenu(s, f?.error || undefined, this.menuDeps));
   }
 
   async act(busyKey: string, action: OrchAction, title = 'stream'): Promise<void> {

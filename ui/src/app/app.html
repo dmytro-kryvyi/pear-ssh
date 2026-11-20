@@ -57,6 +57,7 @@
           (dragstart)="onHostDragStart($event, h)"
           (dragend)="onHostDragEnd()"
           (click)="openHost(h)"
+          (contextmenu)="onHostMenu($event, h)"
         >
           <span class="host-stripe" [style.background]="h.color ? catalog.color(h.id) : null"></span>
           <span
@@ -110,6 +111,7 @@
             class="host-row sub"
             [class.active]="c.id === activeHostId()"
             (click)="openHost(c)"
+            (contextmenu)="onSubHostMenu($event, c)"
           >
             <span class="host-dot" [class.online]="connectedIds().has(c.id)" [class.connecting]="connectingIds().has(c.id)"></span>
             <pear-icon
@@ -275,6 +277,7 @@
                 class="term-tab"
                 [class.active]="t.id === tabs.activeId()"
                 (click)="tabs.activeId.set(t.id)"
+                (contextmenu)="onDockTabMenu($event, t)"
               >
                 <span class="tab-dot" [style.background]="perHostTerms() ? catalog.color(t.hostId) : null"></span>
                 <span class="tab-title">{{ tabCaption(t) }}</span>
@@ -285,7 +288,7 @@
             }
             <button class="term-tab new" (click)="tabs.newShell(host.id)">+ new</button>
             <div class="term-tabs-right">
-              <span class="host-label">{{ hostLabel(host) }}</span>
+              <span class="host-label" (contextmenu)="onDockLabelMenu($event, host)">{{ hostLabel(host) }}</span>
               <button class="btn subtle" (click)="disconnectTerms()">Close shells</button>
             </div>
           </div>
@@ -297,6 +300,7 @@
                   class="term-tab"
                   [class.active]="t.id === tabs.activeId()"
                   (click)="tabs.activeId.set(t.id)"
+                  (contextmenu)="onDockTabMenu($event, t)"
                 >
                   <span class="tab-dot orch" [style.background]="perHostTerms() ? catalog.color(t.hostId) : null"></span>
                   <span class="tab-title">{{ tabCaption(t) }}</span>
@@ -337,17 +341,17 @@
   <pear-context-menu />
   <pear-transfer-queue />
   @if (ops.lastError(); as opError) {
-    <div class="op-toast">
+    <div class="op-toast" (contextmenu)="onToastMenu($event, opError)">
       <span>{{ opError }}</span>
       <button (click)="ops.lastError.set(null)" title="Dismiss">
         <pear-icon name="close" [size]="12" />
       </button>
     </div>
   }
-  @if (notice(); as n) {
-    <div class="op-toast">
-      <span>{{ n }}</span>
-      <button (click)="notice.set(null)" title="Dismiss">
+  @if (notices.current(); as n) {
+    <div class="op-toast" [class.info]="n.tone === 'info'" (contextmenu)="onToastMenu($event, n.text)">
+      <span>{{ n.text }}</span>
+      <button (click)="notices.dismiss()" title="Dismiss">
         <pear-icon name="close" [size]="12" />
       </button>
     </div>

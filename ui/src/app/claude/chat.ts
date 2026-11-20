@@ -9,21 +9,27 @@ import {
   viewChild,
 } from '@angular/core';
 import { marked } from 'marked';
-import type { ClaudeFileDiff } from '@pear/core';
+import type { ClaudeFileDiff, ClaudeQuestion } from '@pear/core';
 import { PearIcon } from '../icons/icon';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
+import { Settings } from '../settings';
+import { Clipboard } from '../clipboard';
+import { selectContents, selectionText } from '../menu/menu-items';
 import { ClaudeChatStore, type ChatBlock } from './chat-store';
+import { ModelPicker } from './model-picker';
 
 marked.use({ gfm: true, breaks: true });
 
-// Current Claude lineup with context windows (claude-api reference, 2026-06).
-const MODELS: { label: string; value: string | null; ctx: string }[] = [
-  { label: 'Default', value: null, ctx: '' },
-  { label: 'Fable 5', value: 'claude-fable-5', ctx: '1M' },
-  { label: 'Opus 4.8', value: 'claude-opus-4-8', ctx: '1M' },
-  { label: 'Sonnet 5', value: 'claude-sonnet-5', ctx: '1M' },
-  { label: 'Haiku 4.5', value: 'claude-haiku-4-5', ctx: '200K' },
-];
+/** Option label for the free-text choice every AskUserQuestion allows. */
+const OTHER = '__other__';
+
+type QuestionBlock = Extract<ChatBlock, { kind: 'question' }>;
+
+/** Unsubmitted answers of one question card, keyed by question text. */
+interface QuestionDraft {
+  picks: Record<string, string[]>;
+  other: Record<string, string>;
+}
 
 interface DiffLine {
   kind: 'same' | 'add' | 'del';
@@ -79,13 +85,15 @@ export function richText(text: string): string {
 /** The chat transcript + composer for the Claude dock's chat mode. */
 @Component({
   selector: 'pear-claude-chat',
-  imports: [PearIcon],
+  imports: [PearIcon, ModelPicker],
   templateUrl: './chat.html',
   styleUrl: './chat.scss',
 })
 export class ClaudeChat implements AfterViewInit {
   readonly store = inject(ClaudeChatStore);
   private readonly menu = inject(ContextMenuService);
+  private readonly settings = inject(Settings);
+  private readonly clipboard = inject(Clipboard);
 
   private readonly bodyEl = viewChild.required<ElementRef<HTMLDivElement>>('body');
   private readonly inputEl = viewChild.required<ElementRef<HTMLTextAreaElement>>('input');
@@ -93,6 +101,9 @@ export class ClaudeChat implements AfterViewInit {
   readonly draft = signal('');
   /** Open/closed state of collapsible blocks, keyed by block id. */
   readonly openBlocks = signal<ReadonlySet<string>>(new Set());
+  /** Answers being composed on question cards, keyed by requestId. */
+  readonly qDrafts = signal<ReadonlyMap<string, QuestionDraft>>(new Map());
+  readonly pickerOpen = signal(false);
   private pinned = true;
 
   readonly ctxPct = computed(() =>
@@ -133,52 +144,166 @@ export class ClaudeChat implements AfterViewInit {
    *  scroll wrapper so wide ones scroll instead of breaking the layout
    *  (display:block on <table> itself would detach thead from tbody). */
   md(text: string): string {
-    return marked
-      .parse(text, { async: false })
-      .replaceAll('<table>', '<div class="tbl-wrap"><table>')
-      .replaceAll('</table>', '</table></div>');
+    return wrapCodeBlocks(
+      marked
+        .parse(text, { async: false })
+        .replaceAll('<table>', '<div class="tbl-wrap"><table>')
+        .replaceAll('</table>', '</table></div>'),
+    );
   }
 
-  /** 'claude-sonnet-4-5-20250929' → 'sonnet-4-5' for the meter chip. */
+  /** Clicks inside rendered markdown: the Copy control on fenced blocks is
+   *  plain HTML (the sanitizer strips <button>), so it is handled here. */
+  onBodyClick(event: MouseEvent): void {
+    const copy = (event.target as HTMLElement | null)?.closest<HTMLElement>('.code-copy');
+    if (!copy) return;
+    const pre = copy.closest('.code-wrap')?.querySelector('pre');
+    if (!pre) return;
+    void this.clipboard.copy(pre.textContent ?? '').then(() => {
+      copy.textContent = 'Copied';
+      copy.classList.add('done');
+      setTimeout(() => {
+        copy.textContent = 'Copy';
+        copy.classList.remove('done');
+      }, 1200);
+    });
+  }
+
+  /** The chip: the picked entry's name when the CLI list knows it, else the
+   *  id the CLI reported ('claude-sonnet-4-5-20250929' → 'sonnet-4-5'). */
   modelLabel(): string {
+    const picked = this.settings.claudeModel();
+    const known = this.store.models()?.find((m) => m.value === (picked || 'default'));
+    if (known) return known.displayName.replace(/ \(recommended\)$/i, '');
     const m = this.store.model();
-    if (!m) return 'model: default';
-    return m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+    if (!m) return 'default';
+    return m.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/\[1m\]$/, '');
   }
 
   onContextMenu(event: MouseEvent): void {
     event.preventDefault();
-    const selection = document.getSelection()?.toString() ?? '';
-    // Walk up to the enclosing message body so "Copy message" grabs the whole
-    // turn even when the click lands on a nested element (code span, table cell).
-    const message = (event.target as HTMLElement | null)?.closest<HTMLElement>(
-      '.bubble, .asst-text, .think-body',
-    );
+    const target = event.target as HTMLElement | null;
+    const selection = selectionText();
+    const copy = (text: string, what = 'text') => void this.clipboard.copy(text, what);
     const items: MenuItem[] = [
       {
         label: 'Copy',
         icon: 'copy',
         shortcut: 'Ctrl+C',
         disabled: !selection,
-        onClick: () => void navigator.clipboard.writeText(selection),
+        onClick: () => copy(selection, 'selection'),
       },
     ];
-    if (message) {
+    // A fenced code block under the pointer: copy just that.
+    const pre = target?.closest<HTMLElement>('pre');
+    if (pre) items.push({ label: 'Copy code block', onClick: () => copy(pre.textContent ?? '', 'code block') });
+    // The enclosing block, by id, so copies use the source text (markdown,
+    // tool output) rather than whatever the DOM rendered it into.
+    const blockId = target?.closest<HTMLElement>('[data-block-id]')?.dataset['blockId'];
+    const block = blockId ? this.store.blocks().find((b) => b.id === blockId) : undefined;
+    if (block?.kind === 'text') {
+      items.push({ label: 'Copy message as Markdown', onClick: () => copy(block.text, 'message') });
+    } else if (block?.kind === 'user') {
+      items.push({ label: 'Copy message', onClick: () => copy(block.text, 'message') });
+    } else if (block?.kind === 'think') {
+      items.push({ label: 'Copy thinking', onClick: () => copy(block.text, 'thinking') });
+    } else if (block?.kind === 'tool') {
       items.push({
-        label: 'Copy message',
-        onClick: () => void navigator.clipboard.writeText(message.innerText),
+        label: 'Copy output',
+        disabled: !block.output,
+        onClick: () => copy(block.output, 'output'),
       });
+      items.push({ label: 'Copy command', onClick: () => copy(block.display, 'command') });
+    } else if (block?.kind === 'permission') {
+      items.push({ label: 'Copy command', onClick: () => copy(block.display, 'command') });
+    } else if (block?.kind === 'error') {
+      items.push({ label: 'Copy error', onClick: () => copy(block.text, 'error') });
     }
+    items.push({ divider: true });
+    items.push({
+      label: 'Select all',
+      shortcut: 'Ctrl+A',
+      onClick: () => selectContents(this.bodyEl().nativeElement),
+    });
     this.menu.open(event.clientX, event.clientY, items);
   }
 
+  /** Toggle the model picker popover (chip click or context-bar right-click). */
   openModelMenu(event: MouseEvent): void {
-    const items: MenuItem[] = MODELS.map((m) => ({
-      label: m.label,
-      shortcut: m.ctx,
-      onClick: () => this.store.setModel(m.value),
-    }));
-    this.menu.open(event.clientX, event.clientY, items);
+    event.preventDefault();
+    this.pickerOpen.update((open) => !open);
+  }
+
+  // ---- question cards -------------------------------------------------------
+
+  readonly OTHER = OTHER;
+
+  private draftOf(requestId: string): QuestionDraft {
+    return this.qDrafts().get(requestId) ?? { picks: {}, other: {} };
+  }
+
+  private setDraft(requestId: string, draft: QuestionDraft): void {
+    const next = new Map(this.qDrafts());
+    next.set(requestId, draft);
+    this.qDrafts.set(next);
+  }
+
+  isPicked(requestId: string, question: string, label: string): boolean {
+    return (this.draftOf(requestId).picks[question] ?? []).includes(label);
+  }
+
+  /** Radio semantics for single-select, checkbox for multiSelect. */
+  togglePick(requestId: string, q: ClaudeQuestion, label: string): void {
+    const d = this.draftOf(requestId);
+    const have = d.picks[q.question] ?? [];
+    const picks = q.multiSelect
+      ? have.includes(label)
+        ? have.filter((l) => l !== label)
+        : [...have, label]
+      : [label];
+    this.setDraft(requestId, { ...d, picks: { ...d.picks, [q.question]: picks } });
+  }
+
+  setOther(requestId: string, question: string, text: string): void {
+    const d = this.draftOf(requestId);
+    this.setDraft(requestId, { ...d, other: { ...d.other, [question]: text } });
+  }
+
+  otherText(requestId: string, question: string): string {
+    return this.draftOf(requestId).other[question] ?? '';
+  }
+
+  /** The answer one question would submit now — '' when incomplete. */
+  private answerFor(requestId: string, q: ClaudeQuestion): string {
+    const d = this.draftOf(requestId);
+    const picks = d.picks[q.question] ?? [];
+    const labels = picks.filter((l) => l !== OTHER);
+    if (picks.includes(OTHER)) {
+      const text = (d.other[q.question] ?? '').trim();
+      if (!text) return '';
+      labels.push(text);
+    }
+    return labels.join(', ');
+  }
+
+  canSubmit(b: QuestionBlock): boolean {
+    return b.questions.every((q) => this.answerFor(b.requestId, q) !== '');
+  }
+
+  submitQuestions(b: QuestionBlock): void {
+    if (!this.canSubmit(b)) return;
+    const choices: Record<string, string> = {};
+    for (const q of b.questions) choices[q.question] = this.answerFor(b.requestId, q);
+    this.store.answerQuestion(b.requestId, choices);
+  }
+
+  dismissQuestions(b: QuestionBlock): void {
+    this.store.dismissQuestion(b.requestId);
+  }
+
+  /** A settled card with no choices was dismissed (or replayed stale). */
+  isDismissed(b: QuestionBlock): boolean {
+    return b.choices !== null && Object.keys(b.choices).length === 0;
   }
 
   maxLabel(): string {
@@ -231,10 +356,6 @@ export class ClaudeChat implements AfterViewInit {
     this.store.interrupt();
   }
 
-  pick(requestId: string, question: string, label: string): void {
-    this.store.answerQuestion(requestId, { [question]: label });
-  }
-
   toggleAutoApprove(): void {
     this.store.setAutoApprove(!this.store.autoApprove());
   }
@@ -246,4 +367,20 @@ export class ClaudeChat implements AfterViewInit {
   tokensLabel(): string {
     return (this.store.contextTokens() / 1000).toFixed(1) + 'k';
   }
+}
+
+/**
+ * Give every fenced block a header strip: the language tag marked left on
+ * the <code> element, and a Copy control. Only sanitizer-safe markup (span,
+ * class, role, tabindex, title) so it survives [innerHTML].
+ */
+export function wrapCodeBlocks(html: string): string {
+  return html.replace(
+    /<pre><code(?: class="language-([^"]*)")?>/g,
+    (_m, lang: string | undefined) =>
+      '<div class="code-wrap"><div class="code-hd">' +
+      `<span class="code-lang">${lang ?? ''}</span>` +
+      '<span class="code-copy" role="button" tabindex="0" title="Copy code">Copy</span>' +
+      `</div><pre><code${lang ? ` class="language-${lang}"` : ''}>`,
+  ).replaceAll('</code></pre>', '</code></pre></div>');
 }

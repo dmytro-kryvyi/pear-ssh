@@ -1,0 +1,41 @@
+<div class="picker" role="listbox" aria-label="Model">
+  <div class="pk-head">
+    <span class="pk-title">Model</span>
+    <span class="pk-sub">{{ fallback() ? 'static list' : loading() ? 'asking claude…' : 'from your claude CLI' }}</span>
+    <button class="pk-refresh" title="Ask the CLI again" (click)="refresh()">
+      <pear-icon name="refresh" [size]="12" />
+    </button>
+  </div>
+
+  @for (row of rows(); track row.info.value) {
+    <button
+      class="pk-row"
+      role="option"
+      [attr.aria-selected]="row.selected"
+      [class.selected]="row.selected"
+      [class.off]="row.info.disabled"
+      [disabled]="row.info.disabled"
+      [title]="row.info.description ?? ''"
+      (click)="pick(row)"
+    >
+      <span class="pk-check">
+        @if (row.selected) {
+          <pear-icon name="check" [size]="12" />
+        }
+      </span>
+      <span class="pk-text">
+        <span class="pk-name">{{ row.label }}</span>
+        @if (row.info.description) {
+          <span class="pk-desc">{{ row.info.description }}</span>
+        }
+      </span>
+      <span class="pk-hint" [class.need]="row.info.disabled">{{ row.hint }}</span>
+    </button>
+  }
+
+  @if (fallback()) {
+    <div class="pk-foot">
+      claude didn't answer <code>list_models</code> — showing aliases every CLI accepts.
+    </div>
+  }
+</div>

@@ -101,6 +101,9 @@ export class ChatStreamParser {
   private sawStreamEvents = false;
   /** Context size after the latest API call (per-call usage snapshot). */
   private lastContextTokens = 0;
+  /** Receives raw `control_response` messages (replies to control requests
+   *  written on stdin); they are protocol plumbing, not transcript events. */
+  private onControl: ((msg: Record<string, unknown>) => void) | null = null;
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -111,6 +114,10 @@ export class ChatStreamParser {
 
   private nextId(): string {
     return this.idPrefix + ++this.seq;
+  }
+
+  setControlHandler(handler: ((msg: Record<string, unknown>) => void) | null): void {
+    this.onControl = handler;
   }
 
   push(chunk: string): ClaudeChatEvent[] {
@@ -162,6 +169,9 @@ export class ChatStreamParser {
         return;
       case 'result':
         this.handleResult(msg, out);
+        return;
+      case 'control_response':
+        this.onControl?.(msg);
         return;
     }
   }
@@ -235,6 +245,14 @@ export class ChatStreamParser {
       } catch {
         input = {};
       }
+    }
+    // AskUserQuestion reaches the UI as a question card via the permission
+    // bridge; a second, generic tool card for it would only be noise. An
+    // empty blockId registers the call (no double emit) while telling
+    // handleToolResults to drop its result.
+    if (tool === 'AskUserQuestion') {
+      this.toolBlocks.set(toolUseId, '');
+      return;
     }
     const blockId = this.nextId();
     this.toolBlocks.set(toolUseId, blockId);
@@ -315,7 +333,9 @@ export class ChatStreamParser {
         costUsd: typeof msg['total_cost_usd'] === 'number' ? msg['total_cost_usd'] : 0,
       });
     }
-    if (msg['subtype'] && msg['subtype'] !== 'success') {
+    // Some failures (auth, API errors) come back as subtype 'success' with
+    // is_error set and the message in `result` — surface those too.
+    if ((msg['subtype'] && msg['subtype'] !== 'success') || msg['is_error'] === true) {
       out.push({
         type: 'error',
         message: String(msg['result'] ?? msg['subtype']).slice(0, 500),

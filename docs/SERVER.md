@@ -65,6 +65,11 @@ into the container, for running a VPN client inside it.
 
 ### From source
 
+The server serves whatever is in `ui/dist/ui/browser` and `mobile/dist/mobile/browser`.
+After changing the UI, run `npm run build:web` (or `npm run pack:server`) again — a plain
+`ng build --configuration development` leaves an unhashed dev build there that the
+service worker cannot cache properly.
+
 ```sh
 git clone https://github.com/dmytro-kryvyi/pear-ssh.git && cd pear-ssh
 npm ci
@@ -218,7 +223,10 @@ can be weighed separately:
 - *The server as a host* ("Add this computer") is **off** unless you start with
   `--enable-local-host`.
 - *Claude Code* runs the `claude` CLI on the server as the server's user, on that user's
-  Claude login. It is on when the CLI is installed.
+  Claude login. It is on when the CLI is installed. The dock's **Sign in** runs
+  `claude auth login` in a terminal on the server (so it signs in the *server's* user —
+  finish the browser hand-off from any device) and pauses the shared chat while it does;
+  the model picker lists whatever the server's CLI version offers.
 
 **SSH host keys are verified** (trust on first use). The first connection to a host
 shows its key fingerprint and asks; a key that later *changes* is refused with a louder

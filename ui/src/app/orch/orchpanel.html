@@ -26,7 +26,7 @@
                 <div class="empty">No containers on this host.</div>
               }
               @for (grp of d.groups; track grp.project) {
-                <div class="group-head" (click)="toggleGroup('docker', grp.project)">
+                <div class="group-head" (click)="toggleGroup('docker', grp.project)" (contextmenu)="onProjectMenu($event, grp.project, grp.containers)">
                   <pear-icon [name]="isGroupOpen('docker', grp.project) ? 'chevronDown' : 'chevronRight'" [size]="11" />
                   <pear-icon [name]="grp.project ? 'layers' : 'docker'" [size]="11" class="group-icon" />
                   <span class="group-name">{{ grp.project || 'standalone' }}</span>
@@ -46,7 +46,7 @@
                 </div>
                 @if (isGroupOpen('docker', grp.project)) {
                   @for (c of grp.containers; track c.id) {
-                    <div class="card in-group" [class.busy]="busy() === c.id">
+                    <div class="card in-group" [class.busy]="busy() === c.id" (contextmenu)="onContainerMenu($event, c)">
                       <div class="card-top">
                         <span class="dot" [class.ok]="c.running"></span>
                         <span class="name">{{ c.name }}</span>
@@ -93,7 +93,7 @@
                 </div>
                 @if (isGroupOpen('swarm', grp.stack)) {
                   @for (svc of grp.services; track svc.id) {
-                    <div class="card in-group" [class.busy]="busy() === svc.id">
+                    <div class="card in-group" [class.busy]="busy() === svc.id" (contextmenu)="onServiceMenu($event, svc)">
                       <div class="card-top">
                         <span class="dot" [class.ok]="svc.running > 0 && svc.running === svc.desired" [class.warn]="svc.running > 0 && svc.running !== svc.desired"></span>
                         <span class="name">{{ svc.name }}</span>
@@ -107,6 +107,7 @@
                             <button [disabled]="svc.desired <= 0" (click)="act(svc.id, { type: 'service', name: svc.name, op: 'scale', replicas: svc.desired - 1 })" title="Scale down"><pear-icon name="minus" [size]="11" /></button>
                             <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'scale', replicas: svc.desired + 1 })" title="Scale up"><pear-icon name="plus" [size]="11" /></button>
                           }
+                          <button (click)="openTasks(svc)" title="Tasks"><pear-icon name="activity" [size]="12" /></button>
                           <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'restart' })" title="Force restart"><pear-icon name="refresh" [size]="12" /></button>
                           <button (click)="act(svc.id, { type: 'service', name: svc.name, op: 'logs' }, svc.name)" title="Service logs"><pear-icon name="logs" [size]="12" /></button>
                         </div>
@@ -136,7 +137,7 @@
                 </div>
                 @if (isGroupOpen('proxmox', grp.type)) {
                   @for (g of grp.guests; track g.vmid) {
-                    <div class="card in-group" [class.busy]="busy() === 'g' + g.vmid">
+                    <div class="card in-group" [class.busy]="busy() === 'g' + g.vmid" (contextmenu)="onGuestMenu($event, g)">
                       <div class="card-top">
                         <span class="dot" [class.ok]="g.running"></span>
                         <pear-icon [name]="g.type === 'vm' ? 'cube' : 'cpu'" [size]="12" class="guest-icon" />

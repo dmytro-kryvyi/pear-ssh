@@ -61,6 +61,17 @@ export class TermRouter {
     this.ws.openTermTab(null, hostId, this.tabs.createShell(hostId, path));
   }
 
+  /** A fresh shell for a host wherever terminals live right now: the bottom
+   *  dock, or a tab in the focused pane under in-pane placement. */
+  newShell(hostId: string, cwd: string | null = null): void {
+    if (!this.inPane()) {
+      this.tabs.newShell(hostId, cwd);
+      return;
+    }
+    const id = cwd ? this.tabs.createShell(hostId, cwd) : this.tabs.createShell(hostId);
+    this.ws.openTermTab(null, hostId, id);
+  }
+
   /** Open a dedicated stream tab (logs, service ps, prune, ...). */
   openOrch(hostId: string, command: string, title: string): void {
     if (!this.inPane()) {

@@ -651,6 +651,7 @@ export function createNativeBackend(
     },
     claude: {
       open: notYet('Claude terminal mode is desktop-only — chat runs over SSH here'),
+      listModels: notYet('Model listing is desktop-only — use /model <name> here'),
       status: async () => {
         const hostId = await deps.kv.get(CLAUDE_HOST_KEY);
         if (!hostId) return { installed: false, mcpReady: false };

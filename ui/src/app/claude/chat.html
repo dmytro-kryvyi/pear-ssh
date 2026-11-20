@@ -1,18 +1,21 @@
 <!-- context meter -->
-<div class="ctx-meter">
+<div class="ctx-meter" (contextmenu)="openModelMenu($event)">
   <span>context</span>
   <div class="ctx-track">
     <div class="ctx-fill" [class.warn]="ctxTone() === 'warn'" [class.err]="ctxTone() === 'err'" [style.width.%]="ctxPct()"></div>
   </div>
   <span>{{ tokensLabel() }} / {{ maxLabel() }}</span>
-  <button class="model-chip" (click)="openModelMenu($event)" title="Switch model">
+  <button class="model-chip" [class.open]="pickerOpen()" (click)="openModelMenu($event)" title="Switch model">
     {{ modelLabel() }}
     <pear-icon name="chevronDown" [size]="10" />
   </button>
+  @if (pickerOpen()) {
+    <pear-model-picker (closed)="pickerOpen.set(false)" />
+  }
 </div>
 
 <!-- transcript -->
-<div #body class="chat-body" (scroll)="onScroll()" (contextmenu)="onContextMenu($event)">
+<div #body class="chat-body" (scroll)="onScroll()" (click)="onBodyClick($event)" (contextmenu)="onContextMenu($event)">
   @if (store.blocks().length === 0) {
     <div class="chat-empty">
       <span class="empty-spark"><pear-icon name="sparkle" [size]="18" /></span>
@@ -21,6 +24,7 @@
     </div>
   }
   @for (b of store.blocks(); track b.id) {
+    <div class="blk" [attr.data-block-id]="b.id">
     @switch (b.kind) {
       @case ('user') {
         <div class="turn-user">
@@ -95,28 +99,76 @@
         </div>
       }
       @case ('question') {
-        <div class="card">
-          @for (q of b.questions; track q.question) {
-            <div class="card-hd static q-title">
-              <pear-icon name="sparkle" [size]="13" class="claude-color" />
-              <span>{{ q.question }}</span>
-            </div>
-            @for (opt of q.options; track opt.label) {
+        <div class="card" [class.settled]="b.choices !== null">
+          @if (b.choices === null) {
+            <!-- open: every question gets its own picks; one Submit sends them all -->
+            @for (q of b.questions; track q.question; let qi = $index) {
+              <div class="card-hd static q-title" [class.q-next]="qi > 0">
+                <pear-icon name="sparkle" [size]="13" class="claude-color" />
+                @if (q.header) {
+                  <span class="q-chip">{{ q.header }}</span>
+                }
+                <span>{{ q.question }}</span>
+                @if (q.multiSelect) {
+                  <span class="q-hint">pick any</span>
+                }
+              </div>
+              @for (opt of q.options; track opt.label) {
+                <button
+                  class="q-opt"
+                  [class.picked]="isPicked(b.requestId, q.question, opt.label)"
+                  (click)="togglePick(b.requestId, q, opt.label)"
+                >
+                  <span class="radio" [class.box]="q.multiSelect" [class.on]="isPicked(b.requestId, q.question, opt.label)"></span>
+                  <span>
+                    {{ opt.label }}
+                    @if (opt.description) {
+                      <span class="q-desc">{{ opt.description }}</span>
+                    }
+                  </span>
+                </button>
+              }
               <button
                 class="q-opt"
-                [class.picked]="b.choices?.[q.question] === opt.label"
-                [class.locked]="b.choices !== null"
-                [disabled]="b.choices !== null"
-                (click)="pick(b.requestId, q.question, opt.label)"
+                [class.picked]="isPicked(b.requestId, q.question, OTHER)"
+                (click)="togglePick(b.requestId, q, OTHER)"
               >
-                <span class="radio" [class.on]="b.choices?.[q.question] === opt.label"></span>
-                <span>
-                  {{ opt.label }}
-                  @if (opt.description) {
-                    <span class="q-desc">{{ opt.description }}</span>
-                  }
-                </span>
+                <span class="radio" [class.box]="q.multiSelect" [class.on]="isPicked(b.requestId, q.question, OTHER)"></span>
+                <span>Other…</span>
               </button>
+              @if (isPicked(b.requestId, q.question, OTHER)) {
+                <div class="q-other">
+                  <input
+                    class="q-other-in"
+                    type="text"
+                    placeholder="Type your answer"
+                    [value]="otherText(b.requestId, q.question)"
+                    (input)="setOther(b.requestId, q.question, $any($event.target).value)"
+                    (keydown.enter)="submitQuestions(b)"
+                    spellcheck="false"
+                  />
+                </div>
+              }
+            }
+            <div class="btn-row">
+              <button class="cbtn primary" [disabled]="!canSubmit(b)" (click)="submitQuestions(b)">
+                <pear-icon name="check" [size]="12" /> Submit
+              </button>
+              <button class="cbtn ghost" (click)="dismissQuestions(b)">Dismiss</button>
+            </div>
+          } @else {
+            <!-- settled: the answers as sent, or a dismissed note -->
+            @for (q of b.questions; track q.question; let qi = $index) {
+              <div class="card-hd static q-title" [class.q-next]="qi > 0">
+                <pear-icon name="sparkle" [size]="13" class="claude-color" />
+                @if (q.header) {
+                  <span class="q-chip">{{ q.header }}</span>
+                }
+                <span>{{ q.question }}</span>
+              </div>
+              <div class="q-answer" [class.dim]="isDismissed(b)">
+                {{ isDismissed(b) ? 'dismissed' : b.choices![q.question] || '—' }}
+              </div>
             }
           }
         </div>
@@ -125,9 +177,17 @@
         <div class="chat-divider"><span class="line"></span>{{ b.text }}<span class="line"></span></div>
       }
       @case ('error') {
-        <div class="chat-error">{{ b.text }}</div>
+        <div class="chat-error" [class.auth]="b.auth">
+          <span>{{ b.text }}</span>
+          @if (b.auth) {
+            <button class="cbtn primary" (click)="store.requestSignIn()">
+              <pear-icon name="key" [size]="12" /> Sign in
+            </button>
+          }
+        </div>
       }
     }
+    </div>
   }
   @if (store.busy()) {
     <div class="turn-asst working">

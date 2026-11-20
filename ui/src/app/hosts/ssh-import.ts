@@ -3,12 +3,18 @@ import type { SshConfigEntry } from '@pear/core';
 import { Pear } from '../pear';
 import { HostCatalog } from '../hosts';
 import { PearIcon } from '../icons/icon';
+import { SshConfigImporter } from './ssh-config-importer';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService } from '../menu/context-menu';
+import { copyItem } from '../menu/menu-items';
 
 interface ImportRow {
   entry: SshConfigEntry;
   checked: boolean;
   /** Why the row can't be imported, or null when it can. */
-  blocked: 'exists' | 'proxyjump' | null;
+  blocked: 'exists' | null;
+  /** Jump chain summary ("via a → b"), or null when the entry dials direct. */
+  via: string | null;
 }
 
 /** Picker over ~/.ssh/config Host entries: check the ones to add as hosts. */
@@ -21,6 +27,26 @@ interface ImportRow {
 export class SshImport {
   private readonly pear = inject(Pear);
   private readonly catalog = inject(HostCatalog);
+  private readonly importer = inject(SshConfigImporter);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
+
+  onRowMenu(event: MouseEvent, row: ImportRow): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const setAll = (checked: boolean) =>
+      this.rows.update((rows) => rows.map((r) => (r.blocked ? r : { ...r, checked })));
+    this.menu.open(event.clientX, event.clientY, [
+      { label: row.checked ? 'Uncheck' : 'Check', icon: 'check', disabled: !!row.blocked, onClick: () => this.toggle(row) },
+      { label: 'Check all', onClick: () => setAll(true) },
+      { label: 'Uncheck all', onClick: () => setAll(false) },
+      { divider: true },
+      copyItem('Copy alias', row.entry.alias, this.clipboard),
+      copyItem('Copy target', this.target(row.entry), this.clipboard),
+      copyItem('Copy key path', row.entry.identityFile, this.clipboard, 'key path'),
+      copyItem('Copy ProxyJump', row.entry.proxyJump, this.clipboard, 'ProxyJump'),
+    ]);
+  }
 
   readonly closed = output<void>();
 
@@ -35,21 +61,19 @@ export class SshImport {
     void this.load();
   }
 
+  private entries: SshConfigEntry[] = [];
+
   private async load(): Promise<void> {
-    const entries = await this.pear.api.hosts.sshConfigEntries();
-    const hosts = this.catalog.all().filter((h) => !h.local);
+    this.entries = await this.pear.api.hosts.sshConfigEntries();
+    const hosts = this.catalog.all();
     this.rows.set(
-      entries.map((entry) => {
-        const blocked: ImportRow['blocked'] = entry.proxyJump
-          ? 'proxyjump'
-          : hosts.some(
-                (h) =>
-                  h.aliases?.includes(entry.alias) ||
-                  (h.host === entry.host && h.user === (entry.user ?? h.user)),
-              )
-            ? 'exists'
-            : null;
-        return { entry, blocked, checked: blocked === null };
+      this.entries.map((entry) => {
+        const blocked: ImportRow['blocked'] = this.importer.existingFor(entry, hosts)
+          ? 'exists'
+          : null;
+        const hops = this.importer.hopsOf(entry);
+        const via = hops.length ? 'via ' + hops.map((h) => h.host).join(' → ') : null;
+        return { entry, blocked, via, checked: blocked === null };
       }),
     );
     this.loading.set(false);
@@ -77,35 +101,21 @@ export class SshImport {
     return entry.identityFile?.split('/').pop() ?? '';
   }
 
-  badge(row: ImportRow): string {
-    return row.blocked === 'exists' ? 'already added' : 'ProxyJump';
-  }
-
+  /** Jump hosts a checked, not-yet-added entry needs: created alongside it. */
   async import(): Promise<void> {
     if (this.importing()) return;
     this.importing.set(true);
     this.error.set(null);
-    const failed: string[] = [];
-    for (const { entry } of this.rows().filter((r) => r.checked)) {
-      try {
-        await this.pear.api.hosts.upsert({
-          name: entry.alias,
-          host: entry.host,
-          user: entry.user ?? 'root',
-          port: entry.port ?? 22,
-          aliases: [entry.alias],
-          auth: entry.identityFile
-            ? { method: 'key', privateKeyPath: entry.identityFile }
-            : undefined,
-          kind: 'plain',
-        });
-      } catch {
-        failed.push(entry.alias);
-      }
-    }
+    const items = this.rows()
+      .filter((r) => r.checked)
+      .map((r) => ({ entry: r.entry }));
+    const { failed } = await this.importer.importEntries(items, this.entries);
     await this.catalog.refresh();
     this.importing.set(false);
-    if (failed.length) this.error.set(`Failed: ${failed.join(', ')}`);
-    else this.closed.emit();
+    if (failed.length) {
+      this.error.set(failed.map((f) => `${f.alias}: ${f.error}`).join('; '));
+    } else {
+      this.closed.emit();
+    }
   }
 }

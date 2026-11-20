@@ -17,6 +17,10 @@ import type { HostConfig } from '@pear/core';
 import { Pear } from '../pear';
 import { PearIcon } from '../icons/icon';
 import { loadMonaco, type MonacoApi } from './monaco';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService } from '../menu/context-menu';
+import { copyItem } from '../menu/menu-items';
+import { Workspace } from '../workspace/workspace';
 
 @Component({
   selector: 'pear-editor',
@@ -31,6 +35,9 @@ export class Editor implements OnDestroy {
   readonly closed = output<void>();
 
   private readonly pear = inject(Pear);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
+  private readonly ws = inject(Workspace);
   private readonly editorHost = viewChild.required<ElementRef<HTMLDivElement>>('editorHost');
 
   readonly loading = signal(true);
@@ -119,6 +126,24 @@ export class Editor implements OnDestroy {
     } finally {
       this.saving.set(false);
     }
+  }
+
+  onTabMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const h = this.host();
+    const path = this.path();
+    const dir = path.replace(/\/[^/]*$/, '') || '/';
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'Save', shortcut: 'Ctrl+S', disabled: !this.dirty() || this.saving(), onClick: () => void this.save() },
+      { label: 'Reload from host', icon: 'refresh', onClick: () => void this.loadFile(h.id, path) },
+      { divider: true },
+      copyItem('Copy path', path, this.clipboard),
+      copyItem('Copy file name', this.fileName(), this.clipboard, 'file name'),
+      copyItem('Copy host:path', h.local || h.parentId ? path : `${h.user}@${h.host}:${path}`, this.clipboard, 'host:path'),
+      { divider: true },
+      { label: 'Reveal in file list', icon: 'folderOpen', onClick: () => this.ws.newTab(null, h.id, dir) },
+      { label: 'Close', icon: 'close', onClick: () => this.close() },
+    ]);
   }
 
   close(): void {

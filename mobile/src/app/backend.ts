@@ -105,6 +105,7 @@ export function createStubBackend(): PearApi {
     claude: {
       open: fail('claude.open'),
       status: fail('claude.status'),
+      listModels: fail('claude.listModels'),
       chatSend: fail('claude.chatSend'),
       chatInterrupt: noop,
       chatAnswer: noop,

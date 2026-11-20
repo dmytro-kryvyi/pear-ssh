@@ -23,8 +23,56 @@ export interface SshConfigEntry {
   user?: string;
   /** First IdentityFile; `~`-expanded by the node loader. */
   identityFile?: string;
-  /** ProxyJump target — present means "not importable yet". */
+  /**
+   * Raw ProxyJump value: one or more `[user@]host[:port]` hops, comma
+   * separated, outermost first. Each hop may itself be an alias from the
+   * same config. Decode with parseProxyJump().
+   */
   proxyJump?: string;
+}
+
+/** One hop of a ProxyJump chain. `host` may be another config alias. */
+export interface ProxyJumpHop {
+  host: string;
+  user?: string;
+  port?: number;
+}
+
+/**
+ * Split a ProxyJump value into hops, outermost first (OpenSSH connects to
+ * the first hop directly, then to each next one through it). `none` and
+ * empty values yield no hops. Hosts may be bracketed IPv6 literals.
+ */
+export function parseProxyJump(value: string | undefined): ProxyJumpHop[] {
+  if (!value || value.trim().toLowerCase() === 'none') return [];
+  const hops: ProxyJumpHop[] = [];
+  for (const raw of value.split(',')) {
+    let spec = raw.trim();
+    if (!spec) continue;
+    // Strip an optional ssh:// scheme (accepted by OpenSSH).
+    spec = spec.replace(/^ssh:\/\//i, '');
+    const hop: ProxyJumpHop = { host: '' };
+    const at = spec.lastIndexOf('@');
+    if (at > 0) {
+      hop.user = spec.slice(0, at);
+      spec = spec.slice(at + 1);
+    }
+    const v6 = /^\[([^\]]+)\](?::(\d+))?$/.exec(spec);
+    if (v6) {
+      hop.host = v6[1];
+      if (v6[2]) hop.port = Number(v6[2]);
+    } else {
+      const colon = spec.lastIndexOf(':');
+      if (colon > 0 && /^\d+$/.test(spec.slice(colon + 1))) {
+        hop.host = spec.slice(0, colon);
+        hop.port = Number(spec.slice(colon + 1));
+      } else {
+        hop.host = spec;
+      }
+    }
+    if (hop.host) hops.push(hop);
+  }
+  return hops;
 }
 
 /** Flat lexed directive: lowercased keyword + unquoted args. */

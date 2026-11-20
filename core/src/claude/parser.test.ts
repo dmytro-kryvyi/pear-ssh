@@ -201,3 +201,62 @@ test('coalesceChatEvents merges same-block deltas only', () => {
     { type: 'text-delta', blockId: 'b2', text: 'd' },
   ]);
 });
+
+test('parser: a success result flagged is_error still surfaces the message', () => {
+  const p = new ChatStreamParser();
+  const events = p.push(
+    line({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }),
+  );
+  assert.deepEqual(events[events.length - 2], {
+    type: 'error',
+    message: 'Not logged in · Please run /login',
+  });
+  assert.equal(events[events.length - 1].type, 'turn-done');
+});
+
+test('parser: AskUserQuestion gets no tool card, and its tool_result is swallowed', () => {
+  const p = new ChatStreamParser(Date.now, 'b');
+  const events: ClaudeChatEvent[] = [];
+  events.push(
+    ...p.push(
+      line({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu1', name: 'AskUserQuestion', input: { questions: [] } },
+            { type: 'tool_use', id: 'tu2', name: 'Bash', input: { command: 'id' } },
+          ],
+        },
+      }),
+    ),
+  );
+  events.push(
+    ...p.push(
+      line({
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu1', content: 'answered' },
+            { type: 'tool_result', tool_use_id: 'tu2', content: 'uid=0' },
+          ],
+        },
+      }),
+    ),
+  );
+  const starts = events.filter((e) => e.type === 'tool-start');
+  assert.equal(starts.length, 1);
+  assert.equal((starts[0] as { tool: string }).tool, 'Bash');
+  const ends = events.filter((e) => e.type === 'tool-end');
+  assert.equal(ends.length, 1);
+  assert.equal((ends[0] as { output: string }).output, 'uid=0');
+});
+
+test('parser: control_response goes to the control handler, not the event stream', () => {
+  const p = new ChatStreamParser();
+  const seen: unknown[] = [];
+  p.setControlHandler((m) => seen.push(m));
+  const reply = { type: 'control_response', response: { subtype: 'success', request_id: 'r1' } };
+  const events = p.push(line(reply));
+  assert.deepEqual(events, []);
+  assert.deepEqual(seen, [reply]);
+});

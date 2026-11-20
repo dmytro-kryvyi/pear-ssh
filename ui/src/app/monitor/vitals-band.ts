@@ -5,6 +5,11 @@ import { Settings } from '../settings';
 import { MonitorStore, type HostMonitorState } from './store';
 import { Sparkline } from './sparkline';
 import { bytes, memPair, rate, tone, uptime } from '../orch/format';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService } from '../menu/context-menu';
+import { copyItem } from '../menu/menu-items';
+
+export const VITALS_COMMAND = 'cat /proc/stat /proc/meminfo; df -Pk; cat /proc/net/dev';
 
 const MAX_MOUNTS = 5;
 
@@ -25,6 +30,32 @@ export class VitalsBand {
 
   readonly settings = inject(Settings);
   private readonly store = inject(MonitorStore);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
+
+  onFootMenu(event: MouseEvent): void {
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, [
+      copyItem('Copy sampling command', VITALS_COMMAND, this.clipboard, 'command'),
+      { divider: true },
+      { label: 'Sample now', icon: 'refresh', onClick: () => this.sampleNow() },
+      {
+        label: this.live() ? 'Pause sampling' : 'Resume sampling',
+        icon: this.live() ? 'pause' : 'play',
+        onClick: () => this.settings.liveStats.set(!this.live()),
+      },
+    ]);
+  }
+
+  onMountMenu(event: MouseEvent, m: MountUsage): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu.open(event.clientX, event.clientY, [
+      copyItem('Copy mount path', m.mount, this.clipboard, 'path'),
+      copyItem('Copy filesystem', m.fs, this.clipboard, 'filesystem'),
+      copyItem('Copy df command', `df -h ${m.mount}`, this.clipboard, 'command'),
+    ]);
+  }
 
   readonly st = computed<HostMonitorState | undefined>(
     () => this.store.states()[this.host().id],

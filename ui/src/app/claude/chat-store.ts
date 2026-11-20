@@ -1,10 +1,12 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import type {
-  ClaudeChatEvent,
-  ClaudeFileDiff,
-  ClaudeQuestion,
-  ClaudeSessionMeta,
-  RemoteControl,
+import {
+  isClaudeAuthError,
+  type ClaudeChatEvent,
+  type ClaudeFileDiff,
+  type ClaudeModelInfo,
+  type ClaudeQuestion,
+  type ClaudeSessionMeta,
+  type RemoteControl,
 } from '@pear/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
@@ -38,7 +40,8 @@ export type ChatBlock =
       choices: Record<string, string> | null;
     }
   | { kind: 'divider'; id: string; text: string }
-  | { kind: 'error'; id: string; text: string };
+  /** `auth`: the CLI says it is signed out — the card offers Sign in. */
+  | { kind: 'error'; id: string; text: string; auth?: boolean };
 
 /** Context window by model id (claude-api reference, 2026-06): the current
  *  generation (Fable 5, Opus 4.6+, Sonnet 4.6/5) is 1M; Haiku 4.5 and older
@@ -65,7 +68,17 @@ export class ClaudeChatStore {
   readonly activeSessionId = signal<string | null>(null);
   /** What the CLI reported (init event) or the user picked — for the meter row. */
   readonly model = signal('');
-  readonly ctxMax = computed(() => contextWindowFor(this.model()));
+  /** The CLI's own picker list; null until fetched (or when it can't be). */
+  readonly models = signal<ClaudeModelInfo[] | null>(null);
+  readonly modelsError = signal<string | null>(null);
+  /** Aliases ('opus[1m]') resolve through the CLI list for the context size. */
+  readonly ctxMax = computed(() => {
+    const m = this.model();
+    const info = this.models()?.find((x) => x.value === m);
+    return contextWindowFor(info?.resolvedModel ?? m);
+  });
+  /** Bumped when a card asks for the CLI's sign-in flow; the dock reacts. */
+  readonly signInRequested = signal(0);
 
   private nextId = 0;
   private started = false;
@@ -233,7 +246,12 @@ export class ClaudeChatStore {
         this.busy.set(false);
         return;
       case 'error':
-        this.push({ kind: 'error', id: this.id(), text: event.message });
+        this.push({
+          kind: 'error',
+          id: this.id(),
+          text: event.message,
+          ...(isClaudeAuthError(event.message) ? { auth: true } : {}),
+        });
         this.busy.set(false);
         return;
     }
@@ -267,6 +285,9 @@ export class ClaudeChatStore {
     switch (cmd) {
       case 'clear':
         void this.newSession();
+        return;
+      case 'login':
+        this.requestSignIn();
         return;
       case 'model':
         if (arg) this.setModel(arg);
@@ -311,6 +332,32 @@ export class ClaudeChatStore {
     });
   }
 
+  /** Empty choices = dismissed (the CLI gets a deny for the question). */
+  dismissQuestion(requestId: string): void {
+    this.pear.api.claude.chatAnswer(requestId, { kind: 'deny' });
+    this.patch((blocks) => {
+      for (const b of blocks) {
+        if (b.kind === 'question' && b.requestId === requestId) b.choices = {};
+      }
+    });
+  }
+
+  requestSignIn(): void {
+    this.signInRequested.update((n) => n + 1);
+  }
+
+  /** Fetch the CLI's model list once (or again when `force`). Failure keeps
+   *  whatever was there — the picker falls back to a static lineup. */
+  async loadModels(force = false): Promise<void> {
+    if (this.models() && !force) return;
+    try {
+      this.models.set(await this.pear.api.claude.listModels());
+      this.modelsError.set(null);
+    } catch (err) {
+      this.modelsError.set(cleanIpcError(err));
+    }
+  }
+
   setAutoApprove(on: boolean): void {
     this.autoApprove.set(on);
     this.pear.api.claude.chatSetAutoApprove(on);
@@ -326,6 +373,14 @@ export class ClaudeChatStore {
     this.reset();
     this.activeSessionId.set(sessionId);
     for (const event of events) this.apply(event);
+    // Cards left open in a replayed transcript belong to a request the
+    // bridge no longer knows — show them as settled, never as answerable.
+    this.patch((blocks) => {
+      for (const b of blocks) {
+        if (b.kind === 'question' && b.choices === null) b.choices = {};
+        if (b.kind === 'permission' && b.status === 'pending') b.status = 'deny';
+      }
+    });
     this.busy.set(false);
   }
 

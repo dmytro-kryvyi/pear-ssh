@@ -7,6 +7,7 @@ import {
   inject,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
@@ -24,7 +25,7 @@ import { Settings } from '../settings';
 import { ClaudeChat } from './chat';
 import { ClaudeChatStore } from './chat-store';
 
-type DockState = 'checking' | 'missing' | 'ready';
+type DockState = 'checking' | 'missing' | 'signin' | 'ready';
 
 /**
  * The Claude Code dock: the user's own `claude` CLI running in a local PTY,
@@ -51,6 +52,8 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
   readonly mcpReady = signal(true);
   readonly exited = signal(false);
   readonly error = signal<string | null>(null);
+  /** The CLI's own sign-in flow (`claude auth login`) is running in the pane. */
+  readonly loginRunning = signal(false);
 
   private xterm?: Terminal;
   private fit?: FitAddon;
@@ -72,6 +75,10 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
         this.exited.set(false);
       }
     });
+    // A "Sign in" button on an auth-error card in the chat lands here.
+    effect(() => {
+      if (this.chat.signInRequested() > 0) untracked(() => void this.signIn());
+    });
   }
 
   async ngAfterViewInit(): Promise<void> {
@@ -83,7 +90,9 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
     try {
       const status = await this.pear.api.claude.status();
       this.mcpReady.set(status.mcpReady);
-      this.state.set(status.installed ? 'ready' : 'missing');
+      this.state.set(
+        !status.installed ? 'missing' : status.loggedIn === false ? 'signin' : 'ready',
+      );
     } catch (err) {
       this.state.set('missing');
       this.error.set(cleanIpcError(err));
@@ -107,8 +116,40 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
     });
   }
 
-  /** (Re)starts the claude PTY with a fresh xterm. */
-  async start(): Promise<void> {
+  /**
+   * Run the CLI's sign-in flow in a PTY inside the dock. Pear only hosts the
+   * terminal; `claude auth login` owns the browser hand-off and the stored
+   * credentials. When it exits the dock re-checks status and returns to chat.
+   */
+  async signIn(): Promise<void> {
+    if (this.loginRunning()) return;
+    if (this.xterm) this.teardownTerm();
+    this.state.set('signin');
+    this.loginRunning.set(true);
+    // The #term element appears on the next render.
+    await new Promise((r) => setTimeout(r));
+    await this.start(true);
+  }
+
+  /** Right-click on the dock header. */
+  onHeadMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const terminal = this.settings.claudeMode() === 'terminal';
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'New session', icon: 'plus', onClick: () => void this.chat.newSession() },
+      { label: 'History…', icon: 'clock', onClick: () => this.openHistory(event) },
+      { divider: true },
+      {
+        label: terminal ? 'Switch to chat' : 'Switch to terminal',
+        icon: terminal ? 'sparkle' : 'terminal',
+        onClick: () => this.settings.claudeMode.set(terminal ? 'chat' : 'terminal'),
+      },
+      { label: 'Sign in again…', onClick: () => void this.signIn() },
+    ]);
+  }
+
+  /** (Re)starts the claude PTY with a fresh xterm (or the sign-in flow). */
+  async start(login = false): Promise<void> {
     const el = this.termEl()?.nativeElement;
     if (!el) return;
     this.teardownTerm();
@@ -133,15 +174,24 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
 
     const { term, claude } = this.pear.api;
     try {
-      const id = await claude.open({ cols: xterm.cols, rows: xterm.rows });
+      const id = await claude.open(
+        { cols: xterm.cols, rows: xterm.rows },
+        login ? { login: true } : undefined,
+      );
       this.termId = id;
       this.unsubscribes.push(
         term.onData((tid, data) => {
           if (tid === id) xterm.write(data);
         }),
         term.onExit((tid) => {
-          if (tid === id) {
-            this.termId = undefined;
+          if (tid !== id) return;
+          this.termId = undefined;
+          if (login) {
+            // Sign-in finished (or was abandoned): ask the CLI where we stand.
+            this.loginRunning.set(false);
+            this.teardownTerm();
+            void this.recheck();
+          } else {
             this.exited.set(true);
           }
         }),
@@ -154,6 +204,7 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
     } catch (err) {
       this.error.set(cleanIpcError(err));
       this.exited.set(true);
+      if (login) this.loginRunning.set(false);
     }
   }
 
@@ -179,7 +230,7 @@ export class ClaudeDock implements AfterViewInit, OnDestroy {
         },
       },
       { divider: true },
-      { label: 'Select All', onClick: () => xterm.selectAll() },
+      { label: 'Select all', onClick: () => xterm.selectAll() },
     ]);
   }
 

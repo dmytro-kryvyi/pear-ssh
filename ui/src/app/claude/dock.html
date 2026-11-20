@@ -1,4 +1,4 @@
-<div class="claude-head">
+<div class="claude-head" (contextmenu)="onHeadMenu($event)">
   <span class="claude-spark"><pear-icon name="sparkle" [size]="13" /></span>
   <span class="claude-title">Claude Code</span>
   @if (state() === 'ready' && !mcpReady()) {
@@ -42,6 +42,32 @@
         }
         <button class="hint-btn" (click)="recheck()">Check again</button>
       </div>
+    }
+    @case ('signin') {
+      @if (loginRunning()) {
+        <div #term class="claude-term" (contextmenu)="onContextMenu($event)"></div>
+        @if (error(); as e) {
+          <div class="claude-exited">
+            <div class="hint-error">{{ e }}</div>
+            <button class="hint-btn" (click)="recheck()">Back</button>
+          </div>
+        }
+      } @else {
+        <div class="claude-hint">
+          <span class="claude-spark big"><pear-icon name="sparkle" [size]="18" /></span>
+          <div class="hint-title">Not signed in to Claude Code</div>
+          <div class="hint-sub">
+            Your <code>claude</code> CLI reports no active login. Sign in runs its own
+            <code>claude auth login</code> right here — Pear never sees the credentials.
+          </div>
+          <div class="hint-actions">
+            <button class="hint-btn" (click)="signIn()">
+              <pear-icon name="key" [size]="12" /> Sign in
+            </button>
+            <button class="hint-btn ghost" (click)="recheck()">Check again</button>
+          </div>
+        </div>
+      }
     }
     @case ('ready') {
       @if (settings.claudeMode() === 'terminal') {

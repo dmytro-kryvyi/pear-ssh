@@ -12,6 +12,10 @@ import { TerminalPane } from '../terminal/terminal';
 import { TermTabs, type TermTab } from '../terminal/tabs';
 import { TransfersPage } from '../transfers/page';
 import { Workspace, isHostTab, type HostTab, type WsPane, type WsTab } from './workspace';
+import { Clipboard } from '../clipboard';
+import { ContextMenuService, type MenuItem } from '../menu/context-menu';
+import { copyItem } from '../menu/menu-items';
+import { TermRouter } from '../terminal/router';
 
 const TAB_MIME = 'application/x-pear-tab';
 
@@ -43,6 +47,9 @@ export class Pane {
   readonly tabs = inject(TermTabs);
   readonly settings = inject(Settings);
   private readonly orchStore = inject(OrchStore);
+  private readonly clipboard = inject(Clipboard);
+  private readonly menu = inject(ContextMenuService);
+  private readonly termRouter = inject(TermRouter);
 
   /** Tab index the dragged tab would land at, for the insertion marker. */
   readonly dragOverIndex = signal<number | null>(null);
@@ -136,6 +143,58 @@ export class Pane {
   newTab(): void {
     const host = this.hostFor();
     if (host) this.ws.newTab(this.pane().id, host);
+  }
+
+  // ---- context menus -------------------------------------------------------
+
+  onTabMenu(event: MouseEvent, tab: WsTab, index: number): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const p = this.pane();
+    const others = p.tabs.filter((t) => t.id !== tab.id);
+    const right = p.tabs.slice(index + 1);
+    const otherPane = this.ws.panes().find((x) => x.id !== p.id);
+    const hostName = this.catalog.nameOf(tab.hostId);
+    const host = this.catalog.byId(tab.hostId);
+    const term = tab.kind === 'term' ? this.termTabFor(tab) : null;
+    const path = tab.kind === 'dir' || tab.kind === 'file' ? tab.path : (term?.cwd ?? '');
+    const items: MenuItem[] = [
+      { label: 'Close', icon: 'close', onClick: () => this.closeTab(tab) },
+      { label: 'Close others', disabled: !others.length, onClick: () => others.forEach((t) => this.closeTab(t)) },
+      { label: 'Close to the right', disabled: !right.length, onClick: () => right.forEach((t) => this.closeTab(t)) },
+      { divider: true },
+      { label: 'Split right', icon: 'split', onClick: () => this.ws.splitWithTab(tab.id, p.id) },
+      {
+        label: 'Move to other pane',
+        icon: 'swap',
+        disabled: !otherPane,
+        onClick: () => otherPane && this.ws.moveTab(tab.id, otherPane.id, null),
+      },
+      { divider: true },
+      copyItem('Copy path', path, this.clipboard),
+      copyItem(
+        'Copy host:path',
+        path && host && !host.local ? `${host.user}@${host.host}:${path}` : path ? `${hostName}:${path}` : '',
+        this.clipboard,
+        'host:path',
+      ),
+    ];
+    if (tab.kind === 'dir') {
+      items.push({ label: 'Open terminal here', icon: 'terminal', onClick: () => this.termRouter.openShell(tab.hostId, tab.path) });
+    }
+    this.menu.open(event.clientX, event.clientY, items);
+  }
+
+  onStripMenu(event: MouseEvent): void {
+    if ((event.target as HTMLElement).closest('.ws-tab')) return;
+    event.preventDefault();
+    this.menu.open(event.clientX, event.clientY, [
+      { label: 'New tab', icon: 'plus', onClick: () => this.newTab() },
+      { label: 'New terminal', icon: 'terminal', onClick: () => this.openTerminal() },
+      { divider: true },
+      { label: 'Split pane', icon: 'split', onClick: () => this.ws.splitPane(this.pane().id) },
+      { label: 'Close pane', icon: 'close', onClick: () => this.closePane() },
+    ]);
   }
 
   // ---- tab drag ------------------------------------------------------------

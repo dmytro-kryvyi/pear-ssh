@@ -113,6 +113,7 @@ export const CHANNELS = {
   claude: {
     open: ['invoke', 'claude:open'],
     status: ['invoke', 'claude:status'],
+    listModels: ['invoke', 'claude:listModels'],
     chatSend: ['invoke', 'claude:chatSend'],
     chatInterrupt: ['send', 'claude:chatInterrupt'],
     chatAnswer: ['send', 'claude:chatAnswer'],

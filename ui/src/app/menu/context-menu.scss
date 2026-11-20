@@ -1,6 +1,6 @@
 .menu {
   position: fixed;
-  z-index: 60;
+  z-index: 90; // above drawers (61) and editor modals (80), which host input menus
   min-width: 208px;
   padding: 5px;
   background: var(--bg-2);

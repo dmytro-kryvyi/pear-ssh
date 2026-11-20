@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSshHosts, tokenizeSshConfig, type SshConfigEntry } from './ssh-config';
+import {
+  parseProxyJump,
+  resolveSshHosts,
+  tokenizeSshConfig,
+  type SshConfigEntry,
+} from './ssh-config';
 
 function parse(text: string): SshConfigEntry[] {
   return resolveSshHosts(tokenizeSshConfig(text));
@@ -142,4 +147,35 @@ Host web
   HostName 10.0.0.5
 `);
   assert.deepEqual(entries, [{ alias: 'web', host: '10.0.0.5' }]);
+});
+
+test('parseProxyJump: single alias hop', () => {
+  assert.deepEqual(parseProxyJump('prod-server'), [{ host: 'prod-server' }]);
+});
+
+test('parseProxyJump: user, port and ssh:// scheme', () => {
+  assert.deepEqual(parseProxyJump('ssh://admin@bastion.example:2200'), [
+    { host: 'bastion.example', user: 'admin', port: 2200 },
+  ]);
+});
+
+test('parseProxyJump: multi-hop chain keeps order, tolerates spaces', () => {
+  assert.deepEqual(parseProxyJump('edge, ops@core:22'), [
+    { host: 'edge' },
+    { host: 'core', user: 'ops', port: 22 },
+  ]);
+});
+
+test('parseProxyJump: bracketed IPv6 with and without port', () => {
+  assert.deepEqual(parseProxyJump('[fd00::1]:2222,root@[fd00::2]'), [
+    { host: 'fd00::1', port: 2222 },
+    { host: 'fd00::2', user: 'root' },
+  ]);
+});
+
+test('parseProxyJump: none / empty yield no hops', () => {
+  assert.deepEqual(parseProxyJump('none'), []);
+  assert.deepEqual(parseProxyJump('None'), []);
+  assert.deepEqual(parseProxyJump(''), []);
+  assert.deepEqual(parseProxyJump(undefined), []);
 });

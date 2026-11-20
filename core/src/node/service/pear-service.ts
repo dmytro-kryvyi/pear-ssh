@@ -31,7 +31,10 @@ import { uuid } from '../../uuid';
 import { ClaudeChatRuntime } from '../claude/chat-runtime';
 import { ClaudeExecutor } from '../claude/executor';
 import { PearMcpServer } from '../claude/mcp-server';
-import { claudeInstalled, launchClaudePty } from '../claude/pty';
+import { claudeAuthStatus, claudeInstalled, launchClaudePty } from '../claude/pty';
+import { listClaudeModels } from '../claude/models';
+import type { ClaudeModelInfo } from '../../claude/models';
+import type { ClaudeStatus } from '../../types';
 import { provisionClaudeWorkspace } from '../claude/workspace';
 import { SshConnection } from '../connection';
 import { JsonFileStorage } from '../json-storage';
@@ -41,6 +44,8 @@ import { probeSsh } from '../probe';
 import { loadSshConfigEntries } from '../ssh-config-file';
 import { makeStagingDir, removeStaging, sweepStaging } from '../staging';
 import { nodeTarIo } from '../tar-io';
+
+const MODELS_TTL_MS = 10 * 60_000;
 
 /** Who is calling. Absent for single-client embedders (Electron). */
 export interface ClientCtx {
@@ -131,6 +136,7 @@ export class PearService {
   // Failure is non-fatal — the dock just reports tools as unavailable.
   private claudeMcp: PearMcpServer | null = null;
   private claudeChat: ClaudeChatRuntime | null = null;
+  private modelCache: { at: number; models: ClaudeModelInfo[] } | null = null;
   private claudeExecutor: ClaudeExecutor | null = null;
 
   private readonly pendingUi = new Map<
@@ -481,7 +487,9 @@ export class PearService {
 
     on('term:open', async ([hostId, size, rawOpts], ctx) => {
       const host = this.requireHost(hostId);
-      const opts = rawOpts as { password?: string; cwd?: string } | undefined;
+      const opts = rawOpts as
+        | { password?: string; cwd?: string; kind?: 'shell' | 'orch' }
+        | undefined;
       const config = opts?.password
         ? { ...host, auth: { ...host.auth, password: opts.password } }
         : host;
@@ -489,7 +497,7 @@ export class PearService {
       const id = handle.id;
       terms.track(
         id,
-        { hostId: host.id, kind: 'shell', size: size as TermSize },
+        { hostId: host.id, kind: opts?.kind === 'orch' ? 'orch' : 'shell', size: size as TermSize },
         {
           write: (data) => sessions.writeTerminal(id, data),
           resize: (s) => sessions.resizeTerminal(id, s),
@@ -503,13 +511,17 @@ export class PearService {
     on('term:resize', ([termId, size]) => terms.resize(asString(termId), size as TermSize));
     on('term:close', ([termId]) => terms.close(asString(termId)));
 
-    on('claude:open', ([size], ctx) => {
+    on('claude:open', ([size, opts], ctx) => {
       if (!this.features.claudePty) {
         throw new Error('The Claude terminal is disabled on this Pear server');
       }
+      const login = (opts as { login?: boolean } | undefined)?.login === true;
+      // A sign-in must not race a parked chat process over the fresh
+      // credentials: stop it first (the conversation resumes on the next send).
+      if (login) this.claudeChat?.stop();
       // Claude PTYs are local channels outside SessionManager (no host
       // attached); the hub gives them the same term:* streaming channels.
-      const channel = launchClaudePty(this.claudeDir(), size as TermSize);
+      const channel = launchClaudePty(this.claudeDir(), size as TermSize, login ? 'login' : 'claude');
       const id = uuid();
       terms.track(id, { hostId: null, kind: 'claude', size: size as TermSize }, channel);
       channel.onData((data) => terms.ingest(id, data));
@@ -517,10 +529,23 @@ export class PearService {
       if (ctx) terms.attach(id, ctx.clientId);
       return id;
     });
-    on('claude:status', async () => ({
-      installed: await claudeInstalled(),
-      mcpReady: this.claudeMcp !== null,
-    }));
+    on('claude:status', async (): Promise<ClaudeStatus> => {
+      const [installed, loggedIn] = await Promise.all([claudeInstalled(), claudeAuthStatus()]);
+      return {
+        installed,
+        mcpReady: this.claudeMcp !== null,
+        ...(loggedIn === undefined ? {} : { loggedIn }),
+      };
+    });
+    // The CLI's model list only changes with CLI updates; one query per ten
+    // minutes keeps the picker instant without spawning claude on every open.
+    on('claude:listModels', async () => {
+      const cached = this.modelCache;
+      if (cached && Date.now() - cached.at < MODELS_TTL_MS) return cached.models;
+      const models = await listClaudeModels();
+      this.modelCache = { at: Date.now(), models };
+      return models;
+    });
     on('claude:chatSend', ([text]) => {
       if (!this.claudeChat) throw new Error('Claude integration unavailable');
       this.claudeChat.send(asString(text));

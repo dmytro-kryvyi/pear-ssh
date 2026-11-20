@@ -84,6 +84,8 @@ export class PermissionBridge {
     });
     this.pending.delete(requestId);
     if (answer.kind !== 'answers') {
+      // Empty choices = dismissed; the card resolves instead of staying live.
+      this.emit({ type: 'question-answered', requestId, choices: {} });
       return JSON.stringify({ behavior: 'deny', message: 'The user dismissed the question.' });
     }
     this.emit({ type: 'question-answered', requestId, choices: answer.choices });
