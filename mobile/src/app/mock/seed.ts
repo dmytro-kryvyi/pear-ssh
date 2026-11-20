@@ -1,5 +1,6 @@
 import type {
   ContainerInfo,
+  Favourite,
   FileEntry,
   HostConfig,
   HostGroup,
@@ -115,7 +116,10 @@ export const SEED_GROUPS: HostGroup[] = [
   { id: 'w4', name: 'On call', color: 'amber', icon: 'lightning', desc: 'Everything the pager can wake me for.', hostIds: ['h1', 'h3', 'h6'] },
 ];
 
-export const RECENT_IDS = ['h1', 'h7', 'h4'];
+export const SEED_FAVOURITES: Favourite[] = [
+  { id: 'f1', hostId: 'h1', path: '/etc/nginx' },
+  { id: 'f2', hostId: 'h7', path: '/etc', label: 'Config' },
+];
 
 // ---- orchestration ---------------------------------------------------------
 

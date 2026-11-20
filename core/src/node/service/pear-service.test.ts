@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { channelsOf } from '../../rpc/channels';
-import type { HostConfig } from '../../types';
+import type { Favourite, HostConfig } from '../../types';
 import { startScratchSshd, type ScratchSshd } from '../testing/scratch-sshd';
 import { PearService, type PearServiceEnv } from './pear-service';
 
@@ -155,6 +155,50 @@ test('sub-hosts: jump in, pin, unpin; removing the parent removes the tree', asy
   await service.invoke('hosts:remove', [parent.id]);
   assert.deepEqual(await service.invoke('hosts:list', []), []);
   assert.deepEqual(await service.invoke('subhosts:list', []), []);
+});
+
+test('favourites: saved per host, refused on unpinned sub-hosts, gone with the host', async () => {
+  const { service, addHost, dataDir } = rig();
+  const list = () => service.invoke('favourites:list', []) as Promise<Favourite[]>;
+  const parent = await addHost();
+  const other = await addHost({ name: 'other' });
+
+  const fav = (await service.invoke('favourites:upsert', [
+    { hostId: parent.id, path: '/srv/www' },
+  ])) as Favourite;
+  await service.invoke('favourites:upsert', [{ hostId: parent.id, path: '/srv/www' }]);
+  await service.invoke('favourites:upsert', [{ hostId: other.id, path: '/etc' }]);
+  assert.equal((await list()).length, 2);
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'favourites.json'), 'utf8')).length, 2);
+
+  await service.invoke('favourites:upsert', [{ ...fav, label: 'Site' }]);
+  assert.equal((await list()).find((f) => f.id === fav.id)?.label, 'Site');
+
+  await assert.rejects(service.invoke('favourites:upsert', [{ hostId: 'nope', path: '/' }]));
+  const sub = (await service.invoke('subhosts:jumpIn', [
+    parent.id,
+    { type: 'docker', ref: 'web-1' },
+    'web-1',
+  ])) as HostConfig;
+  await assert.rejects(
+    service.invoke('favourites:upsert', [{ hostId: sub.id, path: '/app' }]),
+    /Pin this container/,
+  );
+  await service.invoke('subhosts:pin', [sub.id]);
+  await service.invoke('favourites:upsert', [{ hostId: sub.id, path: '/app' }]);
+  assert.equal((await list()).length, 3);
+
+  // Unpinning forgets the sub-host's favourites; removing a host takes its
+  // own and its pinned children's with it.
+  await service.invoke('subhosts:unpin', [sub.id]);
+  assert.equal((await list()).length, 2);
+  await service.invoke('subhosts:pin', [sub.id]);
+  await service.invoke('favourites:upsert', [{ hostId: sub.id, path: '/app' }]);
+  await service.invoke('hosts:remove', [parent.id]);
+  assert.deepEqual(
+    (await list()).map((f) => f.hostId),
+    [other.id],
+  );
 });
 
 test('feature gates: local host and ssh config can be switched off', async () => {

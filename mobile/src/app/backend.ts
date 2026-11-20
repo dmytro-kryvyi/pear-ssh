@@ -33,6 +33,11 @@ export function createStubBackend(): PearApi {
       remove: fail('hostGroups.remove'),
       setMembership: fail('hostGroups.setMembership'),
     },
+    favourites: {
+      list: async () => [],
+      upsert: fail('favourites.upsert'),
+      remove: fail('favourites.remove'),
+    },
     term: {
       open: fail('term.open'),
       write: noop,

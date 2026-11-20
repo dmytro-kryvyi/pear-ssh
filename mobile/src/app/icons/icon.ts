@@ -46,6 +46,8 @@ const ICONS: Record<string, string> = {
   send: '<path d="M14 2L7 9M14 2L9.5 14 7 9 2 6.5z"/>',
   shield: '<path d="M8 1.5l5.5 2v4c0 3.5-2.3 5.9-5.5 7-3.2-1.1-5.5-3.5-5.5-7v-4z"/>',
   enter: '<path d="M9.5 3H13v10H9.5"/><path d="M2 8h8"/><path d="M7.5 5.5L10 8l-2.5 2.5"/>',
+  star: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/>',
+  starFilled: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="currentColor"/>',
   pin: '<path d="M6.2 2h3.6v4.5L11.5 9h-7l1.7-2.5z"/><path d="M8 9v4.5"/>',
   pinFilled:
     '<path d="M6.2 2h3.6v4.5L11.5 9h-7l1.7-2.5z" fill="currentColor" stroke="none"/><path d="M8 9v4.5"/>',

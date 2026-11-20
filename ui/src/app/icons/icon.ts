@@ -48,6 +48,8 @@ const ICONS: Record<string, string> = {
   info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.3v4.2"/><path d="M8 5v.3"/>',
   archive: '<path d="M2 3h12v3H2z"/><path d="M3 6v7h10V6"/><path d="M6.5 9h3"/>',
   enter: '<path d="M9.5 3H13v10H9.5"/><path d="M2 8h8"/><path d="M7.5 5.5L10 8l-2.5 2.5"/>',
+  star: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/>',
+  starFilled: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="currentColor"/>',
   pin: '<path d="M6.2 2h3.6v4.5L11.5 9h-7l1.7-2.5z"/><path d="M8 9v4.5"/>',
   pinFilled:
     '<path d="M6.2 2h3.6v4.5L11.5 9h-7l1.7-2.5z" fill="currentColor" stroke="none"/><path d="M8 9v4.5"/>',

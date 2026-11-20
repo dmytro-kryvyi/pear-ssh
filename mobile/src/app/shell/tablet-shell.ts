@@ -1,11 +1,12 @@
 import { PmServerFoot } from '../remote/server-foot';
 import { Component, computed, effect, inject, signal } from '@angular/core';
-import type { HostConfig } from '@pear/core';
+import type { Favourite, HostConfig } from '@pear/core';
 import { ORCH_ICON, ORCH_TAB, PmWsGlyph } from '../chrome/chrome';
 import { PmClaudeScreen } from '../claude/claude-screen';
 import { PmHostEditor } from '../editors/host-editor';
 import { PmWorkspaceEditor } from '../editors/workspace-editor';
 import { PmFileEditor } from '../files/file-editor';
+import { PmFavourites } from '../favourites/favourites';
 import { PmFilesScreen } from '../files/files-screen';
 import { PmHostRow } from '../hosts/host-row';
 import { PmIcon } from '../icons/icon';
@@ -40,6 +41,7 @@ function initialView(): TabletView {
     PmHostEditor,
     PmWorkspaceEditor,
     PmServerFoot,
+    PmFavourites,
   ],
   templateUrl: './tablet-shell.html',
   styleUrl: './tablet-shell.scss',
@@ -83,6 +85,10 @@ export class PmTabletShell {
 
   protected connect(h: HostConfig): void {
     this.session.connect(h);
+  }
+  protected openFavourite(f: Favourite): void {
+    this.session.openFavourite(f);
+    this.view.set('files');
   }
   protected editHost(h: HostConfig): void {
     this.session.editHost.set(structuredClone(h));

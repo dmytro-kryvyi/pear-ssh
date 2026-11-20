@@ -76,32 +76,6 @@
   button { color: var(--fg-3); display: flex; padding: 4px; }
 }
 
-.recents {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.recent {
-  flex-shrink: 0;
-  width: 136px;
-  text-align: left;
-  padding: 12px 13px;
-  border-radius: 14px;
-  background: var(--bg-2);
-  border: 1px solid var(--border-soft);
-
-  &.active { background: var(--accent-soft); border-color: var(--accent-line); }
-}
-
-.r-top { display: flex; align-items: center; justify-content: space-between; color: var(--accent); }
-.r-name { font-size: 14px; font-weight: 600; margin-top: 10px; }
-.r-meta {
-  font-family: var(--mono); font-size: 10.5px; color: var(--fg-3);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
 .rows { display: flex; flex-direction: column; gap: 8px; }
 .row-skeleton {
   display: flex;

@@ -1,5 +1,5 @@
 import { Component, effect, inject, signal } from '@angular/core';
-import type { HostConfig } from '@pear/core';
+import type { Favourite, HostConfig } from '@pear/core';
 import { PmSheet, PmTabBar, type MobileTab } from '../chrome/chrome';
 import { PmClaudeScreen } from '../claude/claude-screen';
 import { PmHostEditor } from '../editors/host-editor';
@@ -54,6 +54,11 @@ export class PmPhoneShell {
   protected connect(h: HostConfig): void {
     this.pickerOpen.set(false);
     this.session.connect(h);
+    this.tab.set('files');
+  }
+
+  protected openFavourite(f: Favourite): void {
+    this.session.openFavourite(f);
     this.tab.set('files');
   }
 

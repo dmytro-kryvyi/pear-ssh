@@ -99,6 +99,20 @@ export interface HostGroup {
 }
 
 /**
+ * A saved folder on a host, opened in one click from the favourites list.
+ * Only persisted hosts can hold one: an unpinned sub-host gets a new id on
+ * every jump-in, so a favourite there would point at nothing next time.
+ */
+export interface Favourite {
+  id: string;
+  hostId: string;
+  /** Absolute path of the folder. */
+  path: string;
+  /** Shown instead of the folder name when set. */
+  label?: string;
+}
+
+/**
  * Container engines Pear can enter as a sub-host. Adding one (e.g. podman)
  * means extending this union and adding its adapter in ssh/subhost.ts.
  */

@@ -1,7 +1,7 @@
 <div class="content">
   @switch (tab()) {
     @case ('hosts') {
-      <pm-hosts-screen (connect)="connect($event)" />
+      <pm-hosts-screen (connect)="connect($event)" (openFavourite)="openFavourite($event)" />
     }
     @case ('files') {
       <pm-files-screen (hostTap)="pickerOpen.set(true)" />

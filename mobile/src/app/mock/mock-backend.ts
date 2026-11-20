@@ -1,5 +1,6 @@
 import type {
   DirListing,
+  Favourite,
   FileEntry,
   FileInfo,
   HostConfig,
@@ -15,7 +16,7 @@ import { PEAR_BACKEND } from '../backend';
 import { ClaudeDemo } from '../claude/claude-demo';
 import { CLAUDE_STORE } from '../claude/claude-store';
 import { FakePty } from './fake-pty';
-import { FILE_CONTENTS, ORCH, SEED_GROUPS, SEED_HOSTS, TREE } from './seed';
+import { FILE_CONTENTS, ORCH, SEED_FAVOURITES, SEED_GROUPS, SEED_HOSTS, TREE } from './seed';
 
 // In-memory PearApi for browser development and demos. Screens talk to this
 // exactly as they will talk to the native SSH backend in M3 — same types,
@@ -35,6 +36,7 @@ function parentOf(path: string): { dir: string; name: string } {
 export function createMockBackend(): PearApi {
   const hosts: HostConfig[] = clone(SEED_HOSTS);
   const groups: HostGroup[] = clone(SEED_GROUPS);
+  const favourites: Favourite[] = clone(SEED_FAVOURITES);
   const orch: Record<string, Orchestration> = clone(ORCH);
   const tree: Record<string, FileEntry[]> = clone(TREE);
   const contents: Record<string, string> = { ...FILE_CONTENTS };
@@ -176,6 +178,23 @@ export function createMockBackend(): PearApi {
         const has = g.hostIds.includes(hostId);
         if (member && !has) g.hostIds.push(hostId);
         if (!member && has) g.hostIds = g.hostIds.filter((x) => x !== hostId);
+      },
+    },
+    favourites: {
+      list: async () => clone(favourites),
+      upsert: async (input) => {
+        const same = favourites.find((f) =>
+          input.id ? f.id === input.id : f.hostId === input.hostId && f.path === input.path,
+        );
+        if (same && !input.id) return clone(same);
+        const next: Favourite = { ...clone(input), id: input.id || `f${Math.random().toString(36).slice(2, 7)}` };
+        if (same) favourites[favourites.indexOf(same)] = next;
+        else favourites.push(next);
+        return clone(next);
+      },
+      remove: async (id) => {
+        const i = favourites.findIndex((f) => f.id === id);
+        if (i >= 0) favourites.splice(i, 1);
       },
     },
     term: {

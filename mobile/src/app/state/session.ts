@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import type {
   ContainerInfo,
   ContainerStatsMap,
+  Favourite,
   HostConfig,
   HostGroup,
   HostStatus,
@@ -9,7 +10,7 @@ import type {
   Orchestration,
 } from '@pear/core';
 import { PEAR_BACKEND } from '../backend';
-import { HOST_META, RECENT_IDS } from '../mock/seed';
+import { HOST_META } from '../mock/seed';
 import { TermStore } from '../terminal/term-store';
 
 /** Session state shared by the phone and tablet shells (design state.jsx). */
@@ -20,6 +21,7 @@ export class PearSession {
 
   readonly hosts = signal<HostConfig[]>([]);
   readonly groups = signal<HostGroup[]>([]);
+  readonly favourites = signal<Favourite[]>([]);
   /** False until the first inventory load answered (screens show
    *  placeholders rather than "no hosts" while the backend is coming up). */
   readonly loaded = signal(false);
@@ -44,8 +46,23 @@ export class PearSession {
     const ws = this.activeWs();
     return ws ? this.hosts().filter((h) => ws.hostIds.includes(h.id)) : this.hosts();
   });
-  readonly recents = computed(() =>
-    RECENT_IDS.map((id) => this.hosts().find((h) => h.id === id)).filter((h): h is HostConfig => !!h),
+  /** Favourites joined with their host, kept together per host in inventory
+   *  order; one whose host is gone is left out. */
+  readonly favouriteRows = computed(() => {
+    const hosts = this.hosts();
+    return this.favourites()
+      .map((fav) => ({ fav, at: hosts.findIndex((h) => h.id === fav.hostId) }))
+      .filter((r) => r.at >= 0)
+      .sort((a, b) => a.at - b.at)
+      .map(({ fav, at }) => ({
+        fav,
+        host: hosts[at],
+        label: fav.label || fav.path.split('/').filter(Boolean).pop() || '/',
+      }));
+  });
+  /** The favourite for the folder on screen, if it is one. */
+  readonly currentFavourite = computed(
+    () => this.favourites().find((f) => this.isCurrent(f)) ?? null,
   );
 
   statusOf(id: string): HostStatus {
@@ -79,6 +96,7 @@ export class PearSession {
     let groups: HostGroup[];
     try {
       [hosts, groups] = await Promise.all([this.backend.hosts.list(), this.backend.hostGroups.list()]);
+      void this.reloadFavourites();
     } finally {
       this.loaded.set(true);
     }
@@ -101,10 +119,14 @@ export class PearSession {
 
   // ---- connection ----------------------------------------------------------
 
-  connect(h: HostConfig): void {
-    if (h.id === this.activeHostId()) return;
+  /** Switch to a host, landing in `path` when given (else its start folder). */
+  connect(h: HostConfig, path?: string): void {
+    if (h.id === this.activeHostId()) {
+      if (path) this.navigate(path);
+      return;
+    }
     this.activeHostId.set(h.id);
-    this.path.set(h.cwd || '/');
+    this.path.set(path ?? (h.cwd || '/'));
     this.openFile.set(null);
     this.meta.update((m) => ({ ...m, [h.id]: { status: 'online', lastSeen: 'active now' } }));
     this.orch.set(null);
@@ -114,6 +136,49 @@ export class PearSession {
   navigate(p: string): void {
     this.path.set(p);
     this.openFile.set(null);
+  }
+
+  // ---- favourites ----------------------------------------------------------
+
+  isCurrent(f: Favourite): boolean {
+    return f.hostId === this.activeHostId() && f.path === trimSlash(this.path());
+  }
+
+  /** A failure leaves the list as it was: an older server without the
+   *  favourites API must not take the host list down with it. */
+  async reloadFavourites(): Promise<void> {
+    try {
+      this.favourites.set(await this.backend.favourites.list());
+    } catch {
+      /* keep what we have */
+    }
+  }
+
+  openFavourite(f: Favourite): void {
+    const h = this.hosts().find((x) => x.id === f.hostId);
+    if (h) this.connect(h, f.path);
+  }
+
+  /** Star or unstar the folder on screen. */
+  async toggleFavourite(): Promise<void> {
+    const hostId = this.activeHostId();
+    const path = trimSlash(this.path());
+    if (!hostId || !path.startsWith('/')) return;
+    const existing = this.currentFavourite();
+    try {
+      if (existing) await this.backend.favourites.remove(existing.id);
+      else await this.backend.favourites.upsert({ hostId, path });
+    } finally {
+      await this.reloadFavourites();
+    }
+  }
+
+  async removeFavourite(id: string): Promise<void> {
+    try {
+      await this.backend.favourites.remove(id);
+    } finally {
+      await this.reloadFavourites();
+    }
   }
 
   // ---- orchestration -------------------------------------------------------
@@ -264,3 +329,5 @@ export class PearSession {
     return { id: '', name: '', color: 'teal', icon: 'layers', desc: '', hostIds: [] };
   }
 }
+
+const trimSlash = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, '') || '/' : p);

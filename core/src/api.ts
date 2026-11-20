@@ -5,6 +5,7 @@ import type {
   DockerDiskRow,
   FileEntry,
   HostConfig,
+  Favourite,
   HostGroup,
   HostVitalsSample,
   OrchAction,
@@ -72,6 +73,16 @@ export interface PearApi {
     upsert(group: Omit<HostGroup, 'id'> & { id?: string }): Promise<HostGroup>;
     remove(id: string): Promise<void>;
     setMembership(hostId: string, groupId: string, member: boolean): Promise<void>;
+  };
+  favourites: {
+    /** Saved folders across hosts. */
+    list(): Promise<Favourite[]>;
+    /**
+     * Without an id: save a folder, or return the entry that already exists
+     * for that host and path. With an id: update that entry (rename).
+     */
+    upsert(fav: Omit<Favourite, 'id'> & { id?: string }): Promise<Favourite>;
+    remove(id: string): Promise<void>;
   };
   term: {
     /**

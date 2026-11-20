@@ -46,27 +46,8 @@
     </div>
   </div>
 
-  <!-- recents -->
-  @if (!query() && session.recents().length) {
-    <div>
-      <div class="sec-label">Recent</div>
-      <div class="recents noscroll">
-        @for (h of session.recents(); track h.id) {
-          <button
-            class="recent"
-            [class.active]="h.id === session.activeHostId()"
-            (click)="connect.emit(h)"
-          >
-            <div class="r-top">
-              <pm-icon [name]="ORCH_ICON[h.kind] || 'docker'" [size]="16" />
-              <pm-host-dot [status]="session.statusOf(h.id)" [size]="7" />
-            </div>
-            <div class="r-name">{{ h.name }}</div>
-            <div class="r-meta">{{ h.aliases?.[0] || h.tags?.[0] || h.host }} · {{ session.lastSeenOf(h.id) }}</div>
-          </button>
-        }
-      </div>
-    </div>
+  @if (!query()) {
+    <pm-favourites (open)="openFavourite.emit($event)" />
   }
 
   <!-- host list -->

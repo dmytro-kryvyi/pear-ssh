@@ -43,6 +43,11 @@ export const CHANNELS = {
     remove: ['invoke', 'hostgroups:remove'],
     setMembership: ['invoke', 'hostgroups:setMembership'],
   },
+  favourites: {
+    list: ['invoke', 'favourites:list'],
+    upsert: ['invoke', 'favourites:upsert'],
+    remove: ['invoke', 'favourites:remove'],
+  },
   term: {
     open: ['invoke', 'term:open'],
     write: ['send', 'term:write'],
