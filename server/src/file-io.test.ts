@@ -295,6 +295,65 @@ test('update: a second run of the same folder skips everything, a changed file t
   assert.equal(existsSync(join(dest, 'tree (1)')), false);
 });
 
+test('ops: copy, move and delete run on the host as background operations', async () => {
+  const base = join(root, 'remote', 'fileops');
+  mkdirSync(join(base, 'src', 'tree', 'sub'), { recursive: true });
+  mkdirSync(join(base, 'dst'));
+  writeFileSync(join(base, 'src', 'tree', 'a.txt'), 'a');
+  writeFileSync(join(base, 'src', 'tree', 'sub', 'b.txt'), 'b');
+  writeFileSync(join(base, 'src', "it's.txt"), 'quoted');
+  writeFileSync(join(base, 'dst', "it's.txt"), 'old');
+
+  const copy = await opSettled(
+    (await server.service.invoke('ops:copy', [
+      host.id,
+      [
+        { from: join(base, 'src', 'tree'), to: join(base, 'dst', 'tree') },
+        { from: join(base, 'src', "it's.txt"), to: join(base, 'dst', "it's.txt"), replace: true },
+      ],
+      false,
+    ])) as string,
+  );
+  assert.equal(copy.status, 'done', copy.error);
+  assert.equal(copy.kind, 'copy');
+  assert.equal(readFileSync(join(base, 'dst', 'tree', 'sub', 'b.txt'), 'utf8'), 'b');
+  assert.equal(readFileSync(join(base, 'dst', "it's.txt"), 'utf8'), 'quoted');
+  assert.ok(existsSync(join(base, 'src', 'tree')), 'a copy leaves the source');
+
+  const move = await opSettled(
+    (await server.service.invoke('ops:copy', [
+      host.id,
+      [{ from: join(base, 'src', 'tree'), to: join(base, 'dst', 'moved') }],
+      true,
+    ])) as string,
+  );
+  assert.equal(move.status, 'done', move.error);
+  assert.equal(existsSync(join(base, 'src', 'tree')), false);
+  assert.equal(readFileSync(join(base, 'dst', 'moved', 'a.txt'), 'utf8'), 'a');
+  assert.deepEqual([...move.dirs].sort(), [join(base, 'dst'), join(base, 'src')]);
+
+  const del = await opSettled(
+    (await server.service.invoke('ops:remove', [
+      host.id,
+      join(base, 'dst'),
+      ['tree', "it's.txt"],
+    ])) as string,
+  );
+  assert.equal(del.status, 'done', del.error);
+  assert.deepEqual(readdirSync(join(base, 'dst')), ['moved']);
+
+  const bad = await opSettled(
+    (await server.service.invoke('ops:copy', [
+      host.id,
+      [{ from: join(base, 'nope'), to: join(base, 'dst', 'nope') }],
+      false,
+    ])) as string,
+  );
+  assert.equal(bad.status, 'error');
+  assert.match(bad.error ?? '', /^exit 1: cp: /);
+  await server.service.invoke('ops:clearFinished', []);
+});
+
 test('the dialog-based upload channel explains itself instead of hanging', async () => {
   await assert.rejects(
     server.service.invoke('fs:upload', [host.id, '/tmp', 'skip', false]),

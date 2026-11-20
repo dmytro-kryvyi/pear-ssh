@@ -11,6 +11,8 @@ import { parseGuestIp } from '../../orchestration/guest-ip';
 import { primaryKind } from '../../orchestration/orchestration';
 import { FsOpsRunner } from '../../fs/ops-runner';
 import { planCompress, planExtract } from '../../fs/archive-ops';
+import { planCopy, planDelete, type CopyPair } from '../../fs/file-ops';
+import { joinPath } from '../../fs/util';
 import type { ArchiveFormat, ArchiveTools } from '../../fs/archive';
 import type { PermsChange } from '../../fs/perms';
 import { channelsOf } from '../../rpc/channels';
@@ -255,6 +257,11 @@ export class PearService {
     const h = this.hosts.get(id) ?? this.ephemeral.get(id);
     return h && this.hosts.decryptAuth(h);
   };
+
+  /** The local machine on Windows: file ops go through node:fs, not `sh`. */
+  private noPosixShell(host: HostConfig): boolean {
+    return host.local === true && process.platform === 'win32';
+  }
 
   requireHost(id: unknown): HostConfig {
     const host = this.resolveHost(asString(id));
@@ -611,6 +618,33 @@ export class PearService {
         asString(archiveName),
         asString(format) as ArchiveFormat,
       );
+      return this.fsOps.start({ hostId: host.id, ...plan });
+    });
+    on('ops:remove', ([hostId, dir, names]) => {
+      const host = this.requireHost(hostId);
+      const plan = planDelete(asString(dir), (names as unknown[]).map(asString));
+      if (this.noPosixShell(host)) {
+        return this.fsOps.record({ hostId: host.id, ...plan }, async () => {
+          for (const name of names as string[]) {
+            await sessions.remove(host, joinPath(asString(dir), name), true);
+          }
+        });
+      }
+      return this.fsOps.start({ hostId: host.id, ...plan });
+    });
+    on('ops:copy', ([hostId, rawPairs, move]) => {
+      const host = this.requireHost(hostId);
+      const pairs = rawPairs as CopyPair[];
+      const plan = planCopy(pairs, move === true);
+      if (this.noPosixShell(host)) {
+        return this.fsOps.record({ hostId: host.id, ...plan }, async () => {
+          for (const pair of pairs) {
+            if (pair.replace) await sessions.remove(host, pair.to, true);
+            if (move === true) await sessions.rename(host, pair.from, pair.to);
+            else await sessions.copy(host, pair.from, pair.to);
+          }
+        });
+      }
       return this.fsOps.start({ hostId: host.id, ...plan });
     });
     on('ops:cancel', ([id]) => this.fsOps.cancel(asString(id)));

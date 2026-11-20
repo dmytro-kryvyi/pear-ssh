@@ -58,6 +58,8 @@ export function createStubBackend(): PearApi {
       tools: async () => ({ tools: [], tar: 'none' }),
       extract: fail('ops.extract'),
       compress: fail('ops.compress'),
+      remove: fail('ops.remove'),
+      copy: fail('ops.copy'),
       cancel: noop,
       list: async () => [],
       clearFinished: noop,

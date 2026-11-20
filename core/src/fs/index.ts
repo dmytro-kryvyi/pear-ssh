@@ -33,3 +33,4 @@ export {
   type FsOpsEnv,
   type FsOpsEvents,
 } from './ops-runner';
+export { planCopy, planDelete, type CopyPair } from './file-ops';

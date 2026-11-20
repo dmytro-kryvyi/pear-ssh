@@ -4,6 +4,7 @@ import type {
   ClaudePermissionAnswer,
   ClaudeUiResponse,
   ArchiveFormat,
+  CopyPair,
   ConflictPolicy,
   HostConfig,
   HostGroup,
@@ -89,6 +90,10 @@ const api: PearApi = {
       archiveName: string,
       format: ArchiveFormat,
     ) => ipcRenderer.invoke('ops:compress', hostId, dir, names, archiveName, format),
+    remove: (hostId: string, dir: string, names: string[]) =>
+      ipcRenderer.invoke('ops:remove', hostId, dir, names),
+    copy: (hostId: string, pairs: CopyPair[], move: boolean) =>
+      ipcRenderer.invoke('ops:copy', hostId, pairs, move),
     cancel: (id: string) => ipcRenderer.send('ops:cancel', id),
     list: () => ipcRenderer.invoke('ops:list'),
     clearFinished: () => ipcRenderer.send('ops:clearFinished'),

@@ -1,6 +1,12 @@
 import type { WebFiles } from '../remote/connect';
 import { Injectable, inject, signal } from '@angular/core';
-import { archiveKind, archiveStem, type ArchiveFormat, type ArchiveTools } from '@pear/core';
+import {
+  archiveKind,
+  archiveStem,
+  type ArchiveFormat,
+  type ArchiveTools,
+  type CopyPair,
+} from '@pear/core';
 import { Pear } from '../pear';
 import { Settings } from '../settings';
 import { FsStore } from './fs-store';
@@ -181,12 +187,9 @@ export class FileOps {
       const what = names.length === 1 ? `'${names[0]}'` : `${names.length} items`;
       if (!window.confirm(`Delete ${what}? This cannot be undone.`)) return;
     }
-    await this.guard(async () => {
-      for (const name of names) {
-        await this.pear.api.fs.remove(hostId, joinPath(dir, name), true);
-      }
-      this.store.invalidate(hostId, dir);
-    });
+    // A background operation: a big tree takes a while, and it can be
+    // cancelled from the Transfers toast. The listing refreshes when it ends.
+    await this.guard(() => this.pear.api.ops.remove(hostId, dir, names));
   }
 
   copy(hostId: string, dir: string, names: string[]): void {
@@ -223,25 +226,27 @@ export class FileOps {
     if (src.hostId === destHostId) {
       if (src.dir === destDir && op === 'move') return;
       await this.guard(async () => {
+        const pairs: CopyPair[] = [];
+        const conflict = this.settings.conflict();
         for (const name of src.names) {
           const from = joinPath(src.dir, name);
           let destName = name;
-          const conflict = this.settings.conflict();
+          let replace = false;
           const existing = await this.pear.api.fs.stat(destHostId, joinPath(destDir, name));
           if (existing) {
             if (conflict === 'skip') continue;
             if (conflict === 'rename') {
               destName = await this.uniqueName(destHostId, destDir, name);
             } else {
-              await this.pear.api.fs.remove(destHostId, joinPath(destDir, name), true);
+              replace = true;
             }
           }
           const to = joinPath(destDir, destName);
-          if (op === 'move') await this.pear.api.fs.rename(src.hostId, from, to);
-          else await this.pear.api.fs.copy(src.hostId, from, to);
+          if (to !== from) pairs.push({ from, to, replace });
         }
-        this.store.invalidate(src.hostId, src.dir);
-        this.store.invalidate(destHostId, destDir);
+        // One cancellable background operation (cp -a / mv on the host); the
+        // listings refresh when it finishes.
+        if (pairs.length) await this.pear.api.ops.copy(destHostId, pairs, op === 'move');
       });
       return;
     }

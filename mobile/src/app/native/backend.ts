@@ -8,6 +8,8 @@ import {
   TransferEngine,
   importShellHistory,
   planCompress,
+  planCopy,
+  planDelete,
   planExtract,
   primaryKind,
   type FsOpSnapshot,
@@ -541,6 +543,8 @@ export function createNativeBackend(
         const tools = await sessions.archiveTools(await cfgFor(hostId));
         return fsOps.start({ hostId, ...planCompress(tools, dir, names, archiveName, format) });
       },
+      remove: async (hostId, dir, names) => fsOps.start({ hostId, ...planDelete(dir, names) }),
+      copy: async (hostId, pairs, move) => fsOps.start({ hostId, ...planCopy(pairs, move) }),
       cancel: (id) => fsOps.cancel(id),
       list: async () => fsOps.list(),
       clearFinished: () => fsOps.clearFinished(),

@@ -68,6 +68,8 @@ export const CHANNELS = {
     tools: ['invoke', 'ops:tools'],
     extract: ['invoke', 'ops:extract'],
     compress: ['invoke', 'ops:compress'],
+    remove: ['invoke', 'ops:remove'],
+    copy: ['invoke', 'ops:copy'],
     cancel: ['send', 'ops:cancel'],
     list: ['invoke', 'ops:list'],
     clearFinished: ['send', 'ops:clearFinished'],

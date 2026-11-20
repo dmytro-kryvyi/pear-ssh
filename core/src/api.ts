@@ -23,6 +23,7 @@ import type { ConflictPolicy, TransferJobSnapshot, TransferRequest } from './tra
 import type { FileInfo } from './fs/info';
 import type { PermsChange } from './fs/perms';
 import type { ArchiveFormat, ArchiveTools } from './fs/archive';
+import type { CopyPair } from './fs/file-ops';
 import type { FsOpSnapshot } from './fs/ops-runner';
 import type {
   ClaudeChatEvent,
@@ -140,6 +141,10 @@ export interface PearApi {
       archiveName: string,
       format: ArchiveFormat,
     ): Promise<string>;
+    /** Delete entries of one directory (recursively) as a cancellable op. */
+    remove(hostId: string, dir: string, names: string[]): Promise<string>;
+    /** Copy or move within one host as a cancellable op. */
+    copy(hostId: string, pairs: CopyPair[], move: boolean): Promise<string>;
     cancel(id: string): void;
     list(): Promise<FsOpSnapshot[]>;
     clearFinished(): void;

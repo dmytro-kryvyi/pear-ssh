@@ -81,6 +81,33 @@ export class FsOpsRunner {
     return id;
   }
 
+  /**
+   * Track work that does not run as a shell command (a host without a POSIX
+   * shell): same snapshots and events, no cancel.
+   */
+  record(spec: FsOpSpec, task: () => Promise<void>): string {
+    const id = uuid();
+    const snap: FsOpSnapshot = { ...spec, id, status: 'running', startedAt: this.now() };
+    const run: Running = { snap, channel: null };
+    this.ops.set(id, run);
+    this.emit(run);
+    void task()
+      .then(
+        () => {
+          snap.status = 'done';
+        },
+        (err: unknown) => {
+          snap.status = 'error';
+          snap.error = err instanceof Error ? err.message : String(err);
+        },
+      )
+      .finally(() => {
+        snap.finishedAt = this.now();
+        this.emit(run);
+      });
+    return id;
+  }
+
   cancel(id: string): void {
     const run = this.ops.get(id);
     if (!run || run.snap.status !== 'running') return;

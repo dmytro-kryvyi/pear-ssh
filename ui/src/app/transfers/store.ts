@@ -41,6 +41,8 @@ export class TransfersStore {
   /** Cancel clicked, engine not yet confirmed — the optimistic "Cancelling…". */
   private readonly cancelling = signal<ReadonlySet<string>>(new Set());
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Quick ops (copy/move/delete) not yet shown: id → the show-it timer. */
+  private readonly quietPending = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** The user closed the toast; it comes back on the next new job or failure. */
   readonly toastDismissed = signal(false);
@@ -92,7 +94,11 @@ export class TransfersStore {
     void this.pear.api.ops.list().then((ops) => {
       this.ops.update((all) => {
         const next = { ...all };
-        for (const op of ops) next[op.id] = next[op.id] ?? op;
+        for (const op of ops) {
+          // Quick ops that simply worked are not worth a row after a reload.
+          if (QUIET_OPS.has(op.kind) && op.status === 'done') continue;
+          next[op.id] = next[op.id] ?? op;
+        }
         return next;
       });
     });
@@ -110,9 +116,35 @@ export class TransfersStore {
 
   private applyOp(op: FsOpSnapshot): void {
     const previous = this.ops()[op.id];
+    const quiet = QUIET_OPS.has(op.kind);
+    // A delete or a same-disk move is usually over before it could be read:
+    // such an op only shows once it has run for a moment, and leaves no row
+    // behind when it simply worked.
+    if (quiet && op.status === 'done' && this.quietPending.has(op.id)) {
+      clearTimeout(this.quietPending.get(op.id));
+      this.quietPending.delete(op.id);
+      for (const dir of op.dirs) this.fsStore.invalidate(op.hostId, dir);
+      this.drop(op.id);
+      return;
+    }
     this.ops.update((all) => ({ ...all, [op.id]: op }));
     const newlyFailed = op.status === 'error' && previous?.status !== 'error';
-    if (!previous || newlyFailed) {
+    if (quiet && !previous && op.status === 'running') {
+      this.hiddenFromToast.update((ids) => new Set(ids).add(op.id));
+      this.quietPending.set(
+        op.id,
+        setTimeout(() => {
+          this.quietPending.delete(op.id);
+          if (this.ops()[op.id]?.status !== 'running') return;
+          this.toastDismissed.set(false);
+          this.unhide(op.id);
+        }, QUIET_OP_MS),
+      );
+    } else if (!previous || newlyFailed) {
+      if (this.quietPending.has(op.id)) {
+        clearTimeout(this.quietPending.get(op.id));
+        this.quietPending.delete(op.id);
+      }
       this.toastDismissed.set(false);
       this.unhide(op.id);
     }
@@ -247,16 +279,22 @@ export class TransfersStore {
   }
 
   opStatusText(op: FsOpSnapshot): string {
+    const words = OP_WORDS[op.kind] ?? OP_WORDS['compress'];
     switch (op.status) {
       case 'done':
-        return op.kind === 'extract' ? 'Extracted' : 'Compressed';
+        return words.done;
       case 'error':
         return 'Failed';
       case 'canceled':
         return 'Canceled';
     }
     if (this.isCancellingOp(op)) return 'Cancelling…';
-    return op.kind === 'extract' ? 'Extracting…' : 'Compressing…';
+    return words.running;
+  }
+
+  /** Glyph for an operation row. */
+  opIcon(op: FsOpSnapshot): string {
+    return OP_WORDS[op.kind]?.icon ?? 'archive';
   }
 
   /** Elapsed while running, duration once settled. */
@@ -356,6 +394,17 @@ export class TransfersStore {
     }
   }
 }
+
+const OP_WORDS: Record<string, { running: string; done: string; icon: string }> = {
+  extract: { running: 'Extracting…', done: 'Extracted', icon: 'archive' },
+  compress: { running: 'Compressing…', done: 'Compressed', icon: 'archive' },
+  copy: { running: 'Copying…', done: 'Copied', icon: 'copy' },
+  move: { running: 'Moving…', done: 'Moved', icon: 'forward' },
+  delete: { running: 'Deleting…', done: 'Deleted', icon: 'trash' },
+};
+/** Ops that stay out of sight unless they take a while or fail. */
+const QUIET_OPS = new Set(['copy', 'move', 'delete']);
+const QUIET_OP_MS = 400;
 
 function without(ids: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(ids);

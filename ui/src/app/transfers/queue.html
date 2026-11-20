@@ -31,7 +31,7 @@
             } @else if (op.status === 'canceled') {
               <pear-icon name="close" [size]="13" class="job-icon dim" />
             } @else {
-              <pear-icon name="archive" [size]="13" class="job-icon accent" />
+              <pear-icon [name]="store.opIcon(op)" [size]="13" class="job-icon accent" />
             }
             <span class="job-label" [title]="op.label">{{ op.label }}</span>
             @if (op.status === 'running') {

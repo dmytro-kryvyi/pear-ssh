@@ -49,7 +49,7 @@
     @for (op of shownOps(); track op.id) {
       <div class="row" [class.failed]="op.status === 'error'" [class.active]="op.status === 'running'">
         <div class="name-cell">
-          <pear-icon name="archive" [size]="13" class="dir-icon" [class.dim]="op.status !== 'running'" />
+          <pear-icon [name]="store.opIcon(op)" [size]="13" class="dir-icon" [class.dim]="op.status !== 'running'" />
           <div class="name-text">
             <div class="cell" [title]="op.label">{{ op.label }}</div>
             <div class="cell dim sub" [title]="op.result">{{ op.result }}</div>

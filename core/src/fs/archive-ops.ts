@@ -9,7 +9,7 @@ import { basenameOf, dirnameOf, joinPath } from './util';
 
 /** A shell operation ready to run: what to execute and which dirs it touches. */
 export interface FsOpPlan {
-  kind: 'extract' | 'compress';
+  kind: 'extract' | 'compress' | 'copy' | 'move' | 'delete';
   label: string;
   command: string;
   /** Directories whose listings change when the op completes. */
