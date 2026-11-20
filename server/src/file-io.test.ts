@@ -256,6 +256,45 @@ test('a folder with many files travels as one tar stream, minus macOS metadata',
   }
 });
 
+test('update: a second run of the same folder skips everything, a changed file travels alone', async () => {
+  const src = join(root, 'updsrc', 'tree');
+  mkdirSync(join(src, 'sub'), { recursive: true });
+  for (let i = 0; i < 60; i++) writeFileSync(join(src, i % 2 ? 'sub' : '', `u${i}.txt`), `v1-${i}`);
+  const dest = join(root, 'remote', 'upd-dest');
+  mkdirSync(dest);
+  const run = async () =>
+    settled(
+      (await server.service.invoke('transfers:start', [
+        {
+          src: { hostId: null, dir: join(root, 'updsrc') },
+          dest: { hostId: host.id, dir: dest },
+          names: ['tree'],
+          op: 'copy',
+          conflict: 'update',
+          verify: false,
+        },
+      ])) as string,
+    );
+  const first = await run();
+  assert.equal(first.status, 'done', first.error);
+  assert.equal(first.filesSkipped, 0);
+  writeFileSync(join(dest, 'tree', 'only-here.txt'), 'mine');
+
+  const second = await run();
+  assert.equal(second.status, 'done', second.error);
+  assert.equal(second.filesSkipped, 60);
+  assert.equal(second.bytesTotal, 0);
+
+  writeFileSync(join(src, 'u0.txt'), 'v2 and longer');
+  const third = await run();
+  assert.equal(third.status, 'done', third.error);
+  assert.equal(third.filesSkipped, 59);
+  assert.equal(third.fileCount, 1);
+  assert.equal(readFileSync(join(dest, 'tree', 'u0.txt'), 'utf8'), 'v2 and longer');
+  assert.equal(readFileSync(join(dest, 'tree', 'only-here.txt'), 'utf8'), 'mine');
+  assert.equal(existsSync(join(dest, 'tree (1)')), false);
+});
+
 test('the dialog-based upload channel explains itself instead of hanging', async () => {
   await assert.rejects(
     server.service.invoke('fs:upload', [host.id, '/tmp', 'skip', false]),

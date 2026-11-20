@@ -758,6 +758,7 @@ export class PearService {
       });
     });
     on('transfers:cancel', ([id]) => transfers.cancel(asString(id)));
+    on('transfers:retry', ([id]) => transfers.retry(asString(id)));
     on('transfers:list', () => transfers.list());
     on('transfers:clearFinished', () => transfers.clearFinished());
     on('transfers:setMaxParallel', ([n]) => transfers.setMaxParallel(Number(n)));

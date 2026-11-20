@@ -250,6 +250,7 @@ function keyTypeOf(key: Buffer): string {
  * happens end-to-end against the target, so the jump never sees credentials.
  */
 export class SshConnection implements SshTransport {
+  readonly canResume = true;
   private client = new Client();
   private connected = false;
 

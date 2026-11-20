@@ -49,7 +49,7 @@
 .thead,
 .row {
   grid-template-columns:
-    minmax(0, 1.5fr) minmax(0, 1fr) 170px 150px 95px 64px minmax(0, 1.6fr) 34px;
+    minmax(0, 1.5fr) minmax(0, 1fr) 170px 150px 95px 64px minmax(0, 1.6fr) 62px;
 }
 .row { align-items: center; }
 .row.active { border-left-color: var(--accent); }
@@ -83,7 +83,7 @@
 .cell.state .pear-spinner { font-size: 10px; }
 .err-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.row-action { display: flex; justify-content: flex-end; }
+.row-action { display: flex; justify-content: flex-end; gap: 4px; }
 .icon-btn {
   padding: 5px;
   border-radius: 6px;

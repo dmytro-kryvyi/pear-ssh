@@ -5,7 +5,7 @@ export type Density = 'comfortable' | 'compact';
 export type OpenWith = 'single' | 'double';
 export type SizeUnits = 'binary' | 'decimal';
 export type SameHostDrag = 'move' | 'copy' | 'ask';
-export type ConflictSetting = 'rename' | 'overwrite' | 'skip';
+export type ConflictSetting = 'rename' | 'overwrite' | 'skip' | 'update';
 export type TermPlacement = 'shared' | 'per-host' | 'in-pane';
 export type MonitorInterval = 2 | 5 | 10;
 export type ClaudeMode = 'chat' | 'terminal';
@@ -111,7 +111,7 @@ export class Settings {
       if (['move', 'copy', 'ask'].includes(saved.sameHostDrag)) {
         this.sameHostDrag.set(saved.sameHostDrag);
       }
-      if (['rename', 'overwrite', 'skip'].includes(saved.conflict)) {
+      if (['rename', 'overwrite', 'skip', 'update'].includes(saved.conflict)) {
         this.conflict.set(saved.conflict);
       }
       if ([1, 2, 3, 6].includes(saved.maxParallel)) this.maxParallel.set(saved.maxParallel);

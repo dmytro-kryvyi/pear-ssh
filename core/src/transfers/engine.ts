@@ -28,7 +28,13 @@ declare function clearTimeout(handle: unknown): void;
 // the per-file SFTP path (small transfers, hosts without tar) follows links
 // and leaves mtimes at the time of copy.
 
-export type ConflictPolicy = 'rename' | 'overwrite' | 'skip';
+/**
+ * What to do when a selected name already exists at the destination: keep
+ * both (`rename`), replace it wholesale (`overwrite`), leave it (`skip`), or
+ * `update` — merge into it, skipping files whose size and modification time
+ * already match and resuming large partial ones.
+ */
+export type ConflictPolicy = 'rename' | 'overwrite' | 'skip' | 'update';
 export type TransferOp = 'copy' | 'move';
 export type TransferStatus = 'queued' | 'running' | 'done' | 'error' | 'canceled';
 
@@ -51,11 +57,14 @@ export interface TransferRequest {
   /** Leave `__MACOSX`, `.DS_Store` and `._*` inside walked folders behind
    *  (default true). Explicitly selected names are always carried. */
   skipMacMeta?: boolean;
+  /** Set by retry(): destination names an earlier attempt settled on. */
+  destNames?: Record<string, string>;
 }
 
 /** What a running job is doing right now, finer than its stage. */
 export type TransferPhase =
   | 'listing'
+  | 'comparing'
   | 'copying'
   | 'verifying'
   | 'pushing'
@@ -94,6 +103,8 @@ export interface TransferJobSnapshot {
   etaSec?: number | null;
   /** Files finished within the current stage. */
   filesDone?: number;
+  /** Files left alone because the destination already had them (update). */
+  filesSkipped?: number;
   /** Smoothed files per second of the current stage; null until measurable. */
   filesPerSec?: number | null;
   /** cancel() was called on a running job; `canceled` follows once it stops. */
@@ -147,6 +158,8 @@ export interface TarIo {
     dir: string,
     opts: TarUnpackOpts,
   ): Promise<{ atEnd: boolean; code: number | null }>;
+  /** SHA-256 of the first `bytes` bytes of a file on the Pear machine. */
+  prefixHash(path: string, bytes: number): Promise<string>;
 }
 
 export interface TransferEvents {
@@ -212,6 +225,10 @@ interface Manifest {
   moveRoots: string[];
   /** Top-level source name → destination name (differs after a rename). */
   renames: Map<string, string>;
+  /** Files left out because the destination already has them (update). */
+  skipped: number;
+  /** destRel → bytes already at the destination of a large, shorter copy. */
+  partials: Map<string, number>;
 }
 
 /** What is left in the current stage, for the two-term ETA. */
@@ -231,6 +248,10 @@ interface Job {
   aborter: Aborter;
   /** Files currently being written (path → host), for partial cleanup. */
   partials: Map<string, string | null>;
+  /** Large partials worth keeping when the job fails: a retry resumes them. */
+  keep: Set<string>;
+  /** Destination names settled by the manifest, for retry(). */
+  renames: Map<string, string> | null;
   /** Throughput tracker for the current stage (see updateRate). */
   rate: RateTracker;
   prog: StageProgress;
@@ -273,6 +294,15 @@ const PIPE_SLACK = 8 * 1024 * 1024;
  *  risked against ARG_MAX. */
 const TAR_CMD_MAX = 64 * 1024;
 const TAR_PROBE_MS = 10_000;
+/**
+ * Files from this size up travel one by one even next to a tar stream: the
+ * windowed SFTP path is as fast for them, shows each file's progress, and can
+ * resume a partial copy.
+ */
+const RESUME_MIN_BYTES = 32 * 1024 * 1024;
+/** Same size and mtimes this close = the same file (FAT keeps 2 s steps). */
+const MTIME_SLACK_MS = 2_000;
+const PREFIX_HASH_TIMEOUT_MS = 10 * 60_000;
 /** Prints tar's version line (for its flavour) and exits 0 iff tar exists. */
 export const TAR_PROBE = 'tar --version 2>&1 | head -n 1; command -v tar >/dev/null 2>&1';
 /** One `find` over a big tree may take a while on a slow disk. */
@@ -300,6 +330,8 @@ export class TransferEngine {
       req,
       aborter: new Aborter(),
       partials: new Map(),
+      keep: new Set(),
+      renames: null,
       rate: freshRate(0),
       prog: { smallLeft: 0, smallBytesLeft: 0, bigBytesLeft: 0, bigInFlight: null, tar: false },
       snapshot: {
@@ -339,6 +371,26 @@ export class TransferEngine {
       this.emit(job, true);
       job.aborter.abort();
     }
+  }
+
+  /**
+   * Run a failed or canceled job again as an update: what already arrived is
+   * skipped, a large partial file is resumed, the rest is carried. Returns
+   * the new job's id; the old one leaves the list.
+   */
+  retry(id: string): string {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error('That transfer is no longer in the list');
+    const { status } = job.snapshot;
+    if (status !== 'error' && status !== 'canceled') throw new Error('Only a stopped transfer can be retried');
+    this.jobs.delete(id);
+    this.lastEmit.delete(id);
+    // Without settled names the first attempt never got to copying, and its
+    // own conflict policy still applies.
+    const req: TransferRequest = job.renames
+      ? { ...job.req, conflict: 'update', destNames: Object.fromEntries(job.renames) }
+      : job.req;
+    return this.start(req);
   }
 
   list(): TransferJobSnapshot[] {
@@ -383,6 +435,8 @@ export class TransferEngine {
       const src = await this.env.connection(job.req.src.hostId);
       const dest = await this.env.connection(job.req.dest.hostId);
       const manifest = await this.buildManifest(job, src, dest);
+      job.renames = manifest.renames;
+      snap.filesSkipped = manifest.skipped;
       snap.bytesTotal = manifest.files.reduce((a, f) => a + f.size, 0);
       snap.fileCount = manifest.files.length;
       this.startStage(job, 0, manifest);
@@ -424,8 +478,9 @@ export class TransferEngine {
       } else {
         snap.status = 'error';
         snap.error = err instanceof Error ? err.message : String(err);
-        // Siblings that were in flight when one file failed are half-written.
-        await this.removePartial(job);
+        // Siblings that were in flight when one file failed are half-written;
+        // a large one stays, so a retry can pick it up where it stopped.
+        await this.removePartial(job, job.keep);
       }
     } finally {
       if (staging) await this.env.removeStaging(staging).catch(() => {});
@@ -490,11 +545,28 @@ export class TransferEngine {
    */
   private async copyStage(job: Job, manifest: Manifest, leg: Leg): Promise<void> {
     const snap = job.snapshot;
-    if (await this.useTar(manifest, leg)) {
-      await this.tarStage(job, manifest, leg);
-      return;
+    const remote = leg.mode === 'upload' ? leg.to : leg.from;
+    // Many small files go as one tar stream; large ones stay on the per-file
+    // path (see RESUME_MIN_BYTES) unless the host's tar cannot be handed a
+    // file list, in which case a download takes everything in the stream.
+    const small = manifest.files.filter((f) => f.size < RESUME_MIN_BYTES);
+    let streamed: ManifestFile[] | null = null;
+    if (await this.useTar({ ...manifest, files: small }, leg)) {
+      const split = leg.mode === 'upload' || (await this.canTar(remote)) !== 'busybox';
+      if (split) streamed = small;
+      else if (manifest.files.every((f) => f.size <= TAR_MAX_OCTAL_SIZE)) streamed = manifest.files;
     }
-    await this.makeDirs(job, leg.to, leg.toDir, manifest.dirs);
+    let rest = manifest.files;
+    if (streamed) {
+      await this.tarStage(job, { ...manifest, files: streamed }, leg);
+      const inStream = new Set(streamed);
+      rest = manifest.files.filter((f) => !inStream.has(f));
+      job.prog.tar = false;
+      if (!rest.length) return;
+      snap.phase = 'copying';
+    } else {
+      await this.makeDirs(job, leg.to, leg.toDir, manifest.dirs);
+    }
 
     // The first failure stops everything else in flight; a user cancel does
     // the same through the job's own aborter.
@@ -507,8 +579,8 @@ export class TransferEngine {
       stop.abort();
     };
 
-    let completedBytes = 0;
-    let completedCount = 0;
+    let completedBytes = streamed ? snap.bytesDone : 0;
+    let completedCount = streamed ? streamed.length : 0;
     const inflight = new Map<ManifestFile, number>();
     const refresh = (): void => {
       let sum = completedBytes;
@@ -527,8 +599,17 @@ export class TransferEngine {
       const big = file.size > SMALL_FILE_BYTES;
       if (big) job.prog.bigInFlight = 0;
       try {
+        const resumable = file.size >= RESUME_MIN_BYTES && remote.canResume === true;
+        if (resumable) job.keep.add(toPath);
+        const have = resumable ? manifest.partials.get(file.destRel) : undefined;
+        const startOffset = have ? await this.resumeOffset(job, leg, fromPath, toPath, have) : 0;
+        if (startOffset) {
+          inflight.set(file, startOffset);
+          refresh();
+        }
         const opts: TransferOpts = {
           signal: stop,
+          startOffset: startOffset || undefined,
           onProgress: (p) => {
             const bytes = Math.min(p.bytes, file.size);
             inflight.set(file, bytes);
@@ -563,6 +644,7 @@ export class TransferEngine {
           snap.phase = 'copying';
         }
         job.partials.delete(toPath);
+        job.keep.delete(toPath);
         inflight.delete(file);
         completedBytes += file.size;
         completedCount++;
@@ -587,7 +669,7 @@ export class TransferEngine {
       return p;
     };
     try {
-      for (const file of manifest.files) {
+      for (const file of rest) {
         if (failure) break;
         this.checkCanceled(job);
         if (file.size > SMALL_FILE_BYTES) {
@@ -606,6 +688,41 @@ export class TransferEngine {
       job.aborter.removeEventListener('abort', onCancel);
     }
     if (failure) throw failure;
+  }
+
+  /**
+   * How much of a large file is already at the destination and can be
+   * trusted: the destination's `have` bytes must hash the same as the
+   * source's first `have` bytes. 0 = start over.
+   */
+  private async resumeOffset(
+    job: Job,
+    leg: Leg,
+    fromPath: string,
+    toPath: string,
+    have: number,
+  ): Promise<number> {
+    const tar = this.env.tar;
+    if (!tar) return 0;
+    try {
+      const remote = leg.mode === 'upload' ? leg.to : leg.from;
+      const remotePath = leg.mode === 'upload' ? toPath : fromPath;
+      const localPath = leg.mode === 'upload' ? fromPath : toPath;
+      const p = shq(remotePath);
+      const [far, near] = await Promise.all([
+        remote.exec(
+          `(head -c ${have} -- ${p} | sha256sum) 2>/dev/null || (head -c ${have} -- ${p} | shasum -a 256)`,
+          { timeoutMs: PREFIX_HASH_TIMEOUT_MS },
+        ),
+        tar.prefixHash(localPath, have),
+      ]);
+      this.checkCanceled(job);
+      const farHash = far.stdout.trim().split(/\s+/)[0]?.toLowerCase();
+      return far.code === 0 && farHash === near ? have : 0;
+    } catch {
+      this.checkCanceled(job);
+      return 0;
+    }
   }
 
   // ---- tar legs ---------------------------------------------------------------
@@ -937,8 +1054,8 @@ export class TransferEngine {
     if (job.aborter.aborted) throw new Error('canceled');
   }
 
-  private async removePartial(job: Job): Promise<void> {
-    const partials = [...job.partials];
+  private async removePartial(job: Job, keep?: Set<string>): Promise<void> {
+    const partials = [...job.partials].filter(([path]) => !keep?.has(path));
     job.partials.clear();
     await Promise.all(partials.map(([path, hostId]) => this.removeAt(hostId, path)));
   }
@@ -956,25 +1073,44 @@ export class TransferEngine {
   /** Walk the sources, resolve dest-name conflicts, and total the bytes. */
   private async buildManifest(job: Job, src: SshTransport, dest: SshTransport): Promise<Manifest> {
     const { req } = job;
-    const manifest: Manifest = { dirs: [], files: [], moveRoots: [], renames: new Map() };
+    const manifest: Manifest = {
+      dirs: [],
+      files: [],
+      moveRoots: [],
+      renames: new Map(),
+      skipped: 0,
+      partials: new Map(),
+    };
     for (const name of req.names) {
       this.checkCanceled(job);
       const srcPath = joinPath(req.src.dir, name);
       const st = await src.stat(srcPath);
       if (!st) throw new Error(`${srcPath}: no such file or directory`);
 
-      let destName = name;
-      const existing = await dest.stat(joinPath(req.dest.dir, name));
+      let destName = req.destNames?.[name] ?? name;
+      /** What the destination already holds under this root (update only). */
+      let have: Map<string, { size: number; mtimeMs: number }> | null = null;
+      const existing = await dest.stat(joinPath(req.dest.dir, destName));
       if (existing) {
         if (req.conflict === 'skip') continue;
-        if (req.conflict === 'overwrite') {
-          await dest.remove(joinPath(req.dest.dir, name), true);
+        const sameShape = (existing.kind === 'dir') === (st.kind === 'dir');
+        if (req.conflict === 'update' && sameShape) {
+          if (existing.kind === 'dir') {
+            job.snapshot.phase = 'comparing';
+            this.emit(job, true);
+            have = await this.listDest(job, dest, destName);
+          } else {
+            have = new Map([[destName, { size: existing.size, mtimeMs: existing.mtimeMs }]]);
+          }
+        } else if (req.conflict === 'overwrite' || req.conflict === 'update') {
+          await dest.remove(joinPath(req.dest.dir, destName), true);
         } else {
           destName = await this.uniqueName(dest, req.dest.dir, name);
         }
       }
       manifest.moveRoots.push(name);
       manifest.renames.set(name, destName);
+      const firstFile = manifest.files.length;
 
       if (st.kind === 'dir') {
         manifest.dirs.push(destName);
@@ -991,8 +1127,59 @@ export class TransferEngine {
       } else {
         manifest.files.push({ srcRel: name, destRel: destName, size: st.size, mtimeMs: st.mtimeMs });
       }
+      if (have) this.dropUnchanged(manifest, firstFile, have);
     }
     return manifest;
+  }
+
+  /**
+   * Update: leave out the files the destination already has (same size, same
+   * modification time) and note large shorter copies as resumable.
+   */
+  private dropUnchanged(
+    manifest: Manifest,
+    from: number,
+    have: Map<string, { size: number; mtimeMs: number }>,
+  ): void {
+    const kept: ManifestFile[] = [];
+    for (const f of manifest.files.slice(from)) {
+      const d = have.get(f.destRel);
+      if (d && d.size === f.size && f.mtimeMs > 0 && Math.abs(d.mtimeMs - f.mtimeMs) <= MTIME_SLACK_MS) {
+        manifest.skipped++;
+        continue;
+      }
+      if (d && d.size > 0 && d.size < f.size && f.size >= RESUME_MIN_BYTES) {
+        manifest.partials.set(f.destRel, d.size);
+      }
+      kept.push(f);
+    }
+    manifest.files.splice(from, manifest.files.length - from, ...kept);
+  }
+
+  /** Every file under dest.dir/name: relative path → size and mtime. */
+  private async listDest(
+    job: Job,
+    dest: SshTransport,
+    name: string,
+  ): Promise<Map<string, { size: number; mtimeMs: number }>> {
+    const { req } = job;
+    const out = new Map<string, { size: number; mtimeMs: number }>();
+    const fast = req.dest.hostId === null ? null : await this.fastWalk(job, dest, req.dest.dir, [name], false);
+    if (fast) {
+      for (const f of fast.files) out.set(f.rel, { size: f.size, mtimeMs: f.mtimeMs });
+      return out;
+    }
+    const walk = async (rel: string): Promise<void> => {
+      this.checkCanceled(job);
+      const listing = await dest.listDir(joinPath(req.dest.dir, rel));
+      for (const entry of listing.entries) {
+        const child = rel + '/' + entry.name;
+        if (entry.kind === 'dir') await walk(child);
+        else out.set(child, { size: entry.size, mtimeMs: entry.mtimeMs });
+      }
+    };
+    await walk(name);
+    return out;
   }
 
   /**
@@ -1004,12 +1191,13 @@ export class TransferEngine {
     t: SshTransport,
     dir: string,
     names: string[],
+    skipMac = job.req.skipMacMeta ?? true,
   ): Promise<WalkedTree | null> {
     try {
       const result = await t.exec(walkCommand(dir, names), { timeoutMs: WALK_TIMEOUT_MS });
       this.checkCanceled(job);
       if (result.code !== 0) return null;
-      return parseWalk(result.stdout, names, { skipMacMeta: job.req.skipMacMeta ?? true });
+      return parseWalk(result.stdout, names, { skipMacMeta: skipMac });
     } catch (err) {
       this.checkCanceled(job);
       return null;

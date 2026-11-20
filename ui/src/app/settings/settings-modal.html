@@ -171,11 +171,15 @@
                 </div>
               </div>
               <div class="row">
-                <div class="row-label"><div class="l-title">On name conflict</div></div>
+                <div class="row-label">
+                  <div class="l-title">On name conflict</div>
+                  <div class="l-sub">Update merges into existing folders, skips unchanged files and resumes large partial ones</div>
+                </div>
                 <div class="seg-row">
                   <button class="seg" [class.active]="settings.conflict() === 'rename'" (click)="settings.conflict.set('rename')">Keep both</button>
                   <button class="seg" [class.active]="settings.conflict() === 'overwrite'" (click)="settings.conflict.set('overwrite')">Overwrite</button>
                   <button class="seg" [class.active]="settings.conflict() === 'skip'" (click)="settings.conflict.set('skip')">Skip</button>
+                  <button class="seg" [class.active]="settings.conflict() === 'update'" (click)="settings.conflict.set('update')">Update</button>
                 </div>
               </div>
               <div class="row">

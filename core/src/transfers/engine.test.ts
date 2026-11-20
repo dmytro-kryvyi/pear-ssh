@@ -11,7 +11,9 @@ import type { ExecResult, PipeChannel, ShellChannel, SshTransport, TransferOpts 
 
 // ---- In-memory transport ---------------------------------------------------
 
-type Node = { kind: 'file'; data: string } | { kind: 'dir' };
+type Node = { kind: 'file'; data: string; mtime?: number } | { kind: 'dir' };
+/** Seeded files are this old, so copies that keep the time compare equal. */
+const SEED_MTIME = 1_700_000_000_000;
 
 /**
  * A filesystem as a flat path map. download/uploadFile move content between
@@ -40,6 +42,10 @@ class MemTransport implements SshTransport {
   /** Destination path whose transfer fails with 'boom'. */
   failOn: string | null = null;
   fs = new Map<string, Node>();
+  /** Honour TransferOpts.startOffset, like the ssh2 transport. */
+  canResume?: boolean;
+  /** startOffset of every download/uploadFile call, in order. */
+  starts: number[] = [];
   /** Streaming exec, attached by enablePipes() for the tar-path tests. */
   execPipe?: (command: string) => Promise<PipeChannel>;
 
@@ -60,7 +66,7 @@ class MemTransport implements SshTransport {
       cur += '/' + parts[i];
       this.fs.set(cur, { kind: 'dir' });
     }
-    this.fs.set(path, data === null ? { kind: 'dir' } : { kind: 'file', data });
+    this.fs.set(path, data === null ? { kind: 'dir' } : { kind: 'file', data, mtime: SEED_MTIME });
   }
 
   async connect(): Promise<void> {}
@@ -88,7 +94,8 @@ class MemTransport implements SshTransport {
       if (!root) continue;
       const node = this.fs.get(key)!;
       const mode = node.kind === 'dir' ? '41ed 4096' : `81a4 ${node.data.length}`;
-      lines.push(`${mode} 1700000000 ./${key.slice(dir.length + 1)}`);
+      const secs = node.kind === 'file' ? Math.floor((node.mtime ?? 0) / 1000) : 0;
+      lines.push(`${mode} ${secs} ./${key.slice(dir.length + 1)}`);
     }
     return lines.join('\n') + '\n';
   }
@@ -99,7 +106,7 @@ class MemTransport implements SshTransport {
       name,
       kind: node.kind,
       size: node.kind === 'file' ? node.data.length : 0,
-      mtimeMs: 0,
+      mtimeMs: node.kind === 'file' ? (node.mtime ?? 0) : 0,
       mode: node.kind === 'dir' ? 'drwxr-xr-x' : '-rw-r--r--',
     };
   }
@@ -208,7 +215,8 @@ class MemTransport implements SshTransport {
       if (opts?.signal?.aborted) throw new Error('aborted');
       if (toPath === this.failOn) throw new Error('boom');
       if (node?.kind !== 'file') throw new Error(`${fromPath}: not a file`);
-      to.fs.set(toPath, { kind: 'file', data: node.data });
+      this.starts.push(opts?.startOffset ?? 0);
+      to.fs.set(toPath, { kind: 'file', data: node.data, mtime: node.mtime });
     } finally {
       this.activeNow--;
     }
@@ -786,7 +794,8 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
           chunks.push(writer.header({ path: rel, type: 'dir', size: 0, mode: 0o755, mtimeSec: 1 }));
         } else {
           const bytes = enc.encode(node.data);
-          chunks.push(writer.header({ path: rel, type: 'file', size: bytes.length, mode: 0o644, mtimeSec: 1 }));
+          const mtimeSec = Math.floor((node.mtime ?? 0) / 1000);
+          chunks.push(writer.header({ path: rel, type: 'file', size: bytes.length, mode: 0o644, mtimeSec }));
           chunks.push(bytes, writer.padding(bytes.length));
         }
       }
@@ -839,7 +848,11 @@ function enablePipes(t: MemTransport): { commands: string[]; knobs: TarKnobs } {
       reader.onData((d) => data.push(d));
       reader.onEntryEnd((e) => {
         if (e.type === 'file') {
-          t.fs.set(joinPath(dir, e.path), { kind: 'file', data: data.map((d) => dec.decode(d)).join('') });
+          t.fs.set(joinPath(dir, e.path), {
+            kind: 'file',
+            data: data.map((d) => dec.decode(d)).join(''),
+            mtime: e.mtimeSec * 1000,
+          });
         }
       });
       pipe.stdin = (chunk) => reader.push(chunk);
@@ -895,7 +908,8 @@ function memTarIo(local: MemTransport): TarIo {
         if (node?.kind !== 'file') throw new Error(`${f.src}: not a file`);
         const bytes = enc.encode(node.data);
         opts.onEntry(i, 'start');
-        await out.write(writer.header({ path: f.entry, type: 'file', size: bytes.length, mode: 0o644, mtimeSec: 1 }));
+        const mtimeSec = Math.floor((node.mtime ?? 0) / 1000);
+        await out.write(writer.header({ path: f.entry, type: 'file', size: bytes.length, mode: 0o644, mtimeSec }));
         await out.write(bytes);
         opts.onProgress(i, bytes.length);
         await out.write(writer.padding(bytes.length));
@@ -903,6 +917,10 @@ function memTarIo(local: MemTransport): TarIo {
       }
       await out.write(writer.end());
       out.end();
+    },
+    async prefixHash(path, bytes) {
+      const node = local.fs.get(path);
+      return sha(node?.kind === 'file' ? node.data.slice(0, bytes) : '');
     },
     unpack(pipe, dir, opts) {
       return new Promise((resolve, reject) => {
@@ -926,7 +944,7 @@ function memTarIo(local: MemTransport): TarIo {
         reader.onEntryEnd((e) => {
           if (e.type !== 'file' || !current) return;
           const text = current.data.map((d) => dec.decode(d)).join('');
-          local.fs.set(joinPath(dir, current.rel), { kind: 'file', data: text });
+          local.fs.set(joinPath(dir, current.rel), { kind: 'file', data: text, mtime: e.mtimeSec * 1000 });
           opts.onEntry(current.rel, 'done', opts.hash ? sha(text) : undefined);
           current = null;
         });
@@ -1175,4 +1193,128 @@ test('tar: gnu and bsd hosts are asked for exactly the wanted files (list mode)'
     assert.equal(h.local.fs.has('/dl/tree/.DS_Store'), false);
     assert.ok(h.local.fs.get('/dl/tree/sub')?.kind === 'dir', 'parents created without dir entries');
   }
+});
+
+// ---- Update, resume, retry -------------------------------------------------
+
+const BIG = 33 * 1024 * 1024;
+
+test('update merges into an existing folder and skips what is already there', async () => {
+  const h = harness({ a: tree('/src/tree', 6), local: { '/dl': null } });
+  const dl = (over: Partial<TransferRequest> = {}) =>
+    h.finished(h.engine.start(req({ dest: { hostId: null, dir: '/dl' }, names: ['tree'], conflict: 'update', ...over })));
+  const first = await dl();
+  assert.equal(first.status, 'done');
+  assert.equal(first.filesSkipped, 0);
+
+  // One file changes, one is new, the destination has one of its own.
+  h.a.fs.set('/src/tree/f0.txt', { kind: 'file', data: 'changed!', mtime: SEED_MTIME + 60_000 });
+  h.a.fs.set('/src/tree/new.txt', { kind: 'file', data: 'new', mtime: SEED_MTIME });
+  h.local.fs.set('/dl/tree/mine.txt', { kind: 'file', data: 'keep me', mtime: 5 });
+  h.a.starts.length = 0;
+  const second = await dl();
+  assert.equal(second.status, 'done', second.error);
+  assert.equal(second.filesSkipped, 5);
+  assert.equal(second.fileCount, 2);
+  assert.equal(h.a.starts.length, 2, 'only the changed and the new file travelled');
+  assert.equal(await h.local.readFile('/dl/tree/f0.txt'), 'changed!');
+  assert.equal(await h.local.readFile('/dl/tree/new.txt'), 'new');
+  assert.equal(await h.local.readFile('/dl/tree/mine.txt'), 'keep me');
+  assert.ok(h.updates.some((u) => u.id === second.id && u.phase === 'comparing'));
+  assert.equal(h.local.fs.has('/dl/tree (1)'), false, 'no second copy');
+
+  // A file where a folder is expected is replaced, not merged.
+  h.local.fs.set('/dl/single', { kind: 'file', data: 'x', mtime: 1 });
+  h.a.fs.set('/src/single', { kind: 'dir' });
+  h.a.fs.set('/src/single/in.txt', { kind: 'file', data: 'in', mtime: SEED_MTIME });
+  const third = await dl({ names: ['single'] });
+  assert.equal(third.status, 'done', third.error);
+  assert.equal(await h.local.readFile('/dl/single/in.txt'), 'in');
+});
+
+test('update through the tar path: a second run sends nothing', async () => {
+  const h = tarHarness({ local: tree('/up/tree', 40), b: { '/dst': null } });
+  const up = () =>
+    h.finished(h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['tree'], conflict: 'update' })));
+  assert.equal((await up()).status, 'done');
+  const before = h.bPipes.commands.length;
+  h.b.execAnswer = (cmd) =>
+    cmd.includes('find ') ? { code: 0, stdout: h.b.findOutput('/dst', ['tree']), stderr: '' } : null;
+  const again = await up();
+  assert.equal(again.status, 'done', again.error);
+  assert.equal(again.filesSkipped, 40);
+  assert.equal(again.fileCount, 0);
+  assert.equal(h.bPipes.commands.length, before, 'no stream was opened');
+});
+
+test('tar legs leave large files to the per-file path', async () => {
+  const seed = { ...tree('/up/tree', 40), '/up/tree/big.bin': 'b'.repeat(BIG) };
+  const h = tarHarness({ local: seed, b: { '/dst': null } });
+  const last = await h.finished(h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['tree'] })));
+  assert.equal(last.status, 'done', last.error);
+  assert.equal(h.bPipes.commands[1], `tar -x -o -f - -C '/dst'`);
+  assert.equal(h.b.starts.length, 1, 'exactly the big file went by itself');
+  assert.equal(filesOn(h.b, '/dst/tree'), 41);
+  assert.equal(last.bytesDone, last.bytesTotal);
+  assert.equal(last.filesDone, 41);
+  const bytes = h.updates.filter((u) => u.id === last.id && u.status === 'running' && u.phase === 'copying').map((u) => u.bytesDone);
+  for (let i = 1; i < bytes.length; i++) assert.ok(bytes[i] >= bytes[i - 1], 'progress never steps back');
+});
+
+test('a large partial copy is resumed when its bytes match the source, restarted when not', async () => {
+  for (const matches of [true, false]) {
+    const data = 'r'.repeat(BIG);
+    const h = tarHarness({ local: { '/up/big.bin': data }, b: { '/dst': null } });
+    h.b.canResume = true;
+    const have = 20 * 1024 * 1024;
+    h.b.fs.set('/dst/big.bin', { kind: 'file', data: matches ? data.slice(0, have) : 'x'.repeat(have), mtime: 9 });
+    h.b.execAnswer = (cmd) => {
+      if (!cmd.includes(`head -c ${have}`)) return null;
+      const node = h.b.fs.get('/dst/big.bin');
+      return { code: 0, stdout: `${sha(node?.kind === 'file' ? node.data.slice(0, have) : '')}  -\n`, stderr: '' };
+    };
+    const last = await h.finished(
+      h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['big.bin'], conflict: 'update' })),
+    );
+    assert.equal(last.status, 'done', last.error);
+    assert.deepEqual(h.b.starts, [matches ? have : 0]);
+    assert.equal(await h.b.readFile('/dst/big.bin'), data);
+  }
+});
+
+test('a failed job keeps its large partial, and retry finishes it under the same name', async () => {
+  const data = 'q'.repeat(BIG);
+  const h = tarHarness({ local: { '/up/big.bin': data, '/up/small.txt': 's' }, b: { '/dst/big.bin': 'someone else' } });
+  h.b.canResume = true;
+  h.b.delayMs = 2;
+  h.b.failOn = '/dst/big (1).bin';
+  const first = await h.finished(
+    h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['small.txt', 'big.bin'] })),
+  );
+  assert.equal(first.status, 'error');
+  assert.ok(h.b.fs.has('/dst/big (1).bin'), 'the large partial stays for a retry');
+
+  h.b.failOn = null;
+  const id = h.engine.retry(first.id);
+  const second = await h.finished(id);
+  assert.equal(second.status, 'done', second.error);
+  assert.equal(await h.b.readFile('/dst/big (1).bin'), data);
+  assert.equal(await h.b.readFile('/dst/big.bin'), 'someone else', 'the unrelated file is untouched');
+  assert.equal(h.b.fs.has('/dst/big (2).bin'), false);
+  assert.equal(second.filesSkipped, 1, 'the small file had already arrived');
+  assert.equal(h.engine.list().some((j) => j.id === first.id), false, 'the failed row is replaced');
+  assert.throws(() => h.engine.retry(id), /Only a stopped transfer/);
+});
+
+test('cancel still removes a large partial', async () => {
+  const h = tarHarness({ local: { '/up/big.bin': 'c'.repeat(BIG) }, b: { '/dst': null } });
+  h.b.canResume = true;
+  let release!: () => void;
+  h.b.gate = new Promise<void>((r) => (release = r));
+  const id = h.engine.start(req({ src: { hostId: null, dir: '/up' }, names: ['big.bin'] }));
+  while (!h.b.fs.has('/dst/big.bin')) await new Promise((r) => setTimeout(r, 1));
+  h.engine.cancel(id);
+  release();
+  assert.equal((await h.finished(id)).status, 'canceled');
+  assert.equal(h.b.fs.has('/dst/big.bin'), false);
 });

@@ -71,6 +71,12 @@ export interface TransferOpts {
   onProgress?: (p: TransferProgress) => void;
   signal?: AbortSignalLike;
   onPhase?: (phase: TransferLegPhase) => void;
+  /**
+   * Resume: the destination already holds this many bytes of the file, known
+   * to match the source; carry on from there instead of starting over. Only
+   * honoured by transports that set `canResume`.
+   */
+  startOffset?: number;
 }
 
 /**
@@ -97,6 +103,8 @@ export interface SshTransport {
    * makes callers fall back to per-file copies.
    */
   execPipe?(command: string): Promise<PipeChannel>;
+  /** download/uploadFile honour `TransferOpts.startOffset`. */
+  readonly canResume?: boolean;
   listDir(path: string): Promise<DirListing>;
   readFile(path: string, maxBytes?: number): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;

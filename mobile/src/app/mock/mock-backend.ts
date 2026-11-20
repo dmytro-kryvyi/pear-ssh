@@ -333,6 +333,7 @@ export function createMockBackend(): PearApi {
       start: fail('transfers.start'),
       download: fail('transfers.download'),
       cancel: noop,
+      retry: fail('transfers.retry'),
       list: async () => [],
       clearFinished: noop,
       setMaxParallel: noop,

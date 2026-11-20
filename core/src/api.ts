@@ -163,6 +163,11 @@ export interface PearApi {
       skipMacMeta?: boolean,
     ): Promise<string>;
     cancel(id: string): void;
+    /**
+     * Run a failed or canceled job again: what already arrived is skipped and
+     * a large partial file is resumed. Resolves with the new job's id.
+     */
+    retry(id: string): Promise<string>;
     list(): Promise<TransferJobSnapshot[]>;
     clearFinished(): void;
     setMaxParallel(n: number): void;

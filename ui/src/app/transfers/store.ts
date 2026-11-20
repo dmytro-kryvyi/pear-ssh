@@ -207,6 +207,18 @@ export class TransfersStore {
     if (op && op.status !== 'running') this.drop(id);
   }
 
+  /** Run a stopped job again; the engine skips what arrived and resumes. */
+  async retry(id: string): Promise<void> {
+    const job = this.jobs()[id];
+    if (!job || (job.status !== 'error' && job.status !== 'canceled')) return;
+    try {
+      await this.pear.api.transfers.retry(id);
+      this.drop(id);
+    } catch {
+      // The engine no longer knows the job (cleared, server restarted).
+    }
+  }
+
   /** Forget one finished job (the engine's copy goes on the next clear). */
   remove(id: string): void {
     const job = this.jobs()[id];
@@ -307,6 +319,8 @@ export class TransfersStore {
     switch (job.phase) {
       case 'listing':
         return 'Listing files…';
+      case 'comparing':
+        return 'Comparing with destination…';
       case 'verifying':
         return 'Verifying checksum…';
       case 'pushing':
@@ -331,7 +345,8 @@ export class TransfersStore {
         return compactProgress(job, units);
       case 'done': {
         const took = fmtDuration(job);
-        return `${fmtBytes(job.bytesTotal, units)}${took ? ` in ${took}` : ''}`;
+        const skipped = job.filesSkipped ? ` · ${job.filesSkipped} unchanged skipped` : '';
+        return `${fmtBytes(job.bytesTotal, units)}${took ? ` in ${took}` : ''}${skipped}`;
       }
       case 'error':
         return job.error ?? '';

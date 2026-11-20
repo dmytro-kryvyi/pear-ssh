@@ -568,6 +568,7 @@ export function createNativeBackend(
         return id;
       },
       cancel: (id) => transfers.cancel(id),
+      retry: async (id) => transfers.retry(id),
       list: async () => transfers.list(),
       clearFinished: () => transfers.clearFinished(),
       setMaxParallel: (n) => transfers.setMaxParallel(n),

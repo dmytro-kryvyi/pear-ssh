@@ -114,6 +114,7 @@ const api: PearApi = {
         skipMacMeta,
       ),
     cancel: (id: string) => ipcRenderer.send('transfers:cancel', id),
+    retry: (id: string) => ipcRenderer.invoke('transfers:retry', id),
     list: () => ipcRenderer.invoke('transfers:list'),
     clearFinished: () => ipcRenderer.send('transfers:clearFinished'),
     setMaxParallel: (n: number) => ipcRenderer.send('transfers:setMaxParallel', n),

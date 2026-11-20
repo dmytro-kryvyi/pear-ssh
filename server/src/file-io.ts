@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { ConflictPolicy, TransferJobSnapshot } from '@pear/core';
 import { makeStagingDir, removeStaging, type PearService } from '@pear/core/node';
 
-const CONFLICTS: ConflictPolicy[] = ['overwrite', 'skip', 'rename'];
+const CONFLICTS: ConflictPolicy[] = ['overwrite', 'skip', 'rename', 'update'];
 /** A finished download nobody fetched is deleted after this long. */
 const DOWNLOAD_TTL_MS = 10 * 60 * 1000;
 const SETTLED = new Set(['done', 'error', 'canceled']);

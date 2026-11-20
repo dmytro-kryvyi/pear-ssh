@@ -246,6 +246,24 @@ async function fileSha256(path: string): Promise<string> {
 }
 
 /** The TarIo the Node-hosted engine (desktop, pear-server) injects. */
-export const nodeTarIo: TarIo = { pack, unpack };
+async function prefixHash(path: string, bytes: number): Promise<string> {
+  const hash = createHash('sha256');
+  const fh = await fs.open(path, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(READ_PIECE);
+    let left = bytes;
+    while (left > 0) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(READ_PIECE, left), bytes - left);
+      if (bytesRead === 0) break;
+      hash.update(buf.subarray(0, bytesRead));
+      left -= bytesRead;
+    }
+  } finally {
+    await fh.close();
+  }
+  return hash.digest('hex');
+}
+
+export const nodeTarIo: TarIo = { pack, unpack, prefixHash };
 
 export type { TarEntry };

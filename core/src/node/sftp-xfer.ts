@@ -68,6 +68,8 @@ interface DriveOpts {
   inflight: number;
   signal?: AbortSignalLike;
   onProgress?: (p: TransferProgress) => void;
+  /** First byte to carry: everything before it is already at the destination. */
+  start?: number;
   /** Carry one piece; resolves with the bytes actually carried. Fewer than
    *  asked re-queues the remainder (short SFTP reads are legal). */
   step: (piece: Piece) => Promise<number>;
@@ -81,9 +83,9 @@ interface DriveOpts {
  */
 function drive(o: DriveOpts): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    let next = 0;
+    let next = o.start ?? 0;
     let active = 0;
-    let done = 0;
+    let done = next;
     let settled = false;
     let failed: Error | null = null;
     const retry: Piece[] = [];
@@ -135,7 +137,9 @@ function drive(o: DriveOpts): Promise<void> {
           });
       }
       if (active === 0 && !settled) {
-        if (!failed && o.total === 0) o.onProgress?.({ bytes: 0, total: 0 });
+        if (!failed && done === o.total && (o.start ?? 0) >= o.total) {
+          o.onProgress?.({ bytes: o.total, total: o.total });
+        }
         settle(failed);
       }
     };
@@ -150,7 +154,7 @@ function drive(o: DriveOpts): Promise<void> {
 function openRemote(
   sftp: SFTPWrapper,
   path: string,
-  flags: 'r' | 'w',
+  flags: 'r' | 'w' | 'r+',
   mode?: number,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -218,12 +222,18 @@ export async function sftpPut(
   const watch = sessionWatch(sftp);
   const fh = await fsp.open(localPath, 'r');
   try {
-    const handle = await openRemote(sftp, remotePath, 'w', st.mode & 0o777);
+    // A resume keeps what is there (no truncate) and continues after it.
+    const start = Math.min(opts?.startOffset ?? 0, total);
+    const handle =
+      start > 0
+        ? await openRemote(sftp, remotePath, 'r+')
+        : await openRemote(sftp, remotePath, 'w', st.mode & 0o777);
     let primary: unknown = null;
     try {
       await drive({
         sftp,
         total,
+        start,
         chunk,
         inflight: inflightFor(chunk),
         signal: opts?.signal,
@@ -273,11 +283,13 @@ export async function sftpGet(
       const remote = await fstatRemote(sftp, handle);
       const total = remote.size;
       const { read: chunk } = chunkSizes(sftp);
-      const fh = await fsp.open(localPath, 'w');
+      const start = Math.min(opts?.startOffset ?? 0, total);
+      const fh = await fsp.open(localPath, start > 0 ? 'r+' : 'w');
       try {
         await drive({
           sftp,
           total,
+          start,
           chunk,
           inflight: inflightFor(chunk),
           signal: opts?.signal,

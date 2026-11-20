@@ -219,6 +219,34 @@ test('modification times travel with the file in both directions', async () => {
   }
 });
 
+test('a transfer resumes from an offset without touching what is already there', async () => {
+  const conn = await connect();
+  try {
+    const data = randomBytes(2 * 1024 * 1024 + 77);
+    const half = 1024 * 1024;
+    // Upload: the remote holds the first half already.
+    const local = join(dir, 'resume-up.bin');
+    await writeFile(local, data);
+    remote.files.set('/remote/resume-up.bin', Buffer.from(data.subarray(0, half)));
+    remote.writes = 0;
+    const seen: number[] = [];
+    await conn.uploadFile(local, '/remote/resume-up.bin', { startOffset: half, onProgress: (p) => seen.push(p.bytes) });
+    assert.ok(remote.files.get('/remote/resume-up.bin')!.equals(data));
+    assert.ok(seen[0] > half, 'progress starts after the part already there');
+    assert.equal(seen.at(-1), data.length);
+    assert.equal(remote.openFlags.at(-1)! & OPEN_MODE.TRUNC, 0, 'reopened without truncating');
+
+    // Download: the local file holds the first half already.
+    remote.files.set('/remote/resume-down.bin', data);
+    const back = join(dir, 'resume-down.bin');
+    await writeFile(back, data.subarray(0, half));
+    await conn.download('/remote/resume-down.bin', back, { startOffset: half });
+    assert.ok((await readFile(back)).equals(data));
+  } finally {
+    conn.dispose();
+  }
+});
+
 test('abort stops an upload promptly, closes the handle, leaves the partial for cleanup', async () => {
   const conn = await connect();
   try {

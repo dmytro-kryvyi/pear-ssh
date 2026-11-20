@@ -77,6 +77,7 @@ export const CHANNELS = {
     start: ['invoke', 'transfers:start'],
     download: ['invoke', 'transfers:download'],
     cancel: ['send', 'transfers:cancel'],
+    retry: ['invoke', 'transfers:retry'],
     list: ['invoke', 'transfers:list'],
     clearFinished: ['send', 'transfers:clearFinished'],
     setMaxParallel: ['send', 'transfers:setMaxParallel'],

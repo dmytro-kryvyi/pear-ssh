@@ -92,6 +92,10 @@
                   <pear-icon name="stop" [size]="11" />
                 </button>
               }
+            } @else if (job.status === 'error' || job.status === 'canceled') {
+              <button class="job-cancel" title="Retry — skips what arrived, resumes large files" (click)="store.retry(job.id)">
+                <pear-icon name="refresh" [size]="11" />
+              </button>
             }
             <span class="job-pct" [class.ok]="job.status === 'done'" [class.err]="job.status === 'error' || job.status === 'canceled'">
               @if (job.status === 'done') {
