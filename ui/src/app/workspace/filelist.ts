@@ -18,6 +18,7 @@ import { Settings } from '../settings';
 import { HostCatalog } from '../hosts';
 import { TermRouter } from '../terminal/router';
 import { ContextMenuService, type MenuItem } from '../menu/context-menu';
+import { snapshotDrop } from '../remote/connect';
 import { FsStore } from './fs-store';
 import { FileOps, joinPath, type DragSource } from './ops';
 import { Workspace, type HostTab, type WsPane } from './workspace';
@@ -418,6 +419,15 @@ export class FileList {
         icon: 'upload',
         onClick: () => void this.ops.uploadPicker(t.hostId, t.path),
       },
+      ...(this.ops.canPickFolder
+        ? [
+            {
+              label: 'Upload a folder from my machine…',
+              icon: 'upload',
+              onClick: () => void this.ops.uploadFolderPicker(t.hostId, t.path),
+            },
+          ]
+        : []),
       { divider: true },
       {
         label: 'Folder properties…',
@@ -512,6 +522,9 @@ export class FileList {
   }
 
   private async dropInto(event: DragEvent, destDir: string): Promise<void> {
+    // Before anything asynchronous: the browser empties the item list the
+    // moment this handler yields, and folders are only reachable through it.
+    const entries = snapshotDrop(event.dataTransfer);
     this.dropTarget.set(null);
     this.dropOnList.set(false);
     this.ws.dragging.set(null);
@@ -540,7 +553,7 @@ export class FileList {
       }
       await this.ops.transfer(src, t.hostId, destDir, mode);
     } else if (event.dataTransfer?.files.length) {
-      await this.ops.uploadDropped(t.hostId, destDir, event.dataTransfer.files);
+      await this.ops.uploadDropped(t.hostId, destDir, event.dataTransfer.files, entries);
     }
   }
 

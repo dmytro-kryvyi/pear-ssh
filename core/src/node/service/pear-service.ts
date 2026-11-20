@@ -279,6 +279,7 @@ export class PearService {
     absPaths: string[],
     conflict: ConflictPolicy,
     verify: boolean,
+    opts: { skipMacMeta?: boolean; compress?: boolean } = {},
   ): Promise<string[]> {
     this.requireHost(hostId);
     const byDir = new Map<string, string[]>();
@@ -296,6 +297,8 @@ export class PearService {
           op: 'copy',
           conflict,
           verify,
+          skipMacMeta: opts.skipMacMeta,
+          compress: opts.compress,
         }),
       );
     }

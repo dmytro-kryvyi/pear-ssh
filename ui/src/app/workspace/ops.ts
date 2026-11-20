@@ -1,4 +1,4 @@
-import type { WebFiles } from '../remote/connect';
+import type { UploadOpts, WebFiles } from '../remote/connect';
 import { Injectable, inject, signal } from '@angular/core';
 import {
   archiveKind,
@@ -284,12 +284,42 @@ export class FileOps {
     );
   }
 
+  private uploadOpts(): UploadOpts {
+    return {
+      conflict: this.settings.conflict(),
+      verify: this.settings.verifyChecksums(),
+      skipMacMeta: this.settings.skipMacMeta(),
+      compress: this.settings.compressStreams(),
+    };
+  }
+
+  /** The browser can upload a whole folder picked with the system dialog. */
+  get canPickFolder(): boolean {
+    return typeof (this.pear.api as Partial<WebFiles>).pickFolderAndUpload === 'function';
+  }
+
+  async uploadFolderPicker(hostId: string, dir: string): Promise<void> {
+    const web = this.pear.api as Partial<WebFiles>;
+    await this.guard(async () => {
+      await web.pickFolderAndUpload?.(hostId, dir, this.uploadOpts());
+    });
+  }
+
   /** Files dropped from the OS onto a directory. */
-  async uploadDropped(hostId: string, dir: string, files: FileList): Promise<void> {
+  async uploadDropped(
+    hostId: string,
+    dir: string,
+    files: FileList,
+    entries: FileSystemEntry[] | null = null,
+  ): Promise<void> {
     await this.guard(async () => {
       // In a browser a dropped File has no path to hand to the transfer
       // engine — its bytes go to the server instead.
       const web = this.pear.api as Partial<WebFiles>;
+      if (web.uploadEntries && entries?.some((e) => e.isDirectory)) {
+        await web.uploadEntries(hostId, dir, entries, this.uploadOpts());
+        return;
+      }
       if (web.uploadFiles) {
         await web.uploadFiles(
           hostId,

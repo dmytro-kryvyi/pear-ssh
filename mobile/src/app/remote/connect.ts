@@ -1,4 +1,5 @@
 import {
+  TarWriter,
   createRemoteBackend,
   type ConflictPolicy,
   type HostKeyGate,
@@ -18,6 +19,142 @@ export interface WebFiles {
   ): Promise<void>;
   /** Open the system file picker, then upload. Resolves null when cancelled. */
   pickAndUpload(hostId: string, dir: string): Promise<string | null>;
+  /**
+   * Upload what was dropped — folders included — from the entries captured
+   * with snapshotDrop() during the drop event.
+   */
+  uploadEntries(
+    hostId: string,
+    dir: string,
+    entries: FileSystemEntry[],
+    opts?: UploadOpts,
+  ): Promise<void>;
+  /** Pick a folder with the system dialog and upload it whole. */
+  pickFolderAndUpload(hostId: string, dir: string, opts?: UploadOpts): Promise<void>;
+}
+
+export interface UploadOpts {
+  conflict?: ConflictPolicy;
+  verify?: boolean;
+  skipMacMeta?: boolean;
+  compress?: boolean;
+}
+
+/**
+ * The dropped items as filesystem entries, or null where the browser has no
+ * such API. Must be called inside the drop event: the item list is emptied
+ * as soon as the handler returns.
+ */
+export function snapshotDrop(data: DataTransfer | null): FileSystemEntry[] | null {
+  const items = data?.items;
+  if (!items || typeof DataTransferItem.prototype.webkitGetAsEntry !== 'function') return null;
+  const entries: FileSystemEntry[] = [];
+  for (const item of Array.from(items)) {
+    const entry = item.kind === 'file' ? item.webkitGetAsEntry() : null;
+    if (entry) entries.push(entry);
+  }
+  return entries.length ? entries : null;
+}
+
+interface TreeFile {
+  file: File;
+  /** Path inside the upload, e.g. `photos/2024/a.jpg`. */
+  path: string;
+}
+
+/** Walk dropped entries into the files and directories they contain. */
+async function readEntries(
+  entries: FileSystemEntry[],
+): Promise<{ files: TreeFile[]; dirs: string[] }> {
+  const files: TreeFile[] = [];
+  const dirs: string[] = [];
+  const walk = async (entry: FileSystemEntry, path: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) =>
+        (entry as FileSystemFileEntry).file(resolve, reject),
+      );
+      files.push({ file, path });
+      return;
+    }
+    dirs.push(path);
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    // readEntries hands out the children in batches; an empty batch ends it.
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+        reader.readEntries(resolve, reject),
+      );
+      if (!batch.length) break;
+      for (const child of batch) await walk(child, `${path}/${child.name}`);
+    }
+  };
+  for (const entry of entries) await walk(entry, entry.name);
+  return { files, dirs };
+}
+
+/**
+ * One request for a whole tree: a tar put together from File references (a
+ * Blob of Blobs — nothing is read into memory), unpacked by the server and
+ * carried as a single transfer job.
+ */
+async function uploadTree(
+  hostId: string,
+  dir: string,
+  tree: { files: TreeFile[]; dirs: string[] },
+  opts: UploadOpts = {},
+): Promise<void> {
+  const writer = new TarWriter();
+  const parts: BlobPart[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  // TarWriter hands out plain Uint8Arrays; the cast only settles the buffer type.
+  const bytes = (b: Uint8Array): BlobPart => b as unknown as BlobPart;
+  for (const path of [...tree.dirs].sort()) {
+    parts.push(bytes(writer.header({ path, type: 'dir', size: 0, mode: 0o755, mtimeSec: now })));
+  }
+  for (const { file, path } of tree.files) {
+    const mtimeSec = Math.floor((file.lastModified || Date.now()) / 1000);
+    parts.push(
+      bytes(writer.header({ path, type: 'file', size: file.size, mode: 0o644, mtimeSec })),
+      file,
+      bytes(writer.padding(file.size)),
+    );
+  }
+  parts.push(bytes(writer.end()));
+  const query = new URLSearchParams({
+    hostId,
+    dir,
+    conflict: opts.conflict ?? 'rename',
+    verify: opts.verify ? '1' : '0',
+    skipMacMeta: opts.skipMacMeta === false ? '0' : '1',
+    compress: opts.compress ? '1' : '0',
+  });
+  const res = await fetch(`/api/upload-tree?${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-tar' },
+    body: new Blob(parts),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error((detail as { error?: string }).error ?? `Upload failed (${res.status})`);
+  }
+}
+
+function pickFolder(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.webkitdirectory = true;
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      resolve([...(input.files ?? [])]);
+      input.remove();
+    });
+    input.addEventListener('cancel', () => {
+      resolve([]);
+      input.remove();
+    });
+    document.body.appendChild(input);
+    input.click();
+  });
 }
 
 export type PearServerBackend = RemoteBackend & WebFiles;
@@ -152,6 +289,39 @@ export function connectToPearServer(
 
   return Object.assign(backend, {
     uploadFiles,
+    uploadEntries: async (
+      hostId: string,
+      dir: string,
+      entries: FileSystemEntry[],
+      opts: UploadOpts = {},
+    ) => {
+      // Loose files alone keep the simple per-file route; anything with a
+      // folder in it goes as one tree.
+      if (entries.every((e) => e.isFile)) {
+        const { files } = await readEntries(entries);
+        await uploadFiles(
+          hostId,
+          dir,
+          files.map((f) => f.file),
+          opts.conflict,
+          opts.verify,
+        );
+        return;
+      }
+      await uploadTree(hostId, dir, await readEntries(entries), opts);
+    },
+    pickFolderAndUpload: async (hostId: string, dir: string, opts: UploadOpts = {}) => {
+      const picked = await pickFolder();
+      if (!picked.length) return;
+      // webkitRelativePath starts with the picked folder's own name.
+      const files = picked.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+      const dirs = new Set<string>();
+      for (const { path } of files) {
+        const segs = path.split('/');
+        for (let i = 1; i < segs.length; i++) dirs.add(segs.slice(0, i).join('/'));
+      }
+      await uploadTree(hostId, dir, { files, dirs: [...dirs] }, opts);
+    },
     pickAndUpload: async (hostId: string, dir: string) => {
       const files = await pickFiles();
       if (!files.length) return null;

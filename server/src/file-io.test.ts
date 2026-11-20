@@ -15,6 +15,7 @@ import {
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { TarWriter } from '@pear/core';
 import type { FileInfo, FsOpSnapshot, HostConfig, TransferJobSnapshot } from '@pear/core';
 import { defaultConfig } from './config';
 import { safeFileName } from './file-io';
@@ -352,6 +353,85 @@ test('ops: copy, move and delete run on the host as background operations', asyn
   assert.equal(bad.status, 'error');
   assert.match(bad.error ?? '', /^exit 1: cp: /);
   await server.service.invoke('ops:clearFinished', []);
+});
+
+test('upload-tree: a dropped folder arrives as one tar and becomes one job', async () => {
+  const w = new TarWriter();
+  const parts: Buffer[] = [];
+  const dirEntry = (path: string) =>
+    parts.push(
+      Buffer.from(w.header({ path, type: 'dir', size: 0, mode: 0o755, mtimeSec: 1_600_000_000 })),
+    );
+  const fileEntry = (path: string, data: string) => {
+    const bytes = Buffer.from(data);
+    parts.push(
+      Buffer.from(
+        w.header({ path, type: 'file', size: bytes.length, mode: 0o644, mtimeSec: 1_600_000_000 }),
+      ),
+      bytes,
+      Buffer.from(w.padding(bytes.length)),
+    );
+  };
+  dirEntry('album');
+  dirEntry('album/empty');
+  dirEntry('album/2024');
+  fileEntry('album/cover.txt', 'cover');
+  fileEntry('album/2024/' + 'n'.repeat(120) + '.txt', 'long');
+  fileEntry('album/.DS_Store', 'junk');
+  fileEntry('loose.txt', 'loose');
+  fileEntry('../escape.txt', 'no');
+  fileEntry('album/bad\u0001name', 'no');
+  parts.push(Buffer.from(w.end()));
+  const dest = join(root, 'remote', 'tree-dest');
+  mkdirSync(join(dest, 'album'), { recursive: true });
+
+  const query = new URLSearchParams({
+    hostId: host.id,
+    dir: dest,
+    conflict: 'rename',
+    verify: '1',
+  });
+  const res = await call(`/api/upload-tree?${query}`, {
+    method: 'POST',
+    body: Buffer.concat(parts),
+  });
+  assert.equal(res.status, 200, res.body.toString());
+  const { jobId, roots } = JSON.parse(res.body.toString()) as { jobId: string; roots: string[] };
+  assert.deepEqual(roots.sort(), ['album', 'loose.txt']);
+  const job = await settled(jobId);
+  assert.equal(job.status, 'done', job.error);
+  // The existing "album" made the whole folder land as "album (1)".
+  const got = join(dest, 'album (1)');
+  assert.equal(readFileSync(join(got, 'cover.txt'), 'utf8'), 'cover');
+  assert.equal(readFileSync(join(got, '2024', 'n'.repeat(120) + '.txt'), 'utf8'), 'long');
+  assert.ok(existsSync(join(got, 'empty')), 'empty folders survive');
+  assert.equal(existsSync(join(got, '.DS_Store')), false);
+  assert.equal(readFileSync(join(dest, 'loose.txt'), 'utf8'), 'loose');
+  assert.equal(existsSync(join(root, 'remote', 'escape.txt')), false);
+  assert.equal(
+    readdirSync(got).some((n) => n.startsWith('bad')),
+    false,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(stagingDirs(), [], 'staging removed once the job settled');
+
+  const cut = await call(`/api/upload-tree?${query}`, {
+    method: 'POST',
+    body: Buffer.concat(parts).subarray(0, 700),
+  });
+  assert.equal(cut.status, 400);
+  const empty = await call(`/api/upload-tree?${query}`, {
+    method: 'POST',
+    body: Buffer.from(w.end()),
+  });
+  assert.equal(empty.status, 400);
+  assert.match(empty.body.toString(), /Nothing to upload/);
+  const nohost = await call(`/api/upload-tree?hostId=nope&dir=/x`, {
+    method: 'POST',
+    body: Buffer.from(w.end()),
+  });
+  assert.equal(nohost.status, 404);
+  assert.deepEqual(stagingDirs(), []);
 });
 
 test('the dialog-based upload channel explains itself instead of hanging', async () => {

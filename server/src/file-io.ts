@@ -3,13 +3,43 @@ import { createReadStream, createWriteStream, promises as fsp } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import type { ConflictPolicy, TransferJobSnapshot } from '@pear/core';
-import { makeStagingDir, removeStaging, type PearService } from '@pear/core/node';
+import type { ConflictPolicy, PipeChannel, TransferJobSnapshot } from '@pear/core';
+import { makeStagingDir, nodeTarIo, removeStaging, type PearService } from '@pear/core/node';
 
 const CONFLICTS: ConflictPolicy[] = ['overwrite', 'skip', 'rename', 'update'];
 /** A finished download nobody fetched is deleted after this long. */
 const DOWNLOAD_TTL_MS = 10 * 60 * 1000;
 const SETTLED = new Set(['done', 'error', 'canceled']);
+
+class UploadError extends Error {}
+
+/** A request body as the read side of a PipeChannel, for the tar unpacker. */
+function requestPipe(req: IncomingMessage): PipeChannel {
+  let closed = false;
+  const closeCbs: ((code: number | null) => void)[] = [];
+  const finish = (code: number | null): void => {
+    if (closed) return;
+    closed = true;
+    for (const cb of closeCbs) cb(code);
+  };
+  req.on('end', () => finish(0));
+  req.on('error', () => finish(null));
+  req.on('close', () => finish(req.complete ? 0 : null));
+  return {
+    write: () => false,
+    onDrain: () => {},
+    end: () => {},
+    pause: () => void req.pause(),
+    resume: () => void req.resume(),
+    onData: (cb) => void req.on('data', cb),
+    onStderr: () => {},
+    onClose: (cb) => {
+      closeCbs.push(cb);
+      if (closed) cb(req.complete ? 0 : null);
+    },
+    close: () => void req.destroy(),
+  };
+}
 
 interface PendingDownload {
   staging: string;
@@ -118,6 +148,66 @@ export class FileIo {
     } catch (err) {
       void removeStaging(staging);
       if (!res.headersSent) reply(500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /**
+   * POST /api/upload-tree?hostId&dir&conflict&verify&skipMacMeta — the body is
+   * a tar of whole folders (and loose files) the browser put together. It is
+   * unpacked into one staging directory and carried by a single transfer job,
+   * so the conflict policy applies to each top-level folder as a whole.
+   */
+  async uploadTree(
+    req: IncomingMessage,
+    res: ServerResponse,
+    query: URLSearchParams,
+  ): Promise<void> {
+    const reply = (status: number, body: unknown): void => {
+      res.statusCode = status;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify(body));
+    };
+    const hostId = query.get('hostId') ?? '';
+    const dir = query.get('dir') ?? '';
+    const conflict = (query.get('conflict') ?? 'rename') as ConflictPolicy;
+    if (!this.service.resolveHost(hostId)) return reply(404, { error: 'Unknown host' });
+    if (!dir.startsWith('/') && dir !== '~') return reply(400, { error: 'Bad destination' });
+    if (!CONFLICTS.includes(conflict)) return reply(400, { error: 'Bad conflict policy' });
+
+    const staging = await makeStagingDir();
+    const roots = new Set<string>();
+    try {
+      const result = await nodeTarIo.unpack(requestPipe(req), staging, {
+        // Every segment must be a plain file name; the tar reader has already
+        // refused `..` and absolute paths.
+        map: (path) => {
+          const parts = path.split('/');
+          if (parts.some((seg) => safeFileName(encodeURIComponent(seg)) !== seg)) return null;
+          roots.add(parts[0]);
+          return path;
+        },
+        onEntry: () => {},
+        onProgress: () => {},
+      });
+      if (result.code !== 0 || !result.atEnd) throw new UploadError('The upload was cut short');
+      if (!roots.size) throw new UploadError('Nothing to upload');
+      const [jobId] = await this.service.startLocalUpload(
+        hostId,
+        dir,
+        [...roots].map((name) => join(staging, name)),
+        conflict,
+        query.get('verify') === '1',
+        { skipMacMeta: query.get('skipMacMeta') !== '0', compress: query.get('compress') === '1' },
+      );
+      this.uploads.set(jobId, staging);
+      reply(200, { jobId, roots: [...roots] });
+    } catch (err) {
+      void removeStaging(staging);
+      const bad = err instanceof UploadError || /tar|checksum|header/i.test(String(err));
+      if (!res.headersSent) {
+        reply(bad ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
+      }
     }
   }
 

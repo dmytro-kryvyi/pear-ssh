@@ -238,6 +238,8 @@ export function createPearServer(
     }
     if (path === '/api/upload' && method === 'POST')
       return fileIo.upload(req, res, url.searchParams);
+    if (path === '/api/upload-tree' && method === 'POST')
+      return fileIo.uploadTree(req, res, url.searchParams);
     if (path.startsWith('/api/dl/') && method === 'GET') {
       return fileIo.download(res, decodeURIComponent(path.slice('/api/dl/'.length)));
     }

@@ -38,6 +38,8 @@ export {
   type TerminalHandle,
 } from './ssh/sessions';
 export { ExecTimeoutError, describeChannelOpenError } from './ssh/exec-errors';
+export { TarReader, TarWriter, TAR_MAX_OCTAL_SIZE, type TarEntry } from './transfers/tar';
+export { isMacMeta } from './transfers/mac-meta';
 export {
   PASSTHROUGH_POLICY,
   TerminalHub,
